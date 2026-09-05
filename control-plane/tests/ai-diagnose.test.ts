@@ -320,18 +320,23 @@ describe('the diagnosis loop', () => {
     assert.equal(sent.response_format?.json_schema?.name, 'step')
   })
 
-  test('a provider that cannot constrain output is asked again without one', async () => {
-    // Not universal, and refusing to work against an endpoint that lacks it
-    // would trade a real capability for a nicety.
+  test('optional extras are withdrawn one at a time, cheapest loss first', async () => {
+    // Neither extra is universal, and neither is worth failing over. Google's
+    // endpoint refuses `reasoning_effort` with nothing but "Request contains an
+    // invalid argument", so degrading only when a provider names the field it
+    // disliked assumed a courtesy not every provider extends.
     let calls = 0
+    const seen: Array<{ reasoning: boolean; schema: boolean }> = []
     const impl = (async (_url: string, init: RequestInit) => {
       calls++
       const body = JSON.parse(String(init.body))
+      seen.push({ reasoning: 'reasoning_effort' in body, schema: 'response_format' in body })
       if (body.response_format) {
-        return new Response(
-          JSON.stringify({ error: { message: 'response_format is not supported' } }),
-          { status: 400, headers: { 'content-type': 'application/json' } }
-        )
+        // Deliberately says nothing useful, like the endpoint that prompted this.
+        return new Response(JSON.stringify([{ error: { message: 'Request contains an invalid argument.' } }]), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
       }
       return new Response(
         JSON.stringify({
@@ -343,8 +348,18 @@ describe('the diagnosis loop', () => {
     }) as unknown as typeof fetch
 
     const out = await diagnose(ctx, { fleetId, question: 'why?' }, impl)
-    assert.equal(out.status, 'ok', 'the investigation must survive a provider without schemas')
-    assert.equal(calls, 2, 'once with, once without')
+    assert.equal(out.status, 'ok', 'the investigation must survive a provider that refuses both')
+    assert.deepEqual(
+      seen,
+      [
+        { reasoning: true, schema: true },
+        // Reasoning first: a slower answer beats one this cannot read.
+        { reasoning: false, schema: true },
+        { reasoning: false, schema: false },
+      ],
+      'each extra is dropped in turn, cheapest loss first'
+    )
+    assert.equal(calls, 3)
   })
 
   test("the model's own syntax is kept out of the advice", async () => {

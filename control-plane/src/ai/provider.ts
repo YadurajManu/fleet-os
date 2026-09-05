@@ -99,6 +99,19 @@ function waitHint(res: Response, message: string): number | null {
  * model spending its whole completion budget thinking. A second caller writing
  * its own fetch would rediscover both.
  */
+/**
+ * The error out of a reply, whatever shape the provider chose.
+ *
+ * Google's OpenAI-compatible endpoint answers `[{"error": {...}}]` — the object
+ * inside an array — where everyone else answers `{"error": {...}}`. Reading
+ * only the second turned a clear "invalid argument" into "no detail", and an
+ * operator reading that learns nothing about which field was refused.
+ */
+function errorOf(body: unknown): { message?: string } | undefined {
+  const first = Array.isArray(body) ? body[0] : body
+  return (first as { error?: { message?: string } } | undefined)?.error
+}
+
 export async function chat(
   config: ProviderConfig,
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
@@ -223,7 +236,7 @@ export async function chat(
       // thrown away over a wait measured in seconds. Bounded by a count and by
       // the hint being short, so a provider that is genuinely down still fails
       // fast rather than being asked forever.
-      const retryAfter = waitHint(res, body.error?.message ?? '')
+      const retryAfter = waitHint(res, errorOf(body)?.message ?? '')
       const retriesLeft = opts.retriesLeft ?? 3
       if (
         res.status === 429 &&
@@ -249,33 +262,30 @@ export async function chat(
       // trade a real capability for a nicety. The prompt still asks for JSON,
       // and the parser still copes with a model that answers in its own
       // dialect; the schema just removes the need to.
-      const message = body.error?.message ?? ''
+      // Optional extras are withdrawn one at a time on any 400.
       //
-      // "Failed to generate JSON" counts. A provider that accepts the schema
-      // and then cannot satisfy it has failed in the same way as one that
-      // rejected it outright, and from here the remedy is identical: ask again
-      // without it and let the parser cope, which it was written to do.
-      if (
-        res.status === 400 &&
-        opts.noReasoning &&
-        !opts.reasoningUnsupported &&
-        /reasoning_effort|reasoning/i.test(message)
-      ) {
+      // The first version degraded only when the provider's message named the
+      // field it disliked, which assumes a provider says. Google's says
+      // "Request contains an invalid argument." and nothing more, so a request
+      // carrying `reasoning_effort` failed outright against an endpoint that
+      // would have answered perfectly well without it.
+      //
+      // Both extras are conveniences: a schema saves the parser work, and
+      // turning reasoning off saves time and tokens. Neither is worth failing
+      // over. Reasoning is dropped first because it is the cheaper loss — a
+      // slower answer beats one this cannot read. Each retry is remembered, so
+      // the cost is two extra requests once, not once per call.
+      if (res.status === 400 && opts.noReasoning && !opts.reasoningUnsupported) {
         return chat(config, messages, { ...opts, reasoningUnsupported: true }, fetchImpl)
       }
 
-      if (
-        res.status === 400 &&
-        opts.schema &&
-        !opts.noSchema &&
-        /response_format|json_schema|schema|failed to generate/i.test(message)
-      ) {
+      if (res.status === 400 && opts.schema && !opts.noSchema) {
         return chat(config, messages, { ...opts, noSchema: true }, fetchImpl)
       }
 
       // The provider's own message, because "500" tells the operator nothing
       // about whether the key, the model name or the balance is the problem.
-      throw new Error(`provider returned ${res.status}: ${body.error?.message ?? 'no detail'}`)
+      throw new Error(`provider returned ${res.status}: ${errorOf(body)?.message ?? 'no detail'}`)
     }
 
     const choice = body.choices?.[0]
