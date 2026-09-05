@@ -1,6 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises'
-import { parseDocument } from 'yaml'
 import { CliError, EXIT, request, requireFleet } from '../api.js'
+import { editManifest, restoreManifest } from '../manifest-edit.js'
 import { c } from '../render.js'
 import { glyph, rule } from '../ui.js'
 import { confirm } from '../prompt.js'
@@ -110,28 +109,28 @@ export const fixCommand = {
 
     // Read before writing, and keep the original in memory: this is what makes
     // the change reversible without a second file on disk.
+    //
+    // The same editor `fleet tune` uses. Two implementations of "write one
+    // field into fleet.yaml" would drift — one would learn to keep the comments
+    // and the other would not, and nobody would notice until a manifest came
+    // back stripped of the only explanation it carried.
     const path = 'fleet.yaml'
-    const before = await readFile(path, 'utf8').catch(() => {
-      throw new CliError(`No fleet.yaml here. Run this from the project directory.`, EXIT.usage)
-    })
-
-    const doc = parseDocument(before)
-    if (!doc.hasIn(['services', fix.service])) {
-      throw new CliError(`fleet.yaml has no service named "${fix.service}"`, EXIT.failure)
-    }
-
-    // Edited as a document, so the comments `fleet init` wrote survive. A
-    // round trip through parse and re-serialise would take them out, and they
-    // are the only explanation a generated manifest carries.
-    if (fix.value === null) doc.deleteIn(['services', fix.service, fix.field])
-    else doc.setIn(['services', fix.service, fix.field], shape(fix.field, fix.value))
-
     const wasRunning = (await statusOf(fleetId, fix.service)) === 'running'
-    await writeFile(path, String(doc))
+
+    const { applied, refused, before } = await editManifest(path, [
+      { service: fix.service, field: fix.field, value: shape(fix.field, fix.value), why: fix.why },
+    ])
+
+    if (!applied.length) {
+      throw new CliError(
+        refused[0]?.reason ?? `nothing could be applied to ${path}`,
+        EXIT.failure
+      )
+    }
     console.log(`${glyph.ok} fleet.yaml updated`)
 
     const restore = async (why: string) => {
-      await writeFile(path, before)
+      await restoreManifest(path, before)
       console.log(`${glyph.warn} ${why} — fleet.yaml put back`)
       console.log(`  ${c.dim(`Deploy the previous manifest with: fleet up ${fix.service}`)}\n`)
     }

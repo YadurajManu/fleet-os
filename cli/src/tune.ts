@@ -13,11 +13,17 @@
  * which a fleet with weeks of history never produces.
  */
 
+export type Candidate = { path: string; status: number; bytes: number }
+
 export type Observed = {
   name: string
   requestRamMb: number
   observedRamPeakMb: number | null
   observedRamSince: string | null
+  /** What the node found when it asked which paths this answers. */
+  discoveredHealth?: Candidate[] | null
+  /** Whether the manifest says container state alone decides. */
+  healthDisabled?: boolean
 }
 
 export type Advice =
@@ -83,4 +89,30 @@ export function tuneRam(svc: Observed, now: number = Date.now()): Advice {
 /** Megabytes as a manifest writes them. */
 export function asQuantity(mb: number): string {
   return mb % 1024 === 0 ? `${mb / 1024}Gi` : `${mb}Mi`
+}
+
+
+/**
+ * The health check a service should declare, from what it was measured
+ * answering.
+ *
+ * The gap this closes: the node sweeps candidate paths after every deploy and
+ * records exactly which ones returned 2xx, and until now that reached one line
+ * of advice telling a person to go and type it into the manifest. Fleet knew
+ * the answer and asked for it back.
+ *
+ * Only for a service that declares no check. One that declares a path has an
+ * operator's decision behind it, and overwriting that with a measurement would
+ * be the tool deciding it knows better about a choice it cannot see the reason
+ * for.
+ */
+export function tuneHealth(svc: Observed): { name: string; path: string } | null {
+  if (!svc.healthDisabled) return null
+  if (!svc.discoveredHealth?.length) return null
+
+  // The first 2xx-3xx, in the order the node tried them: a dedicated endpoint
+  // before "/", because a check that renders the whole application every ten
+  // seconds is the worse of two working answers.
+  const path = svc.discoveredHealth.find((c) => c.status >= 200 && c.status < 400)?.path
+  return path ? { name: svc.name, path } : null
 }

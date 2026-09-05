@@ -3,9 +3,10 @@ import assert from 'node:assert/strict'
 import { parseArgs, KNOWN_FLAGS, nearestFlag } from '../src/args.js'
 import { etaLine, progressLine } from '../src/progress.js'
 import { alertCheck, healthPathCheck } from '../src/commands/doctor.js'
-import { tuneRam, asQuantity, type Observed } from '../src/tune.js'
+import { tuneRam, tuneHealth, asQuantity, type Observed } from '../src/tune.js'
+import { editManifest } from '../src/manifest-edit.js'
 import { gunzipSync } from 'node:zlib'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -413,3 +414,95 @@ describe('the build context that leaves this machine', () => {
     await rm(dir, { recursive: true, force: true })
   })
 })
+describe('writing a measured fact back into the manifest', () => {
+  const svc = (o: Partial<Observed>): Observed => ({
+    name: 'api', requestRamMb: 512, observedRamPeakMb: null, observedRamSince: null, ...o,
+  })
+
+  test('a service that answers 2xx but declares no check gets the path', () => {
+    // The gap this closes: the node measured exactly this and it reached one
+    // line of advice telling a person to type it in themselves.
+    const out = tuneHealth(svc({
+      healthDisabled: true,
+      discoveredHealth: [
+        { path: '/health', status: 404, bytes: 0 },
+        { path: '/healthz', status: 200, bytes: 2 },
+        { path: '/', status: 200, bytes: 41_000 },
+      ],
+    }))
+    assert.equal(out?.path, '/healthz', 'the dedicated endpoint, not the one that renders the app')
+  })
+
+  test('a check somebody declared is never overwritten', () => {
+    // An operator's decision has a reason this cannot see. Replacing it with a
+    // measurement is the tool deciding it knows better.
+    assert.equal(tuneHealth(svc({ healthDisabled: false, discoveredHealth: [{ path: '/', status: 200, bytes: 5 }] })), null)
+  })
+
+  test('a service where nothing answered is left alone', () => {
+    // Its manifest is already correct — container state is the only evidence,
+    // and now that is measured rather than assumed.
+    assert.equal(tuneHealth(svc({ healthDisabled: true, discoveredHealth: [{ path: '/', status: 404, bytes: 0 }] })), null)
+  })
+
+  test('a service never swept proposes nothing', () => {
+    assert.equal(tuneHealth(svc({ healthDisabled: true, discoveredHealth: null })), null)
+  })
+})
+
+describe('the manifest editor', () => {
+  const write = async (body: string) => {
+    const dir = await mkdtemp(join(tmpdir(), 'fleet-edit-'))
+    const path = join(dir, 'fleet.yaml')
+    await writeFile(path, body)
+    return path
+  }
+
+  test('keeps the comments fleet init wrote', async () => {
+    // They are the only explanation a generated manifest carries, and a round
+    // trip through parse and stringify removes every one of them.
+    const path = await write(`services:
+  api:
+    build: ./api
+    # No health check: container state decides whether this is up.
+    container_port: 3100
+`)
+    await editManifest(path, [{ service: 'api', field: 'health', value: { path: '/healthz' }, why: 'measured' }])
+    const after = await readFile(path, 'utf8')
+    assert.match(after, /# No health check/, 'the comment must survive the edit')
+    assert.match(after, /healthz/)
+  })
+
+  test('finds a database under its own block', async () => {
+    // To everything downstream a database is a service, and a reader correcting
+    // one should not have to know which block the tool expects.
+    const path = await write(`services:
+  api: { build: ./api }
+databases:
+  db: { engine: postgres, node: box }
+`)
+    const { applied } = await editManifest(path, [
+      { service: 'db', field: 'resources', value: { ram: '256Mi' }, why: 'measured' },
+    ])
+    assert.equal(applied.length, 1)
+    assert.match(await readFile(path, 'utf8'), /256Mi/)
+  })
+
+  test('refuses a field it may not write, and says so', async () => {
+    const path = await write('services:\n  api: { build: ./api }\n')
+    const { applied, refused } = await editManifest(path, [
+      { service: 'api', field: 'build', value: './other', why: 'no' },
+    ])
+    assert.equal(applied.length, 0)
+    assert.match(refused[0]!.reason, /not a field this may write/)
+  })
+
+  test('refuses a service the manifest does not have', async () => {
+    const path = await write('services:\n  api: { build: ./api }\n')
+    const { refused } = await editManifest(path, [
+      { service: 'ghost', field: 'replicas', value: 2, why: 'no' },
+    ])
+    assert.match(refused[0]!.reason, /no service or database named/)
+  })
+})
+

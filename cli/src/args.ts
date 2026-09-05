@@ -48,7 +48,7 @@ export const KNOWN_FLAGS = new Set([
   'fleet', 'api', 'json', 'yes', 'y', 'help', 'h', 'version', 'v', 'no-wait',
   'plan', 'dry-run', 'force',
   // per command
-  'ai', 'all', 'channel', 'deploy', 'email', 'events', 'f', 'follow', 'limit',
+  'ai', 'all', 'apply', 'channel', 'deploy', 'email', 'events', 'f', 'follow', 'limit',
   'name', 'node', 'only', 'out', 'password', 'secret', 'service', 'sha',
   'since', 'terminal', 'to', 'token', 'url',
 ])

@@ -1,21 +1,38 @@
 import { request, requireFleet } from '../api.js'
 import { c } from '../render.js'
 import { glyph, rule } from '../ui.js'
-import { asQuantity, tuneRam, MIN_OBSERVATION_HOURS, type Observed } from '../tune.js'
+import { confirm } from '../prompt.js'
+import { editManifest, type ManifestEdit } from '../manifest-edit.js'
+import {
+  asQuantity,
+  tuneHealth,
+  tuneRam,
+  MIN_OBSERVATION_HOURS,
+  type Observed,
+} from '../tune.js'
 import type { Flags } from '../args.js'
 
 type Service = Observed & { id: string }
 
 /**
- * Reservations, checked against what the services actually used.
+ * The manifest, checked against what the services actually did.
  *
- * It proposes and never applies. Every number here is the system inferring
- * something about a machine, and the lesson of every inference this project has
- * shipped is that one leaving its evidence needs a person between it and the
- * manifest — a review once invented a node from a compose service name, and
- * once replaced a `build:` with `image: nginx:alpine` and served the welcome
- * page over somebody's site. Both were caught by a guardrail. A person reading
- * a diff is the cheapest guardrail there is.
+ * Two measured facts, in one place because they are the same kind of thing: a
+ * number a repository could not have told anyone, that Fleet found out by
+ * running the program. How much memory it uses, and which path it answers on.
+ *
+ * Both used to end as advice — a line telling the reader to go and edit
+ * `fleet.yaml` themselves, about something this already knew. `--apply` writes
+ * them, with a confirmation and through the same guarded editor `fleet fix`
+ * uses.
+ *
+ * It proposes and it asks. Every number here is the system inferring something
+ * about a machine, and the lesson of every inference this project has shipped
+ * is that one leaving its evidence needs a person between it and the manifest —
+ * a review once invented a node from a compose service name, and once replaced
+ * a `build:` with `image: nginx:alpine` and served the welcome page over
+ * somebody's site. Both were caught by a guardrail. A person reading a diff is
+ * the cheapest guardrail there is.
  */
 export const tuneCommand = {
   async run(_args: string[], flags: Flags) {
@@ -23,10 +40,11 @@ export const tuneCommand = {
     const { body } = await request<{ services: Service[] }>('GET', `/fleets/${fleetId}/services`)
 
     const advice = body.services.map((s) => tuneRam(s))
+    const health = body.services.map((s) => tuneHealth(s)).filter((h) => h !== null)
 
-    if (flags.json) return console.log(JSON.stringify({ fleetId, advice }, null, 2))
+    if (flags.json) return console.log(JSON.stringify({ fleetId, advice, health }, null, 2))
 
-    console.log(`\n${rule('tune · reservations against measured use')}`)
+    console.log(`\n${rule('tune · the manifest against what was measured')}`)
 
     const advised = advice.filter((a) => a.verdict === 'advise')
     const tight = advice.filter((a) => a.verdict === 'tight')
@@ -54,22 +72,75 @@ export const tuneCommand = {
       }
     }
 
-    if (advised.length) {
-      console.log(`\n  ${c.dim('edit fleet.yaml, then')} fleet up`)
-      for (const a of advised) {
-        if (a.verdict !== 'advise') continue
-        console.log(`  ${c.dim(`${a.name}:`)} resources: { ram: ${asQuantity(a.to)} }`)
-      }
+    for (const h of health) {
+      console.log(
+        `${glyph.warn} ${c.bold(h.name.padEnd(18))} answers 2xx on ${c.bold(h.path)} but declares no health check`
+      )
     }
 
-    if (!advised.length && !tight.length) {
+    // One list, because to the manifest they are the same edit.
+    const edits: ManifestEdit[] = [
+      ...advised.flatMap((a) =>
+        a.verdict === 'advise'
+          ? [
+              {
+                service: a.name,
+                field: 'resources',
+                value: { ram: asQuantity(a.to), cpu: 0.5 },
+                why: `peaks at ${a.peak}MB against ${asQuantity(a.from)} reserved`,
+              },
+            ]
+          : []
+      ),
+      ...health.map((h) => ({
+        service: h.name,
+        field: 'health',
+        value: { path: h.path },
+        why: `measured answering 2xx on ${h.path}`,
+      })),
+    ]
+
+    if (!edits.length && !tight.length) {
       console.log(
         `\n  ${c.dim(
-          waiting.length === advice.length
+          waiting.length === advice.length && !health.length
             ? 'Nothing has been watched long enough to advise on yet.'
-            : 'Every measured reservation is about right.'
+            : 'Every measured setting is about right.'
         )}`
       )
+      return console.log()
+    }
+
+    if (!edits.length) return console.log()
+
+    if (!flags.apply) {
+      console.log(`\n  ${c.dim('write these with')} fleet tune --apply`)
+      for (const e of edits) {
+        console.log(`  ${c.dim(`${e.service}:`)} ${e.field}: ${JSON.stringify(e.value)}`)
+      }
+      return console.log()
+    }
+
+    console.log()
+    for (const e of edits) {
+      console.log(`  ${e.service}.${e.field} → ${JSON.stringify(e.value)}  ${c.dim(e.why)}`)
+    }
+
+    if (!flags.yes && !flags.y) {
+      const ok = await confirm(`\nWrite ${edits.length} change(s) to fleet.yaml?`)
+      if (!ok) return console.log(`  ${c.dim('left alone')}\n`)
+    }
+
+    const { applied, refused } = await editManifest('fleet.yaml', edits)
+    for (const r of refused) {
+      console.log(`${glyph.warn} ${r.edit.service}.${r.edit.field} — ${r.reason}`)
+    }
+    if (applied.length) {
+      console.log(`${glyph.ok} fleet.yaml updated — ${applied.length} change(s)`)
+      // Not deployed here on purpose. `tune` changes settings that only take
+      // effect on the next rollout, and quietly restarting somebody's fleet
+      // because they asked for a manifest edit is a surprise nobody wants.
+      console.log(`\n  ${c.dim('review it, then')} fleet up`)
     }
     console.log()
   },
