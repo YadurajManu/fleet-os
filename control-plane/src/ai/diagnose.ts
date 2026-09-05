@@ -118,6 +118,12 @@ Never quote from a result marked shortened. What is left of it is a fragment, an
 
 Every finding cites what showed it. A claim you cannot point at is a guess, and a guess in a diagnosis is worse than no diagnosis.
 
+When source shows how a service reaches another -- a hostname, a port, an address -- the remedy depends on which side can safely change, and the source is what tells you which.
+
+A name the application reads from its environment can be set in the manifest, and that is a fix you may propose: env, with the value the running service actually needs.
+
+A name compiled into the source cannot. Matching it means renaming the service the manifest declares, which is a change only a person should make -- renaming points a service at a new volume, which is nothing for a cache and data loss for a database. Propose it anyway, so it is recorded and refused for a stated reason, and say plainly in your findings that the two sides disagree and which two places could be changed. Naming both is the useful part: the operator chooses.
+
 Include a fix only when the evidence names one exact manifest change that would resolve what you found, and leave it out entirely otherwise. It is a field on a service in fleet.yaml -- container_port, health, resources, env, command, replicas, placement -- and a wrong one is applied to somebody's running system, so a guess here is worse than nothing. Say what you found and stop.
 
 Answer as soon as you can support an answer. If the evidence does not settle it, say what you established and what you would look at next: an honest partial answer is useful and a confident wrong one is not.
@@ -188,10 +194,14 @@ const STEP_SCHEMA = {
       lookup: {
         type: 'object',
         properties: {
-          name: {
-            type: 'string',
-            description: 'One of: services, deployments, nodes, containers, logs, history, context, source, placements, probe.',
-          },
+          // An enum, not a description. A model asked for a lookup called
+          // "vote" — the name of the service it was investigating — which
+          // cost a step and a round trip to be told no such lookup exists.
+          // A description is advice; an enum is the one thing constrained
+          // decoding will not let it write. Built from TOOLS so a lookup
+          // added later cannot be left out of the list a model may choose
+          // from, which is the failure this whole line exists to prevent.
+          name: { type: 'string', enum: Object.keys(TOOLS) },
           // Named and described rather than left as a bare object.
           //
           // A small model asked `source` three times running with `args: {}`,

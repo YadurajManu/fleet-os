@@ -16,6 +16,7 @@ import { createContext, closeContext, type AppContext } from '../src/api/context
 import { deployments, fleets, nodes, orgs, services } from '../src/db/schema.js'
 import { hashToken, newAgentToken } from '../src/lib/tokens.js'
 import { diagnose, MAX_CALLS } from '../src/ai/diagnose.js'
+import { TOOLS } from '../src/ai/tools.js'
 
 let ctx: AppContext
 let fleetId: string
@@ -609,5 +610,24 @@ describe('the diagnosis loop', () => {
       !last.includes('already seen'),
       'nothing should be shortened while the conversation is still small'
     )
+  })
+
+  test('a lookup name it could invent is not in the schema at all', async () => {
+    // A model asked for a lookup called "vote" — the name of the service it was
+    // investigating — and spent a step and a round trip being told no such
+    // lookup exists. A description is advice; an enum is the one thing
+    // constrained decoding will not let it write.
+    const provider = scripted(['{"answer":{"summary":"x","findings":[],"next":[]}}'])
+    await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
+
+    const sent = JSON.parse(provider.prompts()[0]!)
+    const names: string[] = sent.response_format.json_schema.schema.properties.lookup.properties.name.enum
+    assert.ok(Array.isArray(names), 'the lookup name must be an enum, not a free string')
+    // Built from TOOLS, so a lookup added later cannot be left out of the list
+    // a model may choose from — which is the failure this exists to prevent.
+    for (const t of Object.keys(TOOLS)) {
+      assert.ok(names.includes(t), `${t} is callable but not offered in the schema`)
+    }
+    assert.equal(names.length, Object.keys(TOOLS).length, 'and nothing is offered that cannot be called')
   })
 })
