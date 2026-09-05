@@ -6,7 +6,7 @@ import type { Flags } from '../args.js'
 
 type CheckState = 'ok' | 'warn' | 'fail'
 type Check = { state: CheckState; label: string; detail: string; remedy?: string }
-type Node = { name: string; status: string; live: boolean; lastHeartbeatAt: string | null; agentVersion: string | null; diskMb: number; telemetry: { diskUsedMb: number; runtime: { dockerAvailable: boolean; dockerVersion?: string; dockerError?: string; registryStatus?: 'ok' | 'failed' | 'not_tested'; registryError?: string; lastReconcileError?: string } } | null }
+type Node = { name: string; status: string; live: boolean; lastHeartbeatAt: string | null; agentVersion: string | null; diskMb: number; telemetry: { diskUsedMb: number; diskTotalMb?: number | null; runtime: { dockerAvailable: boolean; dockerVersion?: string; dockerError?: string; registryStatus?: 'ok' | 'failed' | 'not_tested'; registryError?: string; lastReconcileError?: string } } | null }
 type Candidate = { path: string; status: number; bytes: number }
 type Service = {
   id: string
@@ -21,6 +21,43 @@ type Deployment = { status: string; failureReason: string | null; startedAt: str
 
 const icon = (state: CheckState) =>
   state === 'ok' ? glyph.ok : state === 'warn' ? glyph.warn : glyph.fail
+
+/**
+ * How full a node's disk is, from the right two numbers.
+ *
+ * It reported 615% used, which is arithmetic that cannot be right and quietly
+ * undermines every other line of the report. The denominator was `node.diskMb`
+ * — and the control plane says, in a comment directly above the field it sends
+ * instead:
+ *
+ *   Capacity. node.diskMb is FREE space and is what the scheduler places
+ *   against, so it is not the denominator for a "used of total" reading.
+ *
+ * Somebody wrote that warning and this divided by the wrong one anyway. Used
+ * over free exceeds 100% the moment a disk is more than half full, which is
+ * why the number looked wild rather than merely wrong.
+ *
+ * An agent too old to report a capacity gets no percentage at all. A missing
+ * figure is a gap somebody can fix; an invented one is a number people act on.
+ */
+export function diskUse(
+  usedMb: number | undefined,
+  totalMb: number | null | undefined
+): { state: 'ok' | 'warn' | 'fail'; detail: string; remedy?: string } {
+  if (!totalMb || usedMb === undefined) {
+    return { state: 'ok', detail: 'capacity not reported by this agent' }
+  }
+
+  const percent = Math.round((usedMb / totalMb) * 100)
+  return {
+    state: percent >= 90 ? 'fail' : percent >= 80 ? 'warn' : 'ok',
+    detail: `${percent}% used · ${Math.round(usedMb / 1024)}GB of ${Math.round(totalMb / 1024)}GB`,
+    remedy:
+      percent >= 80
+        ? 'Free space from Docker images/volumes before the node becomes unschedulable.'
+        : undefined,
+  }
+}
 
 /**
  * Services that answer on a health path but do not declare one.
@@ -236,7 +273,7 @@ export const doctorCommand = {
       })
       for (const node of result.nodes) {
         const runtime = node.telemetry?.runtime
-        const diskPercent = node.diskMb ? Math.round(((node.telemetry?.diskUsedMb ?? 0) / node.diskMb) * 100) : 0
+        const disk = diskUse(node.telemetry?.diskUsedMb, node.telemetry?.diskTotalMb)
         // Redis intentionally retains the last heartbeat briefly, but a node
         // that has stopped reporting must not have old host facts rendered as
         // current failures. The heartbeat check above is the only actionable
@@ -252,7 +289,7 @@ export const doctorCommand = {
         }
         checks.push({ state: runtime?.dockerAvailable ? 'ok' : 'fail', label: `Docker ${node.name}`, detail: runtime?.dockerAvailable ? `available${runtime.dockerVersion ? ` · ${runtime.dockerVersion}` : ''}` : runtime?.dockerError ?? 'No Docker runtime reported', remedy: runtime?.dockerAvailable ? undefined : 'Start Docker, then inspect the local fleet-agent log.' })
         checks.push({ state: runtime?.registryStatus === 'ok' ? 'ok' : runtime?.registryStatus === 'failed' ? 'fail' : 'warn', label: `registry ${node.name}`, detail: runtime?.registryStatus === 'ok' ? 'latest real image pull succeeded' : runtime?.registryError ?? 'not tested by a real image pull yet', remedy: runtime?.registryStatus === 'ok' ? undefined : 'Use a LAN-reachable REGISTRY_URL, then restart a service to run an authenticated pull.' })
-        checks.push({ state: diskPercent >= 90 ? 'fail' : diskPercent >= 80 ? 'warn' : 'ok', label: `disk ${node.name}`, detail: `${diskPercent}% used`, remedy: diskPercent >= 80 ? 'Free space from Docker images/volumes before the node becomes unschedulable.' : undefined })
+        checks.push({ ...disk, label: `disk ${node.name}` })
         if (runtime?.lastReconcileError) checks.push({ state: 'fail', label: `reconcile ${node.name}`, detail: runtime.lastReconcileError, remedy: 'Run `fleet logs <service> --follow` and inspect the deployment history.' })
       }
     }

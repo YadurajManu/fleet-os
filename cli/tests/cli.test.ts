@@ -2,7 +2,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseArgs, KNOWN_FLAGS, nearestFlag } from '../src/args.js'
 import { etaLine, progressLine } from '../src/progress.js'
-import { alertCheck, healthPathCheck } from '../src/commands/doctor.js'
+import { alertCheck, healthPathCheck, diskUse } from '../src/commands/doctor.js'
 import { tuneRam, tuneHealth, asQuantity, type Observed } from '../src/tune.js'
 import { editManifest } from '../src/manifest-edit.js'
 import { sourceFor, localSource } from '../src/source.js'
@@ -664,6 +664,39 @@ describe('changing a line of somebody else\'s source', () => {
     await rm(dir, { recursive: true, force: true })
   })
 })
+describe('how full a disk is', () => {
+  test('divides by capacity, not by what is left', () => {
+    // It reported 615% used. The denominator was the node's FREE space, which
+    // the control plane warns about in a comment directly above the capacity it
+    // sends instead — used over free exceeds 100% the moment a disk is more
+    // than half full, which is why the number looked wild rather than wrong.
+    const out = diskUse(24_000, 460_000)
+    assert.equal(out.state, 'ok')
+    assert.match(out.detail, /^5% used/)
+  })
+
+  test('never exceeds 100% for a disk that is merely full', () => {
+    const out = diskUse(95_000, 100_000)
+    assert.equal(out.state, 'fail')
+    assert.match(out.detail, /^95% used/)
+  })
+
+  test('says nothing rather than guessing when capacity is unknown', () => {
+    // An agent too old to report one gets no percentage. A missing figure is a
+    // gap somebody can fix; an invented one is a number people act on.
+    assert.match(diskUse(24_000, null).detail, /not reported/)
+    assert.match(diskUse(24_000, undefined).detail, /not reported/)
+    assert.equal(diskUse(24_000, null).state, 'ok', 'and it is not reported as a failure')
+  })
+
+  test('warns before it fails', () => {
+    assert.equal(diskUse(85, 100).state, 'warn')
+    assert.equal(diskUse(79, 100).state, 'ok')
+    assert.ok(diskUse(85, 100).remedy, 'and says what to do')
+    assert.ok(!diskUse(79, 100).remedy, 'but not when there is nothing to do')
+  })
+})
+
 
 
 
