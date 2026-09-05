@@ -129,8 +129,13 @@ Check what is actually serving afterwards, because a build that fails still
 leaves the previous container running and healthy:
 
 ```bash
-curl -s https://fleet.plastikworld.xyz | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js'
+curl -s https://fleetapp.plastikworld.xyz | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js'
 ```
+
+`fleetapp`, not `fleet`. The tunnel routes `fleet.plastikworld.xyz` to the
+marketing site and `fleetapp.plastikworld.xyz` to the dashboard; both are Vite
+builds with identically shaped asset names, so checking the wrong one shows a
+hash that never changes and reads exactly like a failed deploy.
 
 The hash changes on every dashboard build. If it did not change, the new code
 is not live no matter what the build log said.
