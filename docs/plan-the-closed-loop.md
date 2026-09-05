@@ -1,6 +1,7 @@
 # The closed loop — where we are, and what is left
 
-**Status:** assessment and proposal. Nothing here is built.
+**Status:** all three steps built and deployed, 2026-09-06. Kept as written
+because the assessment is the useful part; §7 records what happened.
 **Date:** 2026-09-06
 
 The goal, stated plainly: point Fleet at a repository and have it write the
@@ -185,3 +186,63 @@ incident.
 Step 2 is the one worth doing carefully. It is also the one where an untrusted
 input reaches a model that can propose changes to a running system, so the
 boundary matters more than the feature does.
+
+
+---
+
+## 7. What was built, and what it cost
+
+All three steps shipped the day this was written. What the plan did not
+anticipate is that most of the work was not the features.
+
+**Step 1 — write-back.** `fleet tune` reports both measured facts and `--apply`
+writes them, through an editor now shared with `fleet fix` so the two cannot
+drift. A declared health check is never overwritten.
+
+**Step 2 — the `source` lookup.** The CLI sends it with the question; the
+control plane never stores it, which keeps "customer source is held only for as
+long as it takes to build it" true. It is the first lookup whose contents are
+written by someone other than Fleet, and the prompt says so.
+
+**Step 3 — source-aware remedies.** The loop now uses source to decide which
+side of a mismatch can safely change, and names both when neither can.
+
+Verified on the fault that motivated all three:
+
+```
+The vote service's source code attempts to connect to Redis at host 'redis'.
+  source showed: g.redis = Redis(host='redis', db=0, socket_timeout=5) in app.py.
+No service named 'redis' exists in the fleet; the cache service is named 'cache'.
+```
+
+### The bugs found on the way, which were the real work
+
+Every one of these was in the loop, not the model, and each was found by
+watching a real investigation rather than by reading code.
+
+- **A cited fabrication.** A four-step investigation quoted a line of Python
+  that exists nowhere in the repository and named the wrong hostname from it.
+  Compaction triggered on count, so the source result — whose first four hundred
+  characters are imports — was shortened out from under it, and the model filled
+  the gap. Compaction now triggers on size. This was the most dangerous defect
+  of the session: the citation is what makes a finding checkable, and one
+  invented out of a gap reads more convincingly than no finding at all.
+- **Cycling.** Compaction replaced older results with a heading and nothing
+  else, so an investigation re-asked for evidence that had been rubbed out. It
+  looked like a model that could not reason. It was re-reading a blank page.
+- **A loop on a failing call.** `source` asked eight times with no arguments,
+  because the error described the symptom — `no service named "undefined"` —
+  rather than the mistake. Errors now name the missing argument, the schema
+  requires it, and three identical calls end the investigation.
+- **An invented lookup name.** The schema described the valid names in prose.
+  Prose is advice; an enum is a constraint.
+- **Provider assumptions.** Google wraps errors in an array and refuses
+  `reasoning_effort` without saying which field it disliked. Degradation no
+  longer depends on a provider naming what it refused.
+
+### The pattern
+
+Every one of them made a capable model look incapable, and every one was found
+by reading what the loop actually did rather than what it was supposed to do.
+The lesson for whoever extends this: when the model looks stupid, suspect the
+harness first.
