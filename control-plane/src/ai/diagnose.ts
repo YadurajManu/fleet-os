@@ -66,6 +66,28 @@ export type ProposedFix = {
   reason?: string
 }
 
+/**
+ * One line of a service's own source, and what to put there instead.
+ *
+ * The case a manifest cannot reach. A service connected to the hostname
+ * "redis" while the manifest named that database "cache"; the manifest side of
+ * that is a rename, which is refused because renaming points a service at a
+ * new volume. The other side is one line of Python.
+ *
+ * A find and replace rather than a rewritten file, deliberately. A model asked
+ * for a whole file returns a whole file, and every line it did not mean to
+ * change is a silent regression — that is exactly how a `build:` once became
+ * `image: nginx:alpine`. One line, matched literally, refused if it is not
+ * there exactly once.
+ */
+export type ProposedEdit = {
+  service: string
+  file: string
+  find: string
+  replace: string
+  why: string
+}
+
 export type Diagnosis =
   | {
       status: 'ok'
@@ -73,6 +95,7 @@ export type Diagnosis =
       findings: Finding[]
       next: string[]
       fix?: ProposedFix
+      edit?: ProposedEdit
       calls: Array<{ tool: string; args: Record<string, unknown> }>
       model: string
     }
@@ -84,7 +107,7 @@ const SYSTEM = `You work out why a service on Fleet OS is misbehaving, by asking
 Do not use function calling. This conversation has no functions available: emitting one is an error and the investigation stops. Reply with a JSON object and nothing else, one of:
 
   {"lookup": {"name": "<which>", "args": {...}}}
-  {"answer": {"summary": "<one or two sentences>", "findings": [{"claim": "<what is true>", "evidence": "<the lookup and what it showed>"}], "next": ["<what the operator should do>"], "fix": {"service": "<name>", "field": "<manifest field>", "value": <new value, or null to remove it>, "why": "<what this changes>"}}}
+  {"answer": {"summary": "<one or two sentences>", "findings": [{"claim": "<what is true>", "evidence": "<the lookup and what it showed>"}], "next": ["<what the operator should do>"], "fix": {"service": "<name>", "field": "<manifest field>", "value": <new value, or null to remove it>, "why": "<what this changes>"}, "edit": {"service": "<name>", "file": "<path inside the build context>", "find": "<the exact line to replace>", "replace": "<what to put there>", "why": "<what this changes>"}}}
 
 What you can ask for:
   services {}                     — every service in the fleet and whether it is running
@@ -123,6 +146,8 @@ When source shows how a service reaches another -- a hostname, a port, an addres
 A name the application reads from its environment can be set in the manifest, and that is a fix you may propose: env, with the value the running service actually needs.
 
 A name compiled into the source cannot. Matching it means renaming the service the manifest declares, which is a change only a person should make -- renaming points a service at a new volume, which is nothing for a cache and data loss for a database. Propose it anyway, so it is recorded and refused for a stated reason, and say plainly in your findings that the two sides disagree and which two places could be changed. Naming both is the useful part: the operator chooses.
+
+An edit changes one line of a service's own source, and is for the case a manifest cannot reach: a value written into the program itself. Give the line exactly as the source lookup showed it — it is matched literally, and must appear once in the file or it is refused. One line, never a rewrite. Prefer a fix over an edit whenever the manifest could carry the change instead, because a manifest is Fleet's to alter and a repository is not.
 
 Include a fix only when the evidence names one exact manifest change that would resolve what you found, and leave it out entirely otherwise. It is a field on a service in fleet.yaml -- container_port, health, resources, env, command, replicas, placement -- and a wrong one is applied to somebody's running system, so a guess here is worse than nothing. Say what you found and stop.
 
@@ -249,6 +274,17 @@ const STEP_SCHEMA = {
             },
             required: ['service', 'field', 'why'],
           },
+          edit: {
+            type: 'object',
+            properties: {
+              service: { type: 'string' },
+              file: { type: 'string', description: 'Path relative to the build context.' },
+              find: { type: 'string', description: 'The exact existing line, as source showed it.' },
+              replace: { type: 'string' },
+              why: { type: 'string' },
+            },
+            required: ['service', 'file', 'find', 'replace', 'why'],
+          },
         },
         required: ['summary'],
       },
@@ -314,7 +350,7 @@ function delegatesALookup(
 /** Pull one step out of a reply that may be fenced or padded with prose. */
 function parseStep(content: string): {
   call?: { tool: string; args: Record<string, unknown> }
-  answer?: { summary: string; findings: Finding[]; next: string[]; fix?: ProposedFix }
+  answer?: { summary: string; findings: Finding[]; next: string[]; fix?: ProposedFix; edit?: ProposedEdit }
 } {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/)
   const raw = (fenced?.[1] ?? content).trim()
@@ -324,7 +360,7 @@ function parseStep(content: string): {
   const parsed = JSON.parse(object) as {
     lookup?: { name?: unknown; args?: unknown }
     call?: { tool?: unknown; args?: unknown }
-    answer?: { summary?: unknown; findings?: unknown; next?: unknown; fix?: unknown }
+    answer?: { summary?: unknown; findings?: unknown; next?: unknown; fix?: unknown; edit?: unknown }
   }
 
   // Either spelling. The prompt asks for "lookup"/"name", and a model that has
@@ -356,7 +392,15 @@ function parseStep(content: string): {
           .filter(isAdvice)
           .slice(0, 5)
       : []
-    return { answer: { summary: parsed.answer.summary, findings, next, fix: parseFix(parsed.answer.fix) } }
+    return {
+      answer: {
+        summary: parsed.answer.summary,
+        findings,
+        next,
+        fix: parseFix(parsed.answer.fix),
+        edit: parseEdit(parsed.answer.edit),
+      },
+    }
   }
 
   throw new Error('the model returned neither a lookup nor an answer')
@@ -390,6 +434,29 @@ function parseFix(raw: unknown): ProposedFix | undefined {
 
   const verdict = applicability({ service: f.service, field: f.field, value, why: f.why })
   return { service: f.service, field: f.field, value, why: f.why, ...verdict }
+}
+
+/**
+ * A proposed source edit, checked before anybody is offered it.
+ *
+ * Only shape here. Whether the line exists, whether the file is inside the
+ * service's build context, and whether it can be put back are all questions the
+ * CLI answers, because only the CLI has the repository.
+ */
+function parseEdit(raw: unknown): ProposedEdit | undefined {
+  const e = raw as Partial<ProposedEdit> | undefined
+  if (!e) return undefined
+  const fields = [e.service, e.file, e.find, e.replace, e.why]
+  if (!fields.every((f) => typeof f === 'string' && f.length > 0)) return undefined
+  // A "line" long enough to be a file is a rewrite wearing a different name.
+  if (e.find!.length > 500 || e.replace!.length > 500) return undefined
+  return {
+    service: e.service!,
+    file: e.file!,
+    find: e.find!,
+    replace: e.replace!,
+    why: e.why!,
+  }
 }
 
 /**
@@ -646,6 +713,7 @@ export async function diagnose(
         findings: step_.answer.findings,
         next: step_.answer.next,
         fix: step_.answer.fix,
+        edit: step_.answer.edit,
         calls,
         model,
       }

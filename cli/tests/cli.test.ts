@@ -6,6 +6,7 @@ import { alertCheck, healthPathCheck } from '../src/commands/doctor.js'
 import { tuneRam, tuneHealth, asQuantity, type Observed } from '../src/tune.js'
 import { editManifest } from '../src/manifest-edit.js'
 import { sourceFor, localSource } from '../src/source.js'
+import { checkEdit } from '../src/source-edit.js'
 import { gunzipSync } from 'node:zlib'
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -571,5 +572,98 @@ describe('the source an investigation is sent', () => {
     await rm(dir, { recursive: true, force: true })
   })
 })
+describe('changing a line of somebody else\'s source', () => {
+  const repo = async (files: Record<string, string>, opts: { commit?: boolean } = {}) => {
+    const dir = await mkdtemp(join(tmpdir(), 'fleet-edit-'))
+    for (const [rel, body] of Object.entries(files)) {
+      await mkdir(dirname(join(dir, rel)), { recursive: true })
+      await writeFile(join(dir, rel), body)
+    }
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    execFileSync('git', ['config', 'user.email', 't@t.invalid'], { cwd: dir })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: dir })
+    if (opts.commit !== false) {
+      execFileSync('git', ['add', '-A'], { cwd: dir })
+      execFileSync('git', ['commit', '-qm', 'x'], { cwd: dir })
+    }
+    return dir
+  }
+
+  const manifest = 'services:\n  vote: { build: ./vote }\n'
+  const app = 'from redis import Redis\ng.redis = Redis(host="redis", db=0)\n'
+  const edit = {
+    service: 'vote', file: 'app.py',
+    find: 'Redis(host="redis", db=0)', replace: 'Redis(host="cache", db=0)',
+    why: 'the manifest names it cache',
+  }
+
+  test('accepts a line that exists once in the service it belongs to', async () => {
+    const dir = await repo({ 'fleet.yaml': manifest, 'vote/app.py': app })
+    const out = await checkEdit(dir, edit)
+    assert.equal(out.ok, true)
+    if (out.ok) assert.equal(out.line, 2, 'and says where it is')
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('refuses a path outside the service it is fixing', async () => {
+    // A fix for one service must not reach another's code, or anywhere else on
+    // the disk. Checked after resolving, so ../ cannot walk out.
+    const dir = await repo({ 'fleet.yaml': manifest, 'vote/app.py': app, 'other/secret.py': 'k = 1\n' })
+    const out = await checkEdit(dir, { ...edit, file: '../other/secret.py', find: 'k = 1' })
+    assert.equal(out.ok, false)
+    if (!out.ok) assert.match(out.reason, /outside \.\/vote/)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('refuses a line that is not there', async () => {
+    // The exact failure this guards: a model quoted a line of Python that
+    // existed nowhere in the file and named a hostname from it.
+    const dir = await repo({ 'fleet.yaml': manifest, 'vote/app.py': app })
+    const out = await checkEdit(dir, { ...edit, find: "os.getenv('REDIS_HOST', 'cache')" })
+    assert.equal(out.ok, false)
+    if (!out.ok) assert.match(out.reason, /quoted from memory/)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('refuses a line that appears twice', async () => {
+    const dir = await repo({
+      'fleet.yaml': manifest,
+      'vote/app.py': 'x = 1\nx = 1\n',
+    })
+    const out = await checkEdit(dir, { ...edit, find: 'x = 1', replace: 'x = 2' })
+    assert.equal(out.ok, false)
+    if (!out.ok) assert.match(out.reason, /appears 2 times/)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('refuses a file with uncommitted work', async () => {
+    // The undo is `git checkout`, so anything it would discard must not be
+    // there. Losing somebody's unsaved change to fix a hostname is not a trade
+    // worth offering.
+    const dir = await repo({ 'fleet.yaml': manifest, 'vote/app.py': app })
+    await writeFile(join(dir, 'vote/app.py'), `${app}# working on this\n`)
+    const out = await checkEdit(dir, edit)
+    assert.equal(out.ok, false)
+    if (!out.ok) assert.match(out.reason, /uncommitted changes/)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('refuses a file git does not track', async () => {
+    const dir = await repo({ 'fleet.yaml': manifest, 'vote/app.py': app }, { commit: false })
+    const out = await checkEdit(dir, edit)
+    assert.equal(out.ok, false)
+    if (!out.ok) assert.match(out.reason, /not tracked by git/)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('refuses a service the manifest does not build', async () => {
+    const dir = await repo({ 'fleet.yaml': 'services:\n  api: { image: nginx }\n', 'vote/app.py': app })
+    const out = await checkEdit(dir, edit)
+    assert.equal(out.ok, false)
+    if (!out.ok) assert.match(out.reason, /does not say where/)
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
 
 

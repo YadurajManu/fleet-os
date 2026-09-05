@@ -1,6 +1,7 @@
 import { CliError, EXIT, request, requireFleet } from '../api.js'
 import { editManifest, restoreManifest } from '../manifest-edit.js'
 import { localSource } from '../source.js'
+import { checkEdit, applyEdit, revertEdit, type SourceEdit } from '../source-edit.js'
 import { c } from '../render.js'
 import { glyph, rule } from '../ui.js'
 import { confirm } from '../prompt.js'
@@ -31,7 +32,14 @@ type Fix = {
 }
 
 type Diagnosis =
-  | { status: 'ok'; summary: string; findings: Array<{ claim: string; evidence: string }>; next: string[]; fix?: Fix }
+  | {
+      status: 'ok'
+      summary: string
+      findings: Array<{ claim: string; evidence: string }>
+      next: string[]
+      fix?: Fix
+      edit?: SourceEdit
+    }
   | { status: 'disabled'; reason: string }
   | { status: 'inconclusive'; reason: string }
 
@@ -50,6 +58,78 @@ function shape(field: string, value: Fix['value']): unknown {
 async function statusOf(fleetId: string, name: string): Promise<string> {
   const { body } = await request<{ services: Service[] }>('GET', `/fleets/${fleetId}/services`)
   return body.services.find((s) => s.name === name)?.current?.status ?? 'not running'
+}
+
+/**
+ * Change one line of a service's source, deploy it, and put it back if that
+ * made things worse.
+ *
+ * The furthest this reaches into somebody's work, so it is the most guarded
+ * thing here. `checkEdit` refuses anything it could not undo — a file outside
+ * the service's build context, one git does not track, one already carrying
+ * uncommitted work, a line that is absent or appears twice — and the undo is
+ * `git checkout`, which is exact rather than a best effort.
+ */
+async function applySourceEdit(fleetId: string, edit: SourceEdit, flags: Flags): Promise<void> {
+  const root = process.cwd()
+  const check = await checkEdit(root, edit)
+
+  if (!check.ok) {
+    console.log(`\n${glyph.warn} ${c.bold('This one has to be done by hand')}`)
+    console.log(`  ${edit.service} · ${edit.file}`)
+    console.log(`  ${c.dim(edit.why)}`)
+    console.log(`  ${c.dim(check.reason)}`)
+    return console.log()
+  }
+
+  console.log(`\n${glyph.info} ${c.bold('proposed')}  ${edit.file}:${check.line}  ${c.dim(edit.service)}`)
+  console.log(`  ${c.dim('-')} ${edit.find.trim()}`)
+  console.log(`  ${c.dim('+')} ${edit.replace.trim()}`)
+  console.log(`  ${c.dim(edit.why)}\n`)
+
+  if (!flags.yes && !flags.y) {
+    const ok = await confirm(`Change this line and redeploy ${edit.service}?`)
+    if (!ok) return console.log(`  ${c.dim('left alone')}\n`)
+  }
+
+  const wasRunning = (await statusOf(fleetId, edit.service)) === 'running'
+  await applyEdit(check.path, edit)
+  console.log(`${glyph.ok} ${edit.file} updated`)
+
+  const { body: svc } = await request<{ services: Array<{ id: string; name: string }> }>(
+    'GET',
+    `/fleets/${fleetId}/services`
+  )
+  const target = svc.services.find((s) => s.name === edit.service)
+  if (!target) {
+    await revertEdit(root, check.path)
+    console.log(`${glyph.warn} "${edit.service}" is not in this fleet — ${edit.file} put back\n`)
+    return
+  }
+
+  console.log(`${glyph.pending} deploying…`)
+  try {
+    await request('POST', `/services/${target.id}/deploy`, { body: {} })
+    await awaitRunning(target, { timeoutMs: 240_000 })
+  } catch (err) {
+    // Judged against where it started, like a manifest change: one already down
+    // and still down has not been made worse, and reverting there would take
+    // away a change that may well be right.
+    if (wasRunning) {
+      await revertEdit(root, check.path)
+      console.log(`${glyph.warn} ${edit.service} was running before and did not come back — ${edit.file} put back`)
+      console.log(`  ${c.dim(`Deploy the previous source with: fleet up ${edit.service}`)}\n`)
+      return
+    }
+    console.log(`${glyph.warn} still not running — ${(err as Error).message}`)
+    console.log(`  ${c.dim('The edit was kept: it was already down, so this did not make it worse.')}`)
+    console.log(`  ${c.dim(`undo it with: git checkout ${edit.file} && fleet up ${edit.service}`)}\n`)
+    return
+  }
+
+  console.log(`${glyph.ok} ${edit.service} is running`)
+  console.log(`\n  ${c.dim('review the change:')} git diff`)
+  console.log(`  ${c.dim('undo it:')} git checkout ${edit.file} && fleet up ${edit.service}\n`)
 }
 
 export const fixCommand = {
@@ -86,6 +166,15 @@ export const fixCommand = {
     for (const f of found.findings) {
       console.log(`  ${c.bold(f.claim)}`)
       console.log(`    ${c.dim(f.evidence)}`)
+    }
+
+    // A source edit, when the manifest cannot carry the change.
+    //
+    // Offered only after the manifest options are exhausted: a manifest is
+    // Fleet's to alter and a repository is not, so the same fault fixed either
+    // way should be fixed in the manifest.
+    if (!found.fix && found.edit) {
+      return await applySourceEdit(fleetId, found.edit, flags)
     }
 
     const fix = found.fix
