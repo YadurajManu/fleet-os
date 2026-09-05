@@ -582,6 +582,28 @@ export async function diagnose(
     const result = repeat ?? (await callTool(ctx, opts.fleetId, call.tool, call.args, opts.supplied))
     if (!repeat) seen.set(key, result)
 
+    // The same call, a third time. Stop.
+    //
+    // Watched against a small model: `source` asked eight times with no
+    // arguments, through an error naming the argument it was missing and a note
+    // saying it had already asked. It was not investigating, it was stuck, and
+    // every turn cost a request from a free tier that allows fifteen a minute.
+    //
+    // Three because two can be a model re-reading something before answering.
+    // Three of the identical call, error text and all, is a loop.
+    const asked = calls.filter((c) => `${c.tool}(${JSON.stringify(c.args ?? {})})` === key).length
+    if (asked >= 3) {
+      return {
+        status: 'inconclusive',
+        reason:
+          `Stopped: it asked for ${key} three times without using the answer. ` +
+          (result.ok
+            ? 'The lookup succeeded each time, so the evidence was already in hand.'
+            : `The lookup kept failing: ${result.error}`),
+        calls,
+      }
+    }
+
     messages.push({ role: 'assistant', content })
 
     // Tell it what it has left.

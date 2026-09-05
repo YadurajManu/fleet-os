@@ -35,6 +35,30 @@ function scripted(replies: string[]) {
   return { impl, turns: () => turn, prompts: () => prompts }
 }
 
+/**
+ * A provider that asks for a different thing every turn.
+ *
+ * Distinct on purpose: the loop stops an investigation that asks the identical
+ * question three times, so a script that repeats one lookup can no longer reach
+ * the step budget, the budget warning, or the compaction — the three things
+ * these fixtures exist to exercise.
+ */
+function wandering() {
+  let turn = 0
+  const prompts: string[] = []
+  const impl = (async (_url: string, init: RequestInit) => {
+    prompts.push(String(init.body))
+    const content = JSON.stringify({
+      lookup: { name: 'deployments', args: { service: `svc-${turn++}` } },
+    })
+    return new Response(JSON.stringify({ choices: [{ message: { content } }], usage: {} }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }) as unknown as typeof fetch
+  return { impl, turns: () => turn, prompts: () => prompts }
+}
+
 before(async () => {
   ctx = createContext(loadConfig())
   ctx.config = { ...ctx.config, AI_API_KEY: 'test-key' }
@@ -122,7 +146,7 @@ describe('the diagnosis loop', () => {
   test('it stops, and says what it looked at', async () => {
     // An agent looping on a fleet's data is a bill, not an investigation. What
     // it managed to look at is still worth reporting.
-    const { impl } = scripted([JSON.stringify({ call: { tool: 'nodes', args: {} } })])
+    const { impl } = wandering()
 
     const out = await diagnose(ctx, { fleetId, question: 'why is everything broken?' }, impl)
 
@@ -282,7 +306,7 @@ describe('the diagnosis loop', () => {
     // individually reasonable lookups and never stopped to answer. Knowing the
     // last step is the last one turns that into a partial answer, which with
     // evidence is worth far more than "stopped after 12 calls".
-    const provider = scripted(['{"lookup":{"name":"services","args":{}}}'])
+    const provider = wandering()
     await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
 
     const last = provider.prompts().at(-1)!
@@ -295,7 +319,7 @@ describe('the diagnosis loop', () => {
     // real investigation past a free tier's 8000 tokens a minute — the loop
     // stopped not because it had nothing left to ask but because it could no
     // longer afford to ask it.
-    const provider = scripted(['{"lookup":{"name":"services","args":{}}}'])
+    const provider = wandering()
     await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
 
     const last = provider.prompts().at(-1)!
@@ -304,7 +328,7 @@ describe('the diagnosis loop', () => {
 
     // And the most recent ones survive intact, or the investigation is reasoning
     // about nothing.
-    assert.match(last, /Result of services/, 'recent evidence stays in full')
+    assert.match(last, /Result of deployments/, 'recent evidence stays in full')
   })
 
   test('the step protocol is sent as a schema, not only asked for in words', async () => {
@@ -491,5 +515,34 @@ describe('the diagnosis loop', () => {
     ])
     await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
     assert.match(provider.prompts().at(-1)!, /already asked this/)
+  })
+
+  test('a call repeated a third time ends the investigation', async () => {
+    // Watched against a small model: `source` asked eight times with no
+    // arguments, through an error naming the argument it was missing and a
+    // note saying it had already asked. It was not investigating, it was
+    // stuck, and every turn cost a request from a tier that allows fifteen a
+    // minute.
+    const provider = scripted(['{"lookup":{"name":"source","args":{}}}'])
+    const out = await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
+
+    assert.equal(out.status, 'inconclusive')
+    if (out.status !== 'inconclusive') return
+    assert.match(out.reason, /three times/)
+    // And it says the lookup was failing, so a reader knows which of the two
+    // problems they have.
+    assert.match(out.reason, /needs a "service" argument/)
+    assert.equal(out.calls.length, 3, 'it stops at the third, not the twelfth')
+  })
+
+  test('two of the same call is not a loop', async () => {
+    // A model may reasonably re-read something before answering.
+    const provider = scripted([
+      '{"lookup":{"name":"services","args":{}}}',
+      '{"lookup":{"name":"services","args":{}}}',
+      '{"answer":{"summary":"done","findings":[],"next":[]}}',
+    ])
+    const out = await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
+    assert.equal(out.status, 'ok', 'twice is allowed')
   })
 })
