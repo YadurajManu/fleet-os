@@ -298,6 +298,8 @@ export async function assistManifest(
     const questions: Question[] = []
     let asked = 0
     let failures = 0
+    /** Why the first service failed, so a total failure can say something. */
+    let firstFailure = ''
 
     for (const part of opts.parts) {
       try {
@@ -330,17 +332,28 @@ export async function assistManifest(
         // splitting them up.
         edits.push(...out.edits.filter((e) => e.service === part.service))
         questions.push(...(out.questions as Question[]))
-      } catch {
+      } catch (err) {
         // One service failing is not the review failing. The rest still have
         // something to say, and reporting nothing because the fourth of seven
         // timed out would waste the six that worked.
+        //
+        // But the reason is kept. Swallowing it entirely meant that when every
+        // service failed the answer was "No service could be reviewed" and
+        // nothing else — a report with no way to act on it, which is the same
+        // defect as a diagnosis that says "This operation was aborted".
         failures++
+        if (!firstFailure) firstFailure = err instanceof Error ? err.message : String(err)
       }
     }
 
     if (!asked) {
       await refund()
-      return { status: 'kept_draft', reason: 'No service could be reviewed.' }
+      return {
+        status: 'kept_draft',
+        reason: firstFailure
+          ? `No service could be reviewed: ${firstFailure}`
+          : 'No service could be reviewed.',
+      }
     }
 
     // What a rename would cost, asked of the fleet rather than assumed.
