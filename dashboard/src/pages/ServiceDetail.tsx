@@ -9,6 +9,7 @@ import { helpFor } from '../lib/failureReasons'
 import { useState } from 'react'
 import { Reservation, HealthPath } from '../components/Measured'
 import Diagnose from '../components/Diagnose'
+import Backups from '../components/Backups'
 
 type Preview = {
   decision:
@@ -270,6 +271,22 @@ export default function ServiceDetail() {
           command has existed for a while and lived only in a terminal, which
           put it furthest from the moment it is wanted.
         */}
+        {/*
+          Only for a service that has a volume. A stateless service has nothing
+          to back up, and a panel offering to copy nothing is a panel that
+          makes people wonder what they are missing.
+        */}
+        {fleet && service.persistentVolume && (
+          <Panel title="backups">
+            <Backups
+              fleetId={fleet.id}
+              serviceId={service.id}
+              serviceName={service.name}
+              running={service.current?.status === 'running'}
+            />
+          </Panel>
+        )}
+
         {fleet && (
           <Panel title="diagnose">
             <div className="p-5">

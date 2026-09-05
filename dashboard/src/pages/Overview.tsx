@@ -5,6 +5,7 @@ import { mb, pct, since, toneOf } from '../lib/format'
 import { Dot, Empty, ErrorNote, GridFiller, Meter, Panel, StatusPill, Button } from '../components/ui'
 import ClusterMeshVisualizer from '../components/ClusterMeshVisualizer'
 import FirstRun from '../components/FirstRun'
+import SinceYouLeft from '../components/SinceYouLeft'
 
 export default function Overview() {
   const { fleet } = useAuth()
@@ -79,6 +80,13 @@ export default function Overview() {
 
   return (
     <div className="space-y-6">
+      {/*
+        First, because it is the question somebody opens a dashboard with.
+        Overview says what exists and Doctor says what is broken; a fleet that
+        is fine now and was on fire an hour ago looks identical to one that has
+        been fine all week, and only this tells them apart.
+      */}
+      {fleet && <SinceYouLeft fleetId={fleet.id} />}
       {/* Nothing is wrong yet, and nothing will say so when it is.
 
           The rules, the channels and the delivery all existed; this fleet

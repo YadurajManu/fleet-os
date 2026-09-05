@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { api, type Service } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { Logo, Dot } from './ui'
+import Palette from './Palette'
 
 const NAV = [
   ['Overview', '/'],
@@ -123,6 +124,9 @@ export default function Shell() {
           ))}
         </nav>
       </header>
+
+      {/* Mounted once, at the shell, so it is reachable from every page. */}
+      <Palette />
 
       <main className="mx-auto max-w-[1400px] px-6 py-8">
         <Outlet />

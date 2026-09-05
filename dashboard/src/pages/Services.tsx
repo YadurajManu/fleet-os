@@ -142,6 +142,19 @@ type FilterStatus = 'ALL' | 'RUNNING' | 'STOPPED' | 'FLEXIBLE' | 'PINNED'
 const worthExplaining = (reason: string | null | undefined): reason is string =>
   Boolean(reason) && reason!.length > 40 && reason!.includes('\n')
 
+/**
+ * Whether a deploy is happening right now, from what the list already says.
+ *
+ * The phases before `running` are all in flight. `superseded` and
+ * `rolled_back` are not — they are how a deployment ends when a newer one takes
+ * over, and treating them as live would leave a ladder on screen for ever.
+ */
+const IN_FLIGHT = new Set(['queued', 'building', 'pushing', 'scheduling', 'deploying'])
+
+function inFlight(service: Service): boolean {
+  return IN_FLIGHT.has(service.current?.status ?? '') || IN_FLIGHT.has(service.last?.status ?? '')
+}
+
 export default function Services() {
   const { fleet } = useAuth()
   const id = fleet?.id
@@ -793,8 +806,15 @@ export default function Services() {
                   </div>
                 </div>
 
-                {/* A deploy in flight, phase by phase. */}
-                {watching.includes(s.id) && (
+                {/*
+                  A deploy in flight, phase by phase — whoever started it.
+                  `watching` only ever held deploys begun in this tab, so a
+                  reload lost the ladder and a deploy run from the CLI never
+                  showed one at all, though the phases were in the database the
+                  whole time. The service's own status says whether something is
+                  in flight; that is the honest gate.
+                */}
+                {(watching.includes(s.id) || inFlight(s)) && (
                   <DeployProgress
                     serviceId={s.id}
                     onSettled={(status) => {
