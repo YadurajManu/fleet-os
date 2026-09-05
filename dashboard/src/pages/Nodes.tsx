@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api, type Node } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { mb, since, pct, toneOf } from '../lib/format'
 import { Button, ConfirmDialog, Dot, Empty, ErrorNote, Meter, Panel, StatusPill } from '../components/ui'
 import NodeTelemetry from '../components/NodeTelemetry'
+import { TableSkeleton } from '../components/Skeleton'
 
 type FilterOption = 'ALL' | 'ONLINE' | 'OFFLINE' | 'CORDONED' | 'DARWIN' | 'LINUX' | 'WINDOWS'
 type PlatformTab = 'unix' | 'windows' | 'cli'
@@ -35,8 +36,21 @@ export default function Nodes() {
   const [busy, setBusy] = useState<string | null>(null)
   const [actionError, setActionError] = useState<unknown>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<FilterOption>('ALL')
+
+  // The view lives in the address bar — see Services.tsx for why. Local state
+  // was lost on every navigation, which is half of why coming back to a page
+  // felt like starting over.
+  const [params, setParams] = useSearchParams()
+  const setParam = (key: string, value: string, fallback: string) => {
+    const next = new URLSearchParams(params)
+    if (value === fallback) next.delete(key)
+    else next.set(key, value)
+    setParams(next, { replace: true })
+  }
+  const search = params.get('q') ?? ''
+  const setSearch = (v: string) => setParam('q', v, '')
+  const filter = (params.get('filter') as FilterOption) || 'ALL'
+  const setFilter = (v: FilterOption) => setParam('filter', v, 'ALL')
   const [confirmRemove, setConfirmRemove] = useState<Node | null>(null)
 
   const nodes = useMemo(() => data?.nodes ?? [], [data])
@@ -382,7 +396,9 @@ export default function Nodes() {
       </div>
 
       {/* ── Nodes Cards Grid ─────────────────────────────────────── */}
-      {!loading && !nodes.length ? (
+      {loading && !nodes.length ? (
+        <TableSkeleton rows={3} columns={[30, 18, 18, 17, 17]} />
+      ) : !loading && !nodes.length ? (
         <Empty
           title="No machines paired yet"
           hint="Pair a laptop, desktop, or cloud VM you own to start scheduling container workloads onto your hardware."

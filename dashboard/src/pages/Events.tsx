@@ -1,8 +1,10 @@
+import { useSearchParams } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { api, type TimelineEvent } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { since } from '../lib/format'
 import { Empty, ErrorNote, Panel } from '../components/ui'
+import { TableSkeleton } from '../components/Skeleton'
 
 const REASON_TONE: Record<string, string> = {
   failover: 'text-[var(--color-warn)]',
@@ -24,7 +26,19 @@ export default function Events() {
   // This is the audit trail, and there was no way to search it. Working out
   // who stopped four services meant reading the control plane's container
   // logs, because the page that exists to answer that could not.
-  const [query, setQuery] = useState('')
+
+  // The view lives in the address bar — see Services.tsx for why. Local state
+  // was lost on every navigation, which is half of why coming back to a page
+  // felt like starting over.
+  const [params, setParams] = useSearchParams()
+  const setParam = (key: string, value: string, fallback: string) => {
+    const next = new URLSearchParams(params)
+    if (value === fallback) next.delete(key)
+    else next.set(key, value)
+    setParams(next, { replace: true })
+  }
+  const query = params.get('q') ?? ''
+  const setQuery = (v: string) => setParam('q', v, '')
   const [reason, setReason] = useState<string>('all')
 
   const events = data?.events ?? []
@@ -93,7 +107,9 @@ export default function Events() {
         </div>
       )}
 
-      {!loading && !events.length ? (
+      {loading && !events.length ? (
+        <TableSkeleton rows={6} columns={[22, 20, 38, 20]} />
+      ) : !loading && !events.length ? (
         <Empty title="Nothing has happened yet" hint="Deploys, failovers and reclaims all land here." />
       ) : !shown.length ? (
         <Empty

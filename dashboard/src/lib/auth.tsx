@@ -141,10 +141,44 @@ export function useAuth(): AuthState {
  * product about liveness — and polling is honest about what it is rather than
  * pretending a websocket exists.
  */
+/**
+ * The last answer for each key, so leaving a page and coming back does not
+ * start from nothing.
+ *
+ * Every page holds its data in component state, so navigating away unmounts it
+ * and returning shows an empty screen while it re-fetches something that was
+ * correct four seconds ago. This keeps it, and the page renders immediately
+ * with the old value while a fresh one is on its way.
+ *
+ * Module-level rather than a context, because it is not state anybody renders
+ * from — it is a memory of what the server last said, and a context would make
+ * every consumer re-render whenever any key changed.
+ */
+const cache = new Map<string, { at: number; value: unknown }>()
+
+/**
+ * How old a remembered answer may be before it is treated as absent.
+ *
+ * A minute. For a dashboard whose subject is what is running right now, showing
+ * a minute-old view is misleading rather than merely late — a service that
+ * stopped forty seconds ago should not still be green because the tab was in
+ * the background.
+ */
+const MAX_AGE_MS = 60_000
+
 export function usePoll<T>(fn: () => Promise<T>, deps: unknown[], intervalMs = 4000) {
-  const [data, setData] = useState<T | null>(null)
+  // The dependency list is the key, so it must identify the request completely.
+  // A key of only the page name would show one fleet's services under
+  // another's, which is worse than any reload.
+  const key = JSON.stringify(deps)
+  const remembered = cache.get(key)
+  const fresh = remembered && Date.now() - remembered.at < MAX_AGE_MS
+
+  const [data, setData] = useState<T | null>(fresh ? (remembered!.value as T) : null)
   const [error, setError] = useState<Error | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Not loading when there is something to show. The request still goes out;
+  // it is simply no longer the only thing on screen while it does.
+  const [loading, setLoading] = useState(!fresh)
   // Bumped by refetch(). Sitting in the dependency list means asking for fresh
   // data cancels the pending timer and ticks immediately, rather than adding a
   // second request racing the scheduled one.
@@ -157,6 +191,7 @@ export function usePoll<T>(fn: () => Promise<T>, deps: unknown[], intervalMs = 4
     const tick = async () => {
       try {
         const next = await fn()
+        cache.set(key, { at: Date.now(), value: next })
         if (!alive) return
         setData(next)
         setError(null)

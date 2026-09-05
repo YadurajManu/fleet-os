@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import { api, type AuditEntry } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
@@ -56,7 +57,19 @@ const SETUP_REASONS: Record<string, string> = {
 
 function GitHubWorkspace({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fleet']> }) {
   const [installationId, setInstallationId] = useState<number | null>(null)
-  const [search, setSearch] = useState('')
+
+  // The view lives in the address bar — see Services.tsx for why. Local state
+  // was lost on every navigation, which is half of why coming back to a page
+  // felt like starting over.
+  const [params, setParams] = useSearchParams()
+  const setParam = (key: string, value: string, fallback: string) => {
+    const next = new URLSearchParams(params)
+    if (value === fallback) next.delete(key)
+    else next.set(key, value)
+    setParams(next, { replace: true })
+  }
+  const search = params.get('repo') ?? ''
+  const setSearch = (v: string) => setParam('repo', v, '')
   const [selected, setSelected] = useState<GitHubRepo | null>(null)
   const [branch, setBranch] = useState('')
   const [manifestPath, setManifestPath] = useState('fleet.yaml')

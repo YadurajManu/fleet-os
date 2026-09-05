@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api, type Service } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { mb, since, toneOf } from '../lib/format'
@@ -70,6 +70,7 @@ import DeployProgress from '../components/DeployProgress'
 import ExplainFailure from '../components/ExplainFailure'
 import PastFailures from '../components/PastFailures'
 import { helpFor } from '../lib/failureReasons'
+import { TableSkeleton } from '../components/Skeleton'
 
 const TEMPLATES: Record<string, string> = {
   nginx: `fleet: homelab
@@ -148,8 +149,38 @@ export default function Services() {
 
   const { data, error, loading } = usePoll(() => api<{ services: Service[] }>(`/fleets/${id}/services`), [id])
 
-  const [search, setSearch] = useState('')
-  const [filterStatus, setFilterStatus] = useState<FilterStatus>('ALL')
+  /**
+   * What you are looking at lives in the address bar.
+   *
+   * Held in component state it was lost the moment you navigated away, which is
+   * half of why leaving this page and coming back felt like starting over. In
+   * the URL it survives that for free, and three other things follow: a
+   * filtered view becomes a link somebody can send, the back button does what
+   * it looks like it does, and a reload keeps the view.
+   *
+   * Only the fields that describe the view. A half-typed manifest, an open
+   * dialog and which row is expanded all stay local — none of them would mean
+   * anything to somebody opening the link, and restoring a confirmation dialog
+   * from a URL would be actively wrong.
+   */
+  const [params, setParams] = useSearchParams()
+  const search = params.get('q') ?? ''
+  const filterStatus = (params.get('status') as FilterStatus) || 'ALL'
+
+  const setParam = (key: string, value: string, fallback: string) => {
+    const next = new URLSearchParams(params)
+    // A default belongs in the code, not in the address bar: ?status=ALL is
+    // noise in a link, and worse, it is a link that stops meaning "everything"
+    // if the default ever changes.
+    if (value === fallback) next.delete(key)
+    else next.set(key, value)
+    // Replace rather than push. Each keystroke is not a place somebody wants to
+    // go back to, and pushing would make the back button undo one letter.
+    setParams(next, { replace: true })
+  }
+
+  const setSearch = (value: string) => setParam('q', value, '')
+  const setFilterStatus = (value: FilterStatus) => setParam('status', value, 'ALL')
   const [manifest, setManifest] = useState(TEMPLATES.nginx!)
   const [selectedTemplate, setSelectedTemplate] = useState('nginx')
   const [showEditor, setShowEditor] = useState(false)
@@ -524,7 +555,12 @@ export default function Services() {
       </div>
 
       {/* ── Services Cards List ─────────────────────────────────── */}
-      {!loading && !services.length ? (
+      {loading && !services.length ? (
+        // Shaped like the table that is coming, so the page does not jump when
+        // it lands. Only ever seen on a first visit now that usePoll remembers
+        // its last answer.
+        <TableSkeleton rows={4} columns={[34, 18, 16, 16, 16]} />
+      ) : !loading && !services.length ? (
         <Empty
           title="No services in this fleet"
           hint="Apply a fleet.yaml manifest to declare container workloads, ports, memory requirements, and placement rules."
