@@ -410,6 +410,21 @@ function forPrompt(result: ToolResult): string {
 const KEEP_IN_FULL = 3
 
 /**
+ * The marker on a shortened result, and the reason it keeps its opening.
+ *
+ * The first version replaced an older result with its header and nothing else.
+ * That saved the tokens and lost the evidence: a real investigation went
+ * source, services, history, deployments, context, then source, services,
+ * history, deployments, source again — cycling, because by the time it had
+ * gathered enough to answer, the answers had been compacted into headings. It
+ * was not failing to reason. It was re-reading a page that had been rubbed out.
+ *
+ * Four hundred characters of each older result is enough to hold a hostname, a
+ * status, a failure reason — the things a conclusion is actually built from.
+ */
+const GIST = '(already seen, shortened)'
+
+/**
  * Replace all but the most recent results with a one-line note.
  *
  * In place on the array, because the alternative is rebuilding the whole
@@ -418,9 +433,12 @@ const KEEP_IN_FULL = 3
  */
 function compact(messages: Array<{ role: string; content: string }>, resultAt: number[]): void {
   for (const i of resultAt.slice(0, -KEEP_IN_FULL)) {
-    const first = messages[i]!.content.split('\n')[0] ?? ''
-    if (first.endsWith('(already seen)')) continue
-    messages[i]!.content = `${first.replace(/:$/, '')} (already seen)`
+    const content = messages[i]!.content
+    if (content.includes(GIST)) continue
+
+    const [header = '', ...rest] = content.split('\n')
+    const body = rest.join('\n').split('\n\n')[0] ?? ''
+    messages[i]!.content = `${header.replace(/:$/, '')} ${GIST}\n${body.slice(0, 400)}`
   }
 }
 

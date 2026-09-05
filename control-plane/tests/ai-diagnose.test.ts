@@ -326,6 +326,15 @@ describe('the diagnosis loop', () => {
     const seen = (last.match(/already seen/g) ?? []).length
     assert.ok(seen > 0, 'the early results should have been shrunk by the final turn')
 
+    // Shortened, not erased. The first version kept only the heading, and a
+    // real investigation cycled — source, services, history, deployments,
+    // context, then the same four again — because by the time it had gathered
+    // enough to answer, the answers had been rubbed out. It was re-reading a
+    // blank page, not failing to reason.
+    assert.match(last, /already seen, shortened/)
+    const shortened = last.split('already seen, shortened')[1] ?? ''
+    assert.ok(shortened.trim().length > 20, 'a shortened result must still carry its evidence')
+
     // And the most recent ones survive intact, or the investigation is reasoning
     // about nothing.
     assert.match(last, /Result of deployments/, 'recent evidence stays in full')
