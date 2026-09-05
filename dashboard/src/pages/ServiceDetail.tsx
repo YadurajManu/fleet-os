@@ -7,6 +7,8 @@ import LogTerminal from '../components/LogTerminal'
 import ExplainFailure from '../components/ExplainFailure'
 import { helpFor } from '../lib/failureReasons'
 import { useState } from 'react'
+import { Reservation, HealthPath } from '../components/Measured'
+import Diagnose from '../components/Diagnose'
 
 type Preview = {
   decision:
@@ -218,6 +220,63 @@ export default function ServiceDetail() {
             ))}
           </dl>
         </Panel>
+
+        {/*
+          Measured, beside declared, because the pairing is the point: what the
+          manifest claims against what the node saw. `fleet init` writes
+          512Mi because 512Mi is a round number, and the scheduler plans around
+          that figure for the life of the service — the gap only becomes visible
+          when the two sit next to each other.
+        */}
+        <Panel title="measured">
+          <dl className="divide-y divide-[var(--color-line)]">
+            <div className="px-5 py-2.5">
+              <dt className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-[var(--color-fg-dim)]">
+                memory used of reserved
+              </dt>
+              <dd className="mt-2">
+                <Reservation service={service} />
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-4 px-5 py-2.5">
+              <dt className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-[var(--color-fg-dim)]">
+                health path
+              </dt>
+              <dd>
+                <HealthPath service={service} />
+              </dd>
+            </div>
+            {service.observedRamSince && (
+              <div className="flex items-center justify-between gap-4 px-5 py-2.5">
+                <dt className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-[var(--color-fg-dim)]">
+                  watched since
+                </dt>
+                <dd className="font-mono text-[12px] text-[var(--color-fg-muted)]">
+                  {since(service.observedRamSince)}
+                </dd>
+              </div>
+            )}
+            <div className="px-5 py-2.5">
+              <p className="text-[11px] leading-relaxed text-[var(--color-fg-dim)]">
+                Both of these are things no repository could have said. Write them into
+                your manifest with <code className="font-mono">fleet tune --apply</code>.
+              </p>
+            </div>
+          </dl>
+        </Panel>
+
+        {/*
+          Asking about this service, on the page where you noticed it. The
+          command has existed for a while and lived only in a terminal, which
+          put it furthest from the moment it is wanted.
+        */}
+        {fleet && (
+          <Panel title="diagnose">
+            <div className="p-5">
+              <Diagnose fleetId={fleet.id} service={service.name} />
+            </div>
+          </Panel>
+        )}
 
         {/* Why here, and where it would go next — the scheduler, made legible. */}
         <Panel title="placement decision">

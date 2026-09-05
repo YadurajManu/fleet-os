@@ -166,6 +166,28 @@ export type Service = {
   placementPolicy: 'pinned' | 'preferred' | 'flexible'
   pinnedNodeId: string | null
   requestRamMb: number
+  /**
+   * The most memory this service has actually been seen using, and since when.
+   *
+   * The reservation above is a number somebody guessed once — `fleet init`
+   * writes 512Mi because 512Mi is a round number, and the scheduler then plans
+   * capacity around it for the life of the service. This is what the node
+   * measured. Null until the agent has reported one, which is honest: nothing
+   * has been measured rather than nothing has been used.
+   */
+  observedRamPeakMb: number | null
+  observedRamSince: string | null
+  /**
+   * What the node found when it asked this service which paths it answers.
+   *
+   * Only populated for a service that declares no health check, because that is
+   * the only case where the answer is unknown. An empty array is a result and
+   * not an absence: every candidate was tried and none answered, which is true
+   * of an API behind a route prefix.
+   */
+  discoveredHealth: Array<{ path: string; status: number; bytes: number }> | null
+  healthDisabled: boolean
+  healthCheckPath: string | null
   requiresGpu: boolean
   persistentVolume: boolean
   volumeName: string | null
