@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type Service } from '../lib/api'
+import { api, type Node, type Service } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { mb, since, toneOf } from '../lib/format'
 
@@ -71,6 +71,7 @@ import ExplainFailure from '../components/ExplainFailure'
 import PastFailures from '../components/PastFailures'
 import { helpFor } from '../lib/failureReasons'
 import { TableSkeleton } from '../components/Skeleton'
+import { whyEmpty } from '../components/WhyEmpty'
 
 const TEMPLATES: Record<string, string> = {
   nginx: `fleet: homelab
@@ -148,6 +149,9 @@ export default function Services() {
   const canEdit = fleet?.role === 'owner' || fleet?.role === 'admin'
 
   const { data, error, loading } = usePoll(() => api<{ services: Service[] }>(`/fleets/${id}/services`), [id])
+  // Asked so an empty list can say why it is empty. The cache in usePoll makes
+  // this nearly free — the Nodes page has usually fetched it already.
+  const nodes = usePoll(() => api<{ nodes: Node[] }>(`/fleets/${id}/nodes`), [id])
 
   /**
    * What you are looking at lives in the address bar.
@@ -562,8 +566,10 @@ export default function Services() {
         <TableSkeleton rows={4} columns={[34, 18, 16, 16, 16]} />
       ) : !loading && !services.length ? (
         <Empty
-          title="No services in this fleet"
-          hint="Apply a fleet.yaml manifest to declare container workloads, ports, memory requirements, and placement rules."
+          {...(() => {
+            const { title, hint } = whyEmpty(nodes.data?.nodes, 'services')
+            return { title, hint }
+          })()}
           action={
             <Button variant="primary" onClick={() => setShowEditor(true)}>
               Create Your First Service

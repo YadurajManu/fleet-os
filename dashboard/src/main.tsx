@@ -11,6 +11,7 @@ import Services from './pages/Services'
 import ServiceDetail from './pages/ServiceDetail'
 import Events from './pages/Events'
 import Alerts from './pages/Alerts'
+import Secrets from './pages/Secrets'
 import Settings from './pages/Settings'
 import Doctor from './pages/Doctor'
 import Logs from './pages/Logs'
@@ -79,6 +80,7 @@ function Gate() {
         <Route path="services/:serviceId" element={<ServiceDetail />} />
         <Route path="events" element={<Events />} />
         <Route path="alerts" element={<Alerts />} />
+        <Route path="secrets" element={<Secrets />} />
         <Route path="doctor" element={<Doctor />} />
         <Route path="logs" element={<Logs />} />
         <Route path="settings" element={<Settings />} />
