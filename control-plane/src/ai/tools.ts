@@ -390,6 +390,26 @@ export const TOOLS = {
 export type ToolName = keyof typeof TOOLS
 
 /** Call a tool by name, with whatever arguments a model produced. */
+/**
+ * The argument each lookup cannot work without.
+ *
+ * A model asked `source` seven times in one investigation with no arguments at
+ * all. What came back was "no service named \"undefined\"", which describes the
+ * symptom and not the mistake, so it asked again, and again — seven of eight
+ * steps spent learning nothing. An error that names the missing argument is the
+ * difference between a correction and a loop.
+ */
+const REQUIRES: Record<string, string> = {
+  deployments: 'service',
+  containers: 'node',
+  logs: 'service',
+  history: 'service',
+  context: 'service',
+  source: 'service',
+  placements: 'service',
+  probe: 'service',
+}
+
 export async function callTool(
   ctx: AppContext,
   fleetId: string,
@@ -400,6 +420,14 @@ export async function callTool(
   const tool = (TOOLS as Record<string, unknown>)[name]
   if (typeof tool !== 'function') {
     return fail(`no tool named "${name}". Available: ${Object.keys(TOOLS).join(', ')}`)
+  }
+
+  const needs = REQUIRES[name]
+  if (needs && typeof (args ?? {})[needs] !== 'string') {
+    return fail(
+      `${name} needs a "${needs}" argument — call it as {"lookup": {"name": "${name}", ` +
+        `"args": {"${needs}": "<name>"}}}. Use the services lookup to find the names.`
+    )
   }
   try {
     return await (

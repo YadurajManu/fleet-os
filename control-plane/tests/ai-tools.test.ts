@@ -220,6 +220,39 @@ describe('the tools a diagnosis can call', () => {
     if (!out.ok) assert.match(out.error, /no service named/)
   })
 
+  test('a lookup called without its argument says which one', async () => {
+    // A model asked `source` seven times in one investigation with no arguments
+    // at all. What came back was 'no service named "undefined"' — the symptom,
+    // not the mistake — so it asked again, and again: seven of eight steps
+    // spent learning nothing. Naming the argument is the difference between a
+    // correction and a loop.
+    const out = await callTool(ctx, fleetId, 'source', {})
+    assert.equal(out.ok, false)
+    if (!out.ok) {
+      assert.match(out.error, /needs a "service" argument/)
+      assert.match(out.error, /"args": \{"service"/, 'and shows the shape to send')
+    }
+  })
+
+  test('every lookup that needs a name refuses without one', async () => {
+    // One at a time is how they were written and how they will be changed. A
+    // lookup added later that quietly accepts undefined reintroduces exactly
+    // the loop above.
+    for (const [tool, arg] of [
+      ['deployments', 'service'],
+      ['logs', 'service'],
+      ['history', 'service'],
+      ['context', 'service'],
+      ['probe', 'service'],
+      ['placements', 'service'],
+      ['containers', 'node'],
+    ] as const) {
+      const out = await callTool(ctx, fleetId, tool, {})
+      assert.equal(out.ok, false, `${tool} accepted a missing ${arg}`)
+      if (!out.ok) assert.match(out.error, new RegExp(`needs a "${arg}" argument`))
+    }
+  })
+
   test('an unknown tool says what there is instead of failing silently', async () => {
     const out = await callTool(ctx, fleetId, 'rm_rf', {})
     assert.equal(out.ok, false)
