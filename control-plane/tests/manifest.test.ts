@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseManifest, parseQuantityMb, ManifestError } from '../src/manifest/parse.js'
+import { parseManifest, parseQuantityMb, ManifestError, unresolvedNodes } from '../src/manifest/parse.js'
 
 const VALID = `
 fleet: homelab
@@ -330,3 +330,60 @@ services:
     assert.equal(web.health.path, '/healthz')
   })
 })
+describe('nodes a manifest names but the fleet does not have', () => {
+  test('one error per line to edit, not one per service affected', () => {
+    // The real shape, from Docker's voting app imported by `fleet import`: two
+    // databases pinned to CHANGE_ME and three services that use them. It
+    // produced five errors, three of which named `services.<name>.node` — a key
+    // that file does not contain, because those services never declared a node.
+    // They inherit it, since a service reaches a database by name only on the
+    // same machine.
+    const m = parseManifest(`
+fleet: homelab
+services:
+  vote:   { build: ./vote, uses: [cache] }
+  result: { build: ./result, uses: [db] }
+  worker: { build: ./worker, uses: [cache, db] }
+databases:
+  cache: { engine: redis, node: CHANGE_ME }
+  db:    { engine: postgres, node: CHANGE_ME }
+`)
+
+    const issues = unresolvedNodes(m.services, new Set(['sayyestoheaven']))
+
+    assert.deepEqual(
+      issues.map((i) => i.path).sort(),
+      ['databases.cache.node', 'databases.db.node'],
+      'two lines are wrong, so two errors — and both name a key the file has'
+    )
+    assert.ok(
+      issues.every((i) => !/services\./.test(i.path)),
+      'nothing may point at a services.<name>.node that was never written'
+    )
+    // The services that inherit are named as consequences, so a reader knows
+    // why fixing one line fixes four things.
+    assert.match(issues.find((i) => i.path === 'databases.cache.node')!.message, /vote/)
+  })
+
+  test('a service that names its own bad node is still reported against itself', () => {
+    const m = parseManifest(`
+fleet: homelab
+services:
+  api: { build: ./api, placement: pinned, node: gone }
+`)
+    const issues = unresolvedNodes(m.services, new Set(['sayyestoheaven']))
+    assert.deepEqual(issues.map((i) => i.path), ['services.api.node'])
+    assert.match(issues[0]!.message, /this fleet has: sayyestoheaven/)
+  })
+
+  test('an empty fleet says so rather than listing nothing', () => {
+    const m = parseManifest(`
+fleet: homelab
+services:
+  api: { build: ./api, placement: pinned, node: gone }
+`)
+    const issues = unresolvedNodes(m.services, new Set())
+    assert.match(issues[0]!.message, /no nodes yet/)
+  })
+})
+

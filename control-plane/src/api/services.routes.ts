@@ -2,7 +2,7 @@ import { and, eq, ne, desc, inArray, gte, count } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
 import { services, deployments, nodes, fleets, placementEvents } from '../db/schema.js'
-import { parseManifest, ManifestError } from '../manifest/parse.js'
+import { parseManifest, unresolvedNodes, ManifestError } from '../manifest/parse.js'
 import { syncManifest } from '../manifest/sync.js'
 import { place } from '../scheduler/placement.js'
 import { fleetSnapshot, toServiceSpec } from '../scheduler/snapshot.js'
@@ -100,14 +100,7 @@ export async function serviceRoutes(app: FastifyInstance) {
           .from(nodes)
           .where(eq(nodes.fleetId, fleetId))
         const known = new Set(fleetNodes.map((n) => n.name))
-        const unresolved = parsed.services
-          .filter((s) => s.node && !known.has(s.node))
-          .map((s) => ({
-            path: `services.${s.name}.node`,
-            message:
-              `no node named "${s.node}" in this fleet` +
-              (known.size ? ` — this fleet has: ${[...known].join(', ')}` : ' — this fleet has no nodes yet'),
-          }))
+        const unresolved = unresolvedNodes(parsed.services, known)
         if (unresolved.length) return { valid: false, issues: unresolved }
 
         return {

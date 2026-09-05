@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { and, eq, inArray, notInArray } from 'drizzle-orm'
 import { ENGINES, passwordRefFor } from './databases.js'
+import { unresolvedNodes } from './parse.js'
 import { hasSecret, setSecret } from '../secrets/store.js'
 import { managedHostname } from '../ingress/routes.js'
 import { services, nodes, fleets } from '../db/schema.js'
@@ -60,9 +61,9 @@ export async function syncManifest(
 
   // Resolve pinned node names before writing anything, so a manifest naming a
   // node that does not exist fails whole rather than half-applied.
-  const unresolved = manifest.services
-    .filter((s) => s.node && !nodeByName.has(s.node))
-    .map((s) => `services.${s.name}.node: no node named "${s.node}" in this fleet`)
+  const unresolved = unresolvedNodes(manifest.services, new Set(nodeByName.keys())).map(
+    (i) => `${i.path}: ${i.message}`
+  )
   if (unresolved.length) {
     throw ApiError.unprocessable('unknown_node', 'The manifest names nodes that are not in this fleet', unresolved)
   }

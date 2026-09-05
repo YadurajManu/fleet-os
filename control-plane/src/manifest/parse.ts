@@ -341,7 +341,20 @@ export type ParsedManifest = {
   fleet: string
   /** Declared by the manifest, or undefined for the caller to default. */
   project?: string
-  services: Array<ServiceManifest & { name: string }>
+  services: Array<
+    ServiceManifest & {
+      name: string
+      /**
+       * Where this service's `node` is written, when it is not on the service's
+       * own line: `databases.<name>.node` for a database, and the same for a
+       * service that inherited its node by using one.
+       *
+       * An error naming a key the reader's file does not contain sends them
+       * looking for a line that was never there.
+       */
+      nodePath?: string
+    }
+  >
   /**
    * Databases the manifest declared, so the caller can create the credentials
    * they need. They are already present in `services` as well — this is the
@@ -365,6 +378,50 @@ export class ManifestError extends Error {
  * found, not just the first — fixing a manifest one error per deploy is a
  * miserable loop.
  */
+/**
+ * Unusable node names, reported once per line the reader has to edit.
+ *
+ * A manifest with two databases pinned to CHANGE_ME produced five errors:
+ * one for each database, and one for each service that inherits a node by
+ * using one. Three of the five named `services.<name>.node`, a key that file
+ * does not contain — so the reader is told to fix a line that was never there,
+ * and told it three times.
+ *
+ * Grouped by where the value is actually written, and the services that
+ * inherited it are named as consequences rather than as separate faults.
+ */
+export function unresolvedNodes(
+  services: Array<{ name: string; node?: string; nodePath?: string }>,
+  known: Set<string>
+): Array<{ path: string; message: string }> {
+  const bySource = new Map<string, { node: string; inherited: string[] }>()
+
+  for (const s of services) {
+    if (!s.node || known.has(s.node)) continue
+    const path = s.nodePath ?? `services.${s.name}.node`
+    const entry = bySource.get(path) ?? { node: s.node, inherited: [] }
+    // A service whose node lives elsewhere is a consequence of that line, not
+    // a fault of its own.
+    if (s.nodePath) entry.inherited.push(s.name)
+    bySource.set(path, entry)
+  }
+
+  return [...bySource.entries()].map(([path, { node, inherited }]) => {
+    const owner = path.split('.')[1]
+    const others = inherited.filter((n) => n !== owner)
+    return {
+      path,
+      message:
+        `no node named "${node}" in this fleet` +
+        (known.size ? ` — this fleet has: ${[...known].join(', ')}` : ' — this fleet has no nodes yet') +
+        (others.length
+          ? `. ${others.join(', ')} ${others.length === 1 ? 'takes its' : 'take their'} node from here too, ` +
+            `because a service reaches a database by name only on the same machine.`
+          : ''),
+    }
+  })
+}
+
 export function parseManifest(source: string, project?: string): ParsedManifest {
   let raw: unknown
   try {
@@ -394,6 +451,15 @@ export function parseManifest(source: string, project?: string): ParsedManifest 
      nothing downstream has to know it was generated. */
   const declared = new Map<string, DatabaseDecl>()
   const generated: Record<string, unknown> = {}
+  /**
+   * Where each service's `node` is actually written, keyed by service name.
+   *
+   * Only for services whose node is not on their own `services.<name>.node`
+   * line: a database, which the reader wrote under `databases:`, and a service
+   * that inherited its node from one. Every error about a node has to name a
+   * key the file contains, and both of those cases named one it does not.
+   */
+  const declaredAt = new Map<string, string>()
 
   for (const [name, body] of Object.entries(top.data.databases ?? {})) {
     if (!SERVICE_NAME.test(name)) {
@@ -434,6 +500,12 @@ export function parseManifest(source: string, project?: string): ParsedManifest 
       backup: body.backup,
     }
     declared.set(name, decl)
+    // Where this service is written in the file, so an error about its node
+    // points at a line that exists. A database is expanded into a service and
+    // then only ever spoken about as one, which is how "services.cache.node"
+    // came to be reported against a manifest whose cache lives under
+    // `databases:`.
+    declaredAt.set(name, `databases.${name}.node`)
     // Volumes are global to a node, so the project scopes the name. Two
     // clients each with a database called "main" must not land on one volume.
     generated[name] = expandDatabase(decl, top.data.project ?? project ?? 'default')
@@ -540,6 +612,10 @@ export function parseManifest(source: string, project?: string): ParsedManifest 
       if (svc.placement === 'flexible') {
         svc.placement = 'pinned'
         svc.node = db.node
+        // Inherited, not declared. Without this the service is indistinguishable
+        // from one that named the node itself, and an error tells the reader to
+        // fix `services.vote.node` — a key their file does not contain.
+        declaredAt.set(svc.name, declaredAt.get(ref) ?? `databases.${ref}.node`)
       } else if (svc.node && svc.node !== db.node) {
         issues.push({
           path: `services.${svc.name}.node`,
@@ -644,6 +720,14 @@ export function parseManifest(source: string, project?: string): ParsedManifest 
   }
 
   if (issues.length) throw new ManifestError(issues)
+
+  // Carry each service's real node location out with it. A caller reporting an
+  // unusable node has to name a key the reader's file contains, and for a
+  // database or a service that inherited one, `services.<name>.node` is not it.
+  for (const svc of services) {
+    const at = declaredAt.get(svc.name)
+    if (at) svc.nodePath = at
+  }
 
   return { fleet: top.data.fleet, project: top.data.project, services, databases: [...declared.values()], warnings }
 }
