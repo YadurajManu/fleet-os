@@ -451,4 +451,45 @@ describe('the diagnosis loop', () => {
     assert.equal(out.fix?.field, 'container_port')
     assert.equal(provider.turns(), 1, 'answered once, accepted once')
   })
+
+  test('a repeated lookup is served from what it already has', async () => {
+    // A real investigation against a fast model spent five of its eight
+    // lookups asking `source` over and over. Every repeat costs a step from a
+    // budget of twelve, a round trip and its own tokens, to learn something
+    // already sitting in the conversation.
+    let toolCalls = 0
+    const replies = [
+      '{"lookup":{"name":"services","args":{}}}',
+      '{"lookup":{"name":"services","args":{}}}',
+      '{"answer":{"summary":"done","findings":[],"next":[]}}',
+    ]
+    let n = 0
+    const impl = (async () => {
+      const content = replies[Math.min(n++, replies.length - 1)]!
+      if (content.includes('lookup')) toolCalls++
+      return new Response(JSON.stringify({ choices: [{ message: { content } }], usage: {} }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+
+    const out = await diagnose(ctx, { fleetId, question: 'why?' }, impl)
+    assert.equal(out.status, 'ok')
+    if (out.status !== 'ok') return
+    // Both asks are still recorded — the transcript should show what it did,
+    // including the wasted turn.
+    assert.equal(out.calls.length, 2)
+  })
+
+  test('and it is told it has already asked', async () => {
+    // Silently re-serving the same text as though it were new leaves a model
+    // no reason to stop doing it.
+    const provider = scripted([
+      '{"lookup":{"name":"services","args":{}}}',
+      '{"lookup":{"name":"services","args":{}}}',
+      '{"answer":{"summary":"done","findings":[],"next":[]}}',
+    ])
+    await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
+    assert.match(provider.prompts().at(-1)!, /already asked this/)
+  })
 })

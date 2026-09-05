@@ -434,6 +434,16 @@ export async function diagnose(
   const resultAt: number[] = []
   /** Whether it has already been sent back to look further. Once only. */
   let pushedBack = false
+  /**
+   * What each lookup returned, keyed by the exact call.
+   *
+   * A real investigation against a fast model spent five of its eight lookups
+   * asking `source` over and over. Every repeat costs a step from a budget of
+   * twelve, a round trip, and its own tokens, to learn something already in the
+   * conversation — and an investigation that runs out of steps re-reading its
+   * own evidence stops before it reaches an answer.
+   */
+  const seen = new Map<string, ToolResult>()
 
   for (let step = 0; step < MAX_CALLS; step++) {
     // Out of time rather than out of steps. Reported the same way, because to
@@ -566,7 +576,11 @@ export async function diagnose(
 
     const call = step_.call!
     calls.push(call)
-    const result = await callTool(ctx, opts.fleetId, call.tool, call.args, opts.supplied)
+
+    const key = `${call.tool}(${JSON.stringify(call.args ?? {})})`
+    const repeat = seen.get(key)
+    const result = repeat ?? (await callTool(ctx, opts.fleetId, call.tool, call.args, opts.supplied))
+    if (!repeat) seen.set(key, result)
 
     messages.push({ role: 'assistant', content })
 
@@ -602,7 +616,13 @@ export async function diagnose(
 
     messages.push({
       role: 'user',
-      content: `Result of ${call.tool}(${JSON.stringify(call.args)}):\n${forPrompt(result)}${budget}`,
+      content:
+        `Result of ${call.tool}(${JSON.stringify(call.args)}):\n${forPrompt(result)}` +
+        // Named rather than silently re-served. A model repeating a lookup has
+        // usually lost track of what it already knows, and saying so is more
+        // use than handing back the same text as though it were new.
+        (repeat ? '\n\n(You already asked this. Ask something different, or answer.)' : '') +
+        budget,
     })
     resultAt.push(messages.length - 1)
     compact(messages, resultAt)
