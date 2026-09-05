@@ -114,6 +114,8 @@ A build that failed is about what went in. Ask for the context before theorising
 
 A 200 is not proof. Check the size and first bytes — a static site replaced by its web server's welcome page returns 200 and about 900 bytes.
 
+Never quote from a result marked shortened. What is left of it is a fragment, and a quotation invented to fill the rest is worse than having no finding: the citation is the thing that makes a finding checkable. Ask for it again if you need its exact words.
+
 Every finding cites what showed it. A claim you cannot point at is a guess, and a guess in a diagnosis is worse than no diagnosis.
 
 Include a fix only when the evidence names one exact manifest change that would resolve what you found, and leave it out entirely otherwise. It is a field on a service in fleet.yaml -- container_port, health, resources, env, command, replicas, placement -- and a wrong one is applied to somebody's running system, so a guess here is worse than nothing. Say what you found and stop.
@@ -425,6 +427,15 @@ const KEEP_IN_FULL = 3
 const GIST = '(already seen, shortened)'
 
 /**
+ * How much gathered evidence there has to be before any of it is shortened.
+ *
+ * Roughly fifteen hundred tokens of results — enough that resending it all on
+ * every remaining turn starts to matter, and far enough above a short
+ * investigation that one never loses anything.
+ */
+const COMPACT_ABOVE = 6_000
+
+/**
  * Replace all but the most recent results with a one-line note.
  *
  * In place on the array, because the alternative is rebuilding the whole
@@ -432,6 +443,21 @@ const GIST = '(already seen, shortened)'
  * wrong.
  */
 function compact(messages: Array<{ role: string; content: string }>, resultAt: number[]): void {
+  // Only once the conversation is actually large.
+  //
+  // Compaction was triggered by count, so a four-step investigation had its
+  // first result shortened — and that result was the service's source, whose
+  // opening four hundred characters are import statements. The model, holding a
+  // heading and some imports, produced a finding quoting a line of Python that
+  // does not exist anywhere in the file, and named the wrong hostname from it.
+  //
+  // A cited fabrication is the worst thing this can produce. The citation is
+  // what makes a finding checkable, and one invented out of a gap is more
+  // convincing than no finding at all. So the trade is only worth making when
+  // the tokens are genuinely at stake.
+  const total = resultAt.reduce((n, i) => n + messages[i]!.content.length, 0)
+  if (total < COMPACT_ABOVE) return
+
   for (const i of resultAt.slice(0, -KEEP_IN_FULL)) {
     const content = messages[i]!.content
     if (content.includes(GIST)) continue

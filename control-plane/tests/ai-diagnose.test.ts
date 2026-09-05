@@ -319,8 +319,40 @@ describe('the diagnosis loop', () => {
     // real investigation past a free tier's 8000 tokens a minute — the loop
     // stopped not because it had nothing left to ask but because it could no
     // longer afford to ask it.
-    const provider = wandering()
-    await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
+    // Driven with a genuinely large result, because compaction now triggers on
+    // size rather than count — a short investigation must lose nothing.
+    // Four substantial results, because each is already capped at 2kB before it
+    // reaches the conversation — compaction is for a conversation that has
+    // genuinely grown, not for one that has merely taken a few steps.
+    const big = `--- app.py\n${'x = 1\n'.repeat(1_500)}`
+    // The lookup is fleet-scoped, so these have to exist for it to return the
+    // supplied text rather than "no service named".
+    for (const name of ['two', 'three', 'four']) {
+      await ctx.db.insert(services).values({
+        fleetId,
+        name,
+        project: 'demo',
+        placementPolicy: 'flexible',
+        requestRamMb: 512,
+        compatibleArches: ['amd64'],
+      })
+    }
+    const provider = scripted([
+      '{"lookup":{"name":"source","args":{"service":"api"}}}',
+      '{"lookup":{"name":"source","args":{"service":"two"}}}',
+      '{"lookup":{"name":"source","args":{"service":"three"}}}',
+      '{"lookup":{"name":"source","args":{"service":"four"}}}',
+      '{"answer":{"summary":"done","findings":[],"next":[]}}',
+    ])
+    await diagnose(
+      ctx,
+      {
+        fleetId,
+        question: 'why?',
+        supplied: { source: { api: big, two: big, three: big, four: big } },
+      },
+      provider.impl
+    )
 
     const last = provider.prompts().at(-1)!
     const seen = (last.match(/already seen/g) ?? []).length
@@ -337,7 +369,7 @@ describe('the diagnosis loop', () => {
 
     // And the most recent ones survive intact, or the investigation is reasoning
     // about nothing.
-    assert.match(last, /Result of deployments/, 'recent evidence stays in full')
+    assert.match(last, /Result of source/, 'recent evidence stays in full')
   })
 
   test('the step protocol is sent as a schema, not only asked for in words', async () => {
@@ -553,5 +585,29 @@ describe('the diagnosis loop', () => {
     ])
     const out = await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
     assert.equal(out.status, 'ok', 'twice is allowed')
+  })
+
+  test('a short investigation keeps every result whole', async () => {
+    // Compaction used to trigger on count, so a four-step investigation had its
+    // first result shortened — and that result was a service's source, whose
+    // opening characters are import statements. Holding a heading and some
+    // imports, the model produced a finding quoting a line of Python that
+    // exists nowhere in the file, and named the wrong hostname from it.
+    //
+    // A cited fabrication is the worst thing this can produce: the citation is
+    // exactly what makes a finding checkable.
+    const provider = scripted([
+      '{"lookup":{"name":"services","args":{}}}',
+      '{"lookup":{"name":"nodes","args":{}}}',
+      '{"lookup":{"name":"deployments","args":{"service":"api"}}}',
+      '{"answer":{"summary":"done","findings":[],"next":[]}}',
+    ])
+    await diagnose(ctx, { fleetId, question: 'why?' }, provider.impl)
+
+    const last = provider.prompts().at(-1)!
+    assert.ok(
+      !last.includes('already seen'),
+      'nothing should be shortened while the conversation is still small'
+    )
   })
 })
