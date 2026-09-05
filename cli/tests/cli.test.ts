@@ -5,10 +5,11 @@ import { etaLine, progressLine } from '../src/progress.js'
 import { alertCheck, healthPathCheck } from '../src/commands/doctor.js'
 import { tuneRam, tuneHealth, asQuantity, type Observed } from '../src/tune.js'
 import { editManifest } from '../src/manifest-edit.js'
+import { sourceFor, localSource } from '../src/source.js'
 import { gunzipSync } from 'node:zlib'
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { packContext } from '../src/archive.js'
 import { table, relativeTime, mb, visibleLength, truncate, c } from '../src/render.js'
@@ -505,4 +506,70 @@ databases:
     assert.match(refused[0]!.reason, /no service or database named/)
   })
 })
+describe('the source an investigation is sent', () => {
+  const project = async (files: Record<string, string>) => {
+    const dir = await mkdtemp(join(tmpdir(), 'fleet-src-'))
+    for (const [rel, body] of Object.entries(files)) {
+      const full = join(dir, rel)
+      await mkdir(dirname(full), { recursive: true })
+      await writeFile(full, body)
+    }
+    return dir
+  }
+
+  test('carries the line that explains a connection failure', async () => {
+    // The exact blind spot. A service could not reach Redis; the logs said so
+    // and nothing said what host it was reaching for.
+    const dir = await project({
+      'vote/app.py': 'from redis import Redis\ng.redis = Redis(host="redis", db=0)\n',
+      'vote/requirements.txt': 'flask\nredis\n',
+    })
+    const out = await sourceFor(dir, './vote')
+    assert.match(out!, /Redis\(host="redis"/, 'the hostname is the whole answer')
+    assert.match(out!, /app\.py/, 'and the file it came from is named')
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('never sends dependencies or build output', async () => {
+    // A node_modules tree is not evidence and would not fit in the budget the
+    // loop was built to live inside.
+    const dir = await project({
+      'api/index.js': 'listen(3000)\n',
+      'api/node_modules/left-pad/index.js': 'module.exports = 1\n',
+      'api/dist/bundle.js': 'compiled\n',
+    })
+    const out = await sourceFor(dir, './api')
+    assert.match(out!, /listen\(3000\)/)
+    assert.ok(!/left-pad|bundle/.test(out!), 'dependencies and build output are not source')
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('is bounded, whatever the file holds', async () => {
+    const dir = await project({ 'big/main.py': 'x = 1\n'.repeat(20_000) })
+    const out = await sourceFor(dir, './big')
+    assert.ok(out!.length < 5_000, `sent ${out!.length} chars into a tight token budget`)
+    assert.match(out!, /truncated/)
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('a service with no build context contributes nothing', async () => {
+    const dir = await project({
+      'fleet.yaml': 'services:\n  api: { image: nginx:alpine }\n',
+    })
+    assert.deepEqual(await localSource(dir), {})
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('keys what it collects by service name', async () => {
+    const dir = await project({
+      'fleet.yaml': 'services:\n  vote: { build: ./vote }\n  worker: { build: ./worker }\n',
+      'vote/app.py': 'Redis(host="redis")\n',
+      'worker/Program.cs': 'class Program {}\n',
+    })
+    const found = await localSource(dir)
+    assert.deepEqual(Object.keys(found).sort(), ['vote', 'worker'])
+    await rm(dir, { recursive: true, force: true })
+  })
+})
+
 

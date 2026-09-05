@@ -535,10 +535,26 @@ export async function serviceRoutes(app: FastifyInstance) {
     { preHandler: requireFleetPermission('service.read') },
     async (req, reply) => {
       const { fleetId } = req.params as { fleetId: string }
-      const body = z.object({ question: z.string().min(1).max(500) }).parse(req.body ?? {})
+      const body = z
+        .object({
+          question: z.string().min(1).max(500),
+          /**
+           * Source the caller read from its own working directory.
+           *
+           * Bounded here as well as in the CLI: this arrives from a client and
+           * lands in a token budget the loop was carefully built to fit inside.
+           * Never stored — it exists for this request.
+           */
+          source: z.record(z.string().max(128), z.string().max(8_000)).optional(),
+        })
+        .parse(req.body ?? {})
 
       const { diagnose } = await import('../ai/diagnose.js')
-      const out = await diagnose(app.ctx, { fleetId, question: body.question })
+      const out = await diagnose(app.ctx, {
+        fleetId,
+        question: body.question,
+        supplied: body.source ? { source: body.source } : undefined,
+      })
       return reply.send(out)
     }
   )

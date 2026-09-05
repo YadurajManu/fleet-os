@@ -12,6 +12,7 @@ import {
 } from '../progress.js'
 import { planFromManifest, projectNameFor } from '../plan.js'
 import { uploadContext, humanBytes } from '../archive.js'
+import { localSource } from '../source.js'
 import type { Flags } from '../args.js'
 
 type Service = {
@@ -756,6 +757,7 @@ async function answerQuestions(
 export const diagnoseCommand = {
   async run(args: string[], flags: Flags) {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
+    const source = await localSource(process.cwd())
     const question = args.join(' ').trim()
     if (!question) {
       throw new CliError(
@@ -779,7 +781,14 @@ export const diagnoseCommand = {
 
     const { body } = await task(
       'looking',
-      async () => request<Result>('POST', `/fleets/${fleetId}/diagnose`, { body: { question } }),
+      async () =>
+        request<Result>('POST', `/fleets/${fleetId}/diagnose`, {
+          // Source when there is a manifest here to read it from, and nothing
+          // when there is not. `diagnose` runs from anywhere on purpose, so
+          // this is the one lookup that is sometimes unavailable — the tool
+          // says so rather than pretending it looked.
+          body: { question, ...(Object.keys(source).length ? { source } : {}) },
+        }),
       // What it looked at, so the wait is legible rather than a spinner.
       { done: (r) => ('calls' in r.body ? `looked at ${r.body.calls.length} thing(s)` : 'done') }
     )

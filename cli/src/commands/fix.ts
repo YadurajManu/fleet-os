@@ -1,5 +1,6 @@
 import { CliError, EXIT, request, requireFleet } from '../api.js'
 import { editManifest, restoreManifest } from '../manifest-edit.js'
+import { localSource } from '../source.js'
 import { c } from '../render.js'
 import { glyph, rule } from '../ui.js'
 import { confirm } from '../prompt.js'
@@ -61,8 +62,17 @@ export const fixCommand = {
     console.log(`\n${rule(`fix · ${service}`)}`)
     console.log(`${glyph.pending} looking…`)
 
+    // Source travels with the question. `fix` already requires a project
+    // directory, so the files are right here — and the control plane, which
+    // deletes every build context the moment a build ends, never has to hold
+    // any of it.
+    const source = await localSource(process.cwd())
+
     const { body: found } = await request<Diagnosis>('POST', `/fleets/${fleetId}/diagnose`, {
-      body: { question: `Why is the "${service}" service not working as it should?` },
+      body: {
+        question: `Why is the "${service}" service not working as it should?`,
+        ...(Object.keys(source).length ? { source } : {}),
+      },
     })
 
     if (found.status !== 'ok') {

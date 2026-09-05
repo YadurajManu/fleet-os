@@ -182,6 +182,36 @@ describe('the tools a diagnosis can call', () => {
     assert.match((out.data as { note: string }).note, /no build context recorded/)
   })
 
+  test('source is read from what the caller sent, never from disk', async () => {
+    // The design constraint that shaped this. The control plane deletes an
+    // uploaded build context the moment a build ends — customer source is held
+    // only for as long as it takes to build it — so a lookup reading source
+    // from the server would have to break that. It comes with the request and
+    // lives exactly as long as the investigation.
+    const out = await callTool(ctx, fleetId, 'source', { service: 'api' }, {
+      source: { api: '--- app.py\nRedis(host="redis", db=0)\n' },
+    })
+    assert.ok(out.ok)
+    assert.match(JSON.stringify(out.data), /Redis\(host=/)
+  })
+
+  test('source says plainly when none was sent', async () => {
+    // `fleet diagnose` runs from anywhere, so this is the one lookup that is
+    // sometimes unavailable. Saying so beats an empty answer that reads like a
+    // finding.
+    const out = await callTool(ctx, fleetId, 'source', { service: 'api' })
+    assert.ok(out.ok)
+    assert.match((out.data as { note: string }).note, /no source was sent/)
+  })
+
+  test('source cannot reach a service in another fleet', async () => {
+    const out = await callTool(ctx, fleetId, 'source', { service: 'secret-api' }, {
+      source: { 'secret-api': 'private' },
+    })
+    assert.equal(out.ok, false)
+    if (!out.ok) assert.match(out.error, /no service named/)
+  })
+
   test('a tool cannot read another fleet', async () => {
     // Scoped at the boundary rather than by asking callers to filter, so no
     // amount of argument-shaping reaches somebody else's fleet.
