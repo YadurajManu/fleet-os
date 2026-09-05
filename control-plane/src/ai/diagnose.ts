@@ -185,8 +185,31 @@ const STEP_SCHEMA = {
     properties: {
       lookup: {
         type: 'object',
-        properties: { name: { type: 'string' }, args: { type: 'object' } },
-        required: ['name'],
+        properties: {
+          name: {
+            type: 'string',
+            description: 'One of: services, deployments, nodes, containers, logs, history, context, source, placements, probe.',
+          },
+          // Named and described rather than left as a bare object.
+          //
+          // A small model asked `source` three times running with `args: {}`,
+          // through an error naming the argument it was missing. It obeys the
+          // schema faithfully — that is the whole reason the schema is here —
+          // so the schema had to be the thing that said an argument exists.
+          // An untyped `object` said nothing at all.
+          args: {
+            type: 'object',
+            properties: {
+              service: {
+                type: 'string',
+                description:
+                  'The service name. Required by every lookup except services and nodes.',
+              },
+              node: { type: 'string', description: 'The node name. Required by containers.' },
+            },
+          },
+        },
+        required: ['name', 'args'],
       },
       answer: {
         type: 'object',
