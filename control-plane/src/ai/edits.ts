@@ -92,6 +92,50 @@ export function applicability(edit: Edit): { applicable: boolean; reason?: strin
   return { applicable: true }
 }
 
+/**
+ * Rename a service or database, and everything that refers to it.
+ *
+ * A name is not a label. It is the hostname other services resolve, so a
+ * rename that changed only the key would leave every `uses:` and every
+ * `affinity:` pointing at something that no longer exists — a manifest that
+ * parses and cannot work, which is worse than refusing.
+ */
+function rename(doc: ReturnType<typeof parseDocument>, edit: Edit): boolean {
+  const to = String(edit.value)
+  const block = ['services', 'databases'].find((b) => {
+    const m = doc.get(b)
+    return isMap(m) && m.has(edit.service)
+  })
+  if (!block) return false
+
+  const map = doc.get(block)
+  if (!isMap(map)) return false
+
+  const body = map.get(edit.service)
+  map.delete(edit.service)
+  map.set(to, body)
+
+  // Every reference, in both blocks. A service that used the old name must
+  // follow it, or the rename trades one broken lookup for another.
+  for (const b of ['services', 'databases']) {
+    const m = doc.get(b)
+    if (!isMap(m)) continue
+    for (const item of m.items) {
+      const name = String((item as { key?: unknown }).key)
+      for (const field of ['uses', 'affinity', 'anti_affinity']) {
+        const list = doc.getIn([b, name, field])
+        if (!Array.isArray((list as { items?: unknown[] })?.items)) continue
+        const items = (list as { items: Array<{ value?: unknown }> }).items
+        for (const entry of items) {
+          if (String(entry.value) === edit.service) entry.value = to
+        }
+      }
+    }
+  }
+
+  return true
+}
+
 export type ApplyResult = {
   manifest: string
   applied: Edit[]
@@ -106,7 +150,24 @@ export type ApplyResult = {
  * check: container state decides whether this is up" loses the one thing
  * telling the reader why, the moment the file is rebuilt from parsed values.
  */
-export function applyEdits(manifest: string, edits: Edit[]): ApplyResult {
+export function applyEdits(
+  manifest: string,
+  edits: Edit[],
+  /**
+   * Service names that already hold data in this fleet.
+   *
+   * The forbidden list is calibrated for a running fleet: renaming a service
+   * points it at a new volume, which is nothing for a cache and data loss for a
+   * database. At `init` time none of that is true — the manifest is a draft and
+   * nothing has been deployed — so the rule is not "never rename" but "never
+   * rename something that has data", and the control plane knows which those
+   * are rather than having to guess from the engine.
+   *
+   * Empty means nothing is protected, which is correct for a draft and wrong
+   * for anything else, so callers pass it deliberately.
+   */
+  holdsData: Set<string> = new Set()
+): ApplyResult {
   const doc = parseDocument(manifest)
   const applied: Edit[] = []
   const refused: Array<{ edit: Edit; reason: string }> = []
@@ -117,8 +178,28 @@ export function applyEdits(manifest: string, edits: Edit[]): ApplyResult {
   }
 
   for (const edit of edits) {
+    // A rename of something with nothing to lose.
+    //
+    // The case this exists for: `init` named a Redis database "cache", because
+    // the compose file did, while the application connects to the hostname
+    // "redis" -- and Fleet resolves a database by the name the manifest gives
+    // it, so every request failed. The review could see both facts and was not
+    // allowed to reconcile them.
+    if (edit.field === 'name' && typeof edit.value === 'string' && !holdsData.has(edit.service)) {
+      const renamed = rename(doc, edit)
+      if (renamed) applied.push(edit)
+      else refused.push({ edit, reason: `no service or database named "${edit.service}"` })
+      continue
+    }
+
     if (FORBIDDEN.has(edit.field)) {
-      refused.push({ edit, reason: `"${edit.field}" is not something a repository can decide` })
+      refused.push({
+        edit,
+        reason:
+          edit.field === 'name'
+            ? `"${edit.service}" already holds data in this fleet — renaming it would point it at a new volume`
+            : `"${edit.field}" is not something a repository can decide`,
+      })
       continue
     }
     if (!EDITABLE.has(edit.field)) {

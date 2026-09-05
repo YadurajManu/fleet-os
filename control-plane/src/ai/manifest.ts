@@ -1,7 +1,7 @@
 import { chat } from './provider.js'
 import { parseManifest, ManifestError } from '../manifest/parse.js'
 import { applyEdits, parseEdits, type Edit } from './edits.js'
-import { nodes } from '../db/schema.js'
+import { nodes, services } from '../db/schema.js'
 import { eq } from 'drizzle-orm'
 import type { AppContext } from '../api/context.js'
 
@@ -99,6 +99,8 @@ Rules, in order of importance:
 
 5. Databases only when a driver appears in a dependency list (pg, mongoose, redis, mysql2, prisma...). "uses:" names databases only, never other services.
 
+5c. A database's name is the hostname the services using it will resolve, so it must be the name they already use. Read the entry point for it: Redis(host="redis"), createClient({ url: "redis://cache:6379" }), a DATABASE_URL of postgres://user:pass@db:5432/app, an env default of MONGO_HOST. Name the database that. A name taken from a compose file is a label somebody chose; a name in the source is a fact the program will act on at runtime, and where the two differ the program wins — the lookup fails and the service runs, unreachable, reporting itself unhealthy for ever. If the source instead reads the host from an environment variable, any name will do: set env on the service using it, to whatever you called the database.
+
 5b. Never replace a service's "build:" with an "image:". Source lives in the repository, not in a public image. A compose file may well say "image: nginx:alpine" and mount ./frontend into it — that mount is a host directory, it cannot exist on a node, and the same image there serves its own welcome page instead of the site. A service whose content comes from the repo must be built.
 
 5a. "node:" names a physical machine in the fleet. It is the one field no evidence in a repository can settle — a compose service called "mongo" is not a machine. You are told below which nodes exist; use one of those names or leave the draft's value exactly as it is. Never invent one.
@@ -131,7 +133,9 @@ Rules:
 
 3. container_port comes from evidence: an EXPOSE line, a listen() call, a PORT default. Never from habit.
 
-4. You cannot change node, build, image, uses, volume or name. Those name machines, source and data, and no repository can settle them. Do not ask about them either.
+4. You cannot change node, build, image, uses or volume. Those name machines, source and data, and no repository can settle them. Do not ask about them either.
+
+4b. You may rename a service or a database, and it is sometimes the whole fix. A database's name is the hostname other services resolve, so if the source connects to "redis" and the draft calls that database "cache", every request fails while the container runs and reports unhealthy. Propose {"field": "name", "value": "redis"} and the references follow automatically. It is refused for anything already holding data in this fleet, because a rename there points a service at a new volume — so propose it and let the refusal decide, rather than deciding for yourself.
 
 5. Return an empty edits list when the draft is already right. That is the common answer and a good one.
 
@@ -339,7 +343,18 @@ export async function assistManifest(
       return { status: 'kept_draft', reason: 'No service could be reviewed.' }
     }
 
-    const result = applyEdits(opts.draft, edits)
+    // What a rename would cost, asked of the fleet rather than assumed.
+    //
+    // A service that has never been deployed, or one carrying no volume, has
+    // nothing to lose by being renamed. One holding a database's data has
+    // everything to lose. The database knows which is which.
+    const deployed = await ctx.db
+      .select({ name: services.name, volume: services.persistentVolume })
+      .from(services)
+      .where(eq(services.fleetId, opts.fleetId))
+    const holdsData = new Set(deployed.filter((s) => s.volume).map((s) => s.name))
+
+    const result = applyEdits(opts.draft, edits, holdsData)
     for (const e of result.applied) notes.push(`${e.service}: ${e.why}`)
     for (const r of result.refused) {
       notes.push(`${r.edit.service}: declined to change ${r.edit.field} — ${r.reason}`)
