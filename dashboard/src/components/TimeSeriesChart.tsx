@@ -82,6 +82,7 @@ export default function TimeSeriesChart({
   // Used only when nothing outside is driving the crosshair, so the chart still
   // works on its own.
   const [localHoverT, setLocalHoverT] = useState<number | null>(null)
+  const [isLocallyHovered, setIsLocallyHovered] = useState(false)
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null)
 
   const controlled = onHoverT != null
@@ -175,7 +176,7 @@ export default function TimeSeriesChart({
   const timeLabel = (t: number) =>
     span > 3 * 86_400_000
       ? new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' })
-      : new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
   const dragFrom = drag ? Math.min(drag.from, drag.to) : 0
   const dragTo = drag ? Math.max(drag.from, drag.to) : 0
@@ -210,9 +211,11 @@ export default function TimeSeriesChart({
         style={{ height }}
         role="img"
         aria-label={`${series.map((s) => s.label).join(' and ')} over time`}
+        onMouseEnter={() => setIsLocallyHovered(true)}
         onMouseLeave={() => {
           setHoverT(null)
           setDrag(null)
+          setIsLocallyHovered(false)
         }}
         onMouseDown={(e) => {
           if (!onZoom) return
@@ -221,6 +224,7 @@ export default function TimeSeriesChart({
           setDrag({ from: px, to: px })
         }}
         onMouseMove={(e) => {
+          setIsLocallyHovered(true)
           const px = pxOf(e.clientX, e.currentTarget)
           setHoverT(px < PAD.l || px > W - PAD.r ? null : tAt(px))
           if (drag) setDrag({ ...drag, to: Math.min(Math.max(px, PAD.l), W - PAD.r) })
@@ -234,6 +238,10 @@ export default function TimeSeriesChart({
               <stop offset="100%" stopColor={s.colour} stopOpacity="0.02" />
             </linearGradient>
           ))}
+          <linearGradient id={`drag-grad-${id}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#3fe08b" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="#3fe08b" stopOpacity="0.04" />
+          </linearGradient>
         </defs>
 
         {ticks.map((v, i) => (
@@ -277,41 +285,58 @@ export default function TimeSeriesChart({
           )
         })}
 
-        {/* the window being selected, drawn under the crosshair */}
+        {/* the window being selected, drawn with a glowing border and range badge */}
         {dragging && (
           <g>
             <rect
               x={dragFrom} y={PAD.t} width={dragTo - dragFrom} height={innerH}
-              fill="var(--color-signal)" fillOpacity="0.12"
+              fill={`url(#drag-grad-${id})`}
             />
             {[dragFrom, dragTo].map((px, i) => (
               <line
                 key={i} x1={px} x2={px} y1={PAD.t} y2={PAD.t + innerH}
-                stroke="var(--color-signal)" strokeWidth="1" vectorEffect="non-scaling-stroke"
+                stroke="#3fe08b" strokeWidth="1.5" strokeDasharray="3 2" vectorEffect="non-scaling-stroke"
               />
             ))}
-            <text
-              x={(dragFrom + dragTo) / 2} y={PAD.t + 12} textAnchor="middle"
-              fill="var(--color-signal)" fontSize="10" fontFamily="ui-monospace, monospace"
-            >
-              {timeLabel(tAt(dragFrom))} – {timeLabel(tAt(dragTo))}
-            </text>
+            {/* Pill showing drag range duration */}
+            <g transform={`translate(${(dragFrom + dragTo) / 2}, ${PAD.t + 14})`}>
+              <rect
+                x="-58" y="-10" width="116" height="20" rx="4"
+                fill="#07080a" fillOpacity="0.9" stroke="#3fe08b" strokeWidth="1"
+              />
+              <text
+                x="0" y="4" textAnchor="middle"
+                fill="#3fe08b" fontSize="10" fontFamily="ui-monospace, monospace" fontWeight="600"
+              >
+                Release to Zoom
+              </text>
+            </g>
           </g>
         )}
 
         {hoverX != null && !dragging && (
           <g>
+            {/* Glowing vertical crosshair */}
             <line
               x1={hoverX} x2={hoverX} y1={PAD.t} y2={PAD.t + innerH}
-              stroke="var(--color-fg-muted)" strokeWidth="1" vectorEffect="non-scaling-stroke"
+              stroke="#3fe08b" strokeWidth="1.2" strokeOpacity={isLocallyHovered ? 0.95 : 0.55}
+              strokeDasharray={isLocallyHovered ? undefined : '3 3'}
+              vectorEffect="non-scaling-stroke"
             />
-            {/* A dot per series at the crosshair, so the reading is anchored to
-                the line rather than only to a number in a box. */}
+            {/* A dot per series at the crosshair with outer halo */}
             {series.map((s) => {
               const v = readAt(s)
               return v == null ? null : (
-                <circle key={s.label} cx={hoverX} cy={y(v)} r="3"
-                        fill={s.colour} stroke="var(--color-ink-950)" strokeWidth="1.5" />
+                <g key={s.label}>
+                  <circle
+                    cx={hoverX} cy={y(v)} r="5.5"
+                    fill={s.colour} fillOpacity="0.25"
+                  />
+                  <circle
+                    cx={hoverX} cy={y(v)} r="3"
+                    fill={s.colour} stroke="#07080a" strokeWidth="1.5"
+                  />
+                </g>
               )
             })}
           </g>
@@ -325,26 +350,27 @@ export default function TimeSeriesChart({
         </text>
       </svg>
 
-      {hoverT != null && hoverX != null && !dragging && (
+      {/* Pinpoint local tooltip shown on the specific hovered chart */}
+      {isLocallyHovered && hoverT != null && hoverX != null && !dragging && (
         <div
-          className="pointer-events-none absolute top-1 z-10 whitespace-nowrap border border-[var(--color-line)] bg-[var(--color-ink-950)] px-2.5 py-1.5 shadow-lg"
+          className="pointer-events-none absolute top-1 z-30 whitespace-nowrap rounded-lg border border-white/15 bg-[#07080a]/95 px-3 py-2 shadow-2xl backdrop-blur-md transition-all"
           style={{
-            // Flip to the left of the cursor past halfway so the tooltip never
-            // runs off the right edge of the chart.
             left: hoverX / W > 0.6 ? undefined : `${(hoverX / W) * 100}%`,
             right: hoverX / W > 0.6 ? `${100 - (hoverX / W) * 100}%` : undefined,
+            transform: 'translateY(2px)',
           }}
         >
-          <div className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-[var(--color-fg-dim)]">
-            {timeLabel(hoverT)}
+          <div className="flex items-center justify-between gap-3 font-mono text-[10px] text-white/50 border-b border-white/10 pb-1 mb-1.5">
+            <span>{timeLabel(hoverT)}</span>
+            <span className="text-[9px] uppercase tracking-wider text-[#3fe08b] font-semibold">Active</span>
           </div>
           {series.map((s) => {
             const v = readAt(s)
             return (
-              <div key={s.label} className="mt-1 flex items-center gap-2 font-mono text-[11px]">
-                <span className="h-2 w-2 shrink-0 rounded-[1px]" style={{ background: s.colour }} />
-                <span className="text-[var(--color-fg-muted)]">{s.label}</span>
-                <span className="ml-auto tabular-nums text-[var(--color-fg)]">
+              <div key={s.label} className="mt-1 flex items-center gap-2.5 font-mono text-[11px]">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.colour, boxShadow: `0 0 6px ${s.colour}` }} />
+                <span className="text-white/70">{s.label}</span>
+                <span className="ml-auto font-semibold tabular-nums text-white">
                   {v == null ? '—' : `${format(v)}${unit}`}
                 </span>
               </div>

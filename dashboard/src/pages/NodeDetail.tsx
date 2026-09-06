@@ -38,10 +38,24 @@ type Peaks = {
 type SamplesResponse = { grain: string; sinceMinutes: number; peaks: Peaks; samples: NodeSample[] }
 type NodeEvent = { at: string; kind: string; label: string; tone: 'info' | 'warn' | 'down' }
 
-const SERIES = { cpu: '#3987e5', ram: '#9a6bd8', disk: '#12a594', netRx: '#d6409f', netTx: '#a16207' }
+const SERIES = { cpu: '#3987e5', ram: '#9a6bd8', disk: '#12a594', netRx: '#d6409f', netTx: '#f59e0b' }
 
 const toneColour = (tone: string) =>
   tone === 'down' ? 'var(--color-down)' : tone === 'warn' ? 'var(--color-warn)' : 'var(--color-fg-muted)'
+
+export function formatRate(kbps: number | null | undefined): string {
+  if (kbps == null || isNaN(kbps)) return '0 kB/s'
+  if (kbps < 1024) return `${Math.round(kbps)} kB/s`
+  if (kbps < 1024 * 1024) return `${(kbps / 1024).toFixed(1)} MB/s`
+  return `${(kbps / (1024 * 1024)).toFixed(2)} GB/s`
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
 
 // ─── Mini Sparkline for Metric Tiles ──────────────────────────────────────────
 
@@ -310,6 +324,47 @@ export default function NodeDetail() {
     () => recorded.slice(-30).map((b) => (b === 'ok' ? 100 : b === 'slow' ? 50 : 0)),
     [recorded]
   )
+
+  // Network cumulative throughput & live speeds
+  const netStats = useMemo(() => {
+    let totalRxBytes = 0
+    let totalTxBytes = 0
+    for (let i = 1; i < samples.length; i++) {
+      const prev = samples[i - 1]
+      const curr = samples[i]
+      if (curr.netRxKbps == null && curr.netTxKbps == null) continue
+      const dt = (+new Date(curr.at) - +new Date(prev.at)) / 1000
+      if (dt > 0 && dt <= 600) {
+        if (curr.netRxKbps != null) totalRxBytes += curr.netRxKbps * 1024 * dt
+        if (curr.netTxKbps != null) totalTxBytes += curr.netTxKbps * 1024 * dt
+      }
+    }
+    const latest = samples[samples.length - 1]
+    const liveRx = latest?.netRxKbps ?? t?.netRxKbps ?? 0
+    const liveTx = latest?.netTxKbps ?? t?.netTxKbps ?? 0
+    return {
+      totalRxBytes,
+      totalTxBytes,
+      liveRx,
+      liveTx,
+    }
+  }, [samples, t])
+
+  // Cross-chart synchronized hovered sample snapshot
+  const hoveredSample = useMemo(() => {
+    if (hoverT == null || !samples.length) return null
+    let best: NodeSample | null = null
+    let bestDiff = Infinity
+    for (const s of samples) {
+      const ts = +new Date(s.at)
+      const diff = Math.abs(ts - hoverT)
+      if (diff < bestDiff) {
+        bestDiff = diff
+        best = s
+      }
+    }
+    return best
+  }, [hoverT, samples])
 
   const charts: ChartDef[] = useMemo(() => {
     if (!node) return []
@@ -680,12 +735,82 @@ export default function NodeDetail() {
           <Panel
             key={c.key}
             title={`${c.title} · ${windowLabel}`}
-            right={c.note ? <span className="normal-case">{c.note}</span> : undefined}
+            right={
+              c.key === 'network' ? (
+                <div className="flex items-center gap-2.5 font-mono text-[10.5px]">
+                  <span className="text-[#d6409f] font-semibold flex items-center gap-1">
+                    <span>↓</span> {formatRate(netStats.liveRx)}
+                  </span>
+                  <span className="text-[#f59e0b] font-semibold flex items-center gap-1">
+                    <span>↑</span> {formatRate(netStats.liveTx)}
+                  </span>
+                </div>
+              ) : c.note ? (
+                <span className="normal-case">{c.note}</span>
+              ) : undefined
+            }
           >
             <div className="p-4">
+              {/* If network chart, show Speedometer & Cumulative Counters Header */}
+              {c.key === 'network' && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3.5 p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.06]">
+                  {/* Live Rx Speed */}
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded bg-[#d6409f]/10 border border-[#d6409f]/25 flex items-center justify-center text-[#d6409f] shrink-0 font-mono text-[12px] font-bold">
+                      ↓
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-mono text-[8.5px] uppercase tracking-wider text-white/40">Inbound (Rx)</div>
+                      <div className="font-mono text-[12.5px] font-bold text-white tabular-nums truncate">
+                        {formatRate(netStats.liveRx)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Total Rx */}
+                  <div className="flex items-center gap-2 pl-2 border-l border-white/[0.06]">
+                    <div className="min-w-0">
+                      <div className="font-mono text-[8.5px] uppercase tracking-wider text-white/40">Total Inbound</div>
+                      <div className="font-mono text-[12.5px] font-bold text-[#d6409f] tabular-nums truncate">
+                        {formatBytes(netStats.totalRxBytes)}
+                      </div>
+                      <div className="font-mono text-[8.5px] text-white/30 truncate">
+                        peak {formatRate(peaks?.netRxMax)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Live Tx Speed */}
+                  <div className="flex items-center gap-2 pl-2 border-l border-white/[0.06]">
+                    <div className="w-7 h-7 rounded bg-[#f59e0b]/10 border border-[#f59e0b]/25 flex items-center justify-center text-[#f59e0b] shrink-0 font-mono text-[12px] font-bold">
+                      ↑
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-mono text-[8.5px] uppercase tracking-wider text-white/40">Outbound (Tx)</div>
+                      <div className="font-mono text-[12.5px] font-bold text-white tabular-nums truncate">
+                        {formatRate(netStats.liveTx)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Total Tx */}
+                  <div className="flex items-center gap-2 pl-2 border-l border-white/[0.06]">
+                    <div className="min-w-0">
+                      <div className="font-mono text-[8.5px] uppercase tracking-wider text-white/40">Total Outbound</div>
+                      <div className="font-mono text-[12.5px] font-bold text-[#f59e0b] tabular-nums truncate">
+                        {formatBytes(netStats.totalTxBytes)}
+                      </div>
+                      <div className="font-mono text-[8.5px] text-white/30 truncate">
+                        peak {formatRate(peaks?.netTxMax)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <TimeSeriesChart
                 {...shared}
-                height={170}
+                height={c.key === 'network' ? 140 : 170}
                 series={c.series}
                 ceiling={c.ceiling}
                 unit={c.unit}
@@ -737,6 +862,123 @@ export default function NodeDetail() {
         </div>
       </Panel>
 
+      {/* ─── Unified Cross-Chart Glassmorphic Scrubber HUD ─── */}
+      {hoverT != null && hoveredSample && (
+        <div
+          className="fixed bottom-4 inset-x-4 sm:inset-x-8 max-w-5xl mx-auto z-40 rounded-xl p-3 border border-white/20 bg-[#07080a]/95 backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.9)] transition-all duration-200"
+          style={{ animation: 'fade-up 0.15s ease-out' }}
+        >
+          {/* Header row: Synced timestamp, title, and quick zoom action */}
+          <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-2 mb-2.5">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#3fe08b] animate-ping" />
+              <span className="font-mono text-[10px] uppercase tracking-widest text-[#3fe08b] font-bold">
+                Synced Timeline Snapshot
+              </span>
+              <span className="font-mono text-[11px] text-white/80 font-medium">
+                {new Date(hoveredSample.at).toLocaleDateString([], { month: 'short', day: 'numeric' })}{' · '}
+                {new Date(hoveredSample.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setZoom({ from: hoverT - 7.5 * 60_000, to: hoverT + 7.5 * 60_000 })}
+                className="px-2 py-0.5 rounded font-mono text-[10.5px] font-semibold text-[#3fe08b] bg-[#3fe08b]/10 hover:bg-[#3fe08b]/20 border border-[#3fe08b]/30 transition-colors"
+                title="Zoom into a 15-minute window centered at this timestamp"
+              >
+                🔍 Zoom 15m Window
+              </button>
+              <button
+                onClick={() => setHoverT(null)}
+                className="px-1.5 py-0.5 rounded font-mono text-[10.5px] text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+                title="Clear crosshair"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {/* Metrics row: Snapshot of all metrics at this exact second */}
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-2">
+            {/* CPU */}
+            <div className="px-2 py-1 rounded bg-white/[0.03] border border-white/[0.05]">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-[#3987e5]">CPU</div>
+              <div className="font-mono text-[13px] font-bold text-white tabular-nums">
+                {hoveredSample.cpuPct != null ? `${Math.round(hoveredSample.cpuPct)}%` : '—'}
+              </div>
+              <div className="font-mono text-[9px] text-white/40 truncate">
+                {hoveredSample.cpuMin != null && hoveredSample.cpuMax != null
+                  ? `${Math.round(hoveredSample.cpuMin)}–${Math.round(hoveredSample.cpuMax)}%`
+                  : 'avg'}
+              </div>
+            </div>
+
+            {/* RAM */}
+            <div className="px-2 py-1 rounded bg-white/[0.03] border border-white/[0.05]">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-[#9a6bd8]">RAM</div>
+              <div className="font-mono text-[13px] font-bold text-white tabular-nums">
+                {hoveredSample.ramUsedMb != null ? mb(hoveredSample.ramUsedMb) : '—'}
+              </div>
+              <div className="font-mono text-[9px] text-white/40 truncate">
+                {node.ramMb && hoveredSample.ramUsedMb != null
+                  ? `${Math.round((hoveredSample.ramUsedMb / node.ramMb) * 100)}% used`
+                  : 'used'}
+              </div>
+            </div>
+
+            {/* Net In */}
+            <div className="px-2 py-1 rounded bg-white/[0.03] border border-white/[0.05]">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-[#d6409f]">Net In (Rx)</div>
+              <div className="font-mono text-[13px] font-bold text-white tabular-nums">
+                ↓ {formatRate(hoveredSample.netRxKbps)}
+              </div>
+              <div className="font-mono text-[9px] text-[#d6409f]/70 truncate">inbound</div>
+            </div>
+
+            {/* Net Out */}
+            <div className="px-2 py-1 rounded bg-white/[0.03] border border-white/[0.05]">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-[#f59e0b]">Net Out (Tx)</div>
+              <div className="font-mono text-[13px] font-bold text-white tabular-nums">
+                ↑ {formatRate(hoveredSample.netTxKbps)}
+              </div>
+              <div className="font-mono text-[9px] text-[#f59e0b]/70 truncate">outbound</div>
+            </div>
+
+            {/* Disk */}
+            <div className="px-2 py-1 rounded bg-white/[0.03] border border-white/[0.05]">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-[#12a594]">Disk</div>
+              <div className="font-mono text-[13px] font-bold text-white tabular-nums">
+                {hoveredSample.diskUsedMb != null ? mb(hoveredSample.diskUsedMb) : '—'}
+              </div>
+              <div className="font-mono text-[9px] text-white/40 truncate">used</div>
+            </div>
+
+            {/* Load / Temp */}
+            <div className="px-2 py-1 rounded bg-white/[0.03] border border-white/[0.05]">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-white/60">Load 1m</div>
+              <div className="font-mono text-[13px] font-bold text-white tabular-nums">
+                {hoveredSample.load1 != null ? hoveredSample.load1.toFixed(2) : '—'}
+              </div>
+              <div className="font-mono text-[9px] text-white/40 truncate">
+                {hoveredSample.tempC != null ? `${hoveredSample.tempC.toFixed(1)}°C` : 'kernel load'}
+              </div>
+            </div>
+
+            {/* Containers */}
+            <div className="px-2 py-1 rounded bg-white/[0.03] border border-white/[0.05]">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-[#9a6bd8]">Containers</div>
+              <div className="font-mono text-[13px] font-bold text-white tabular-nums">
+                {hoveredSample.containers != null ? hoveredSample.containers : '—'}
+              </div>
+              <div className="font-mono text-[9px] text-[#3fe08b] truncate">
+                {hoveredSample.dockerOk ? '● docker ok' : 'running'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ─── Expanded Chart Modal ─── */}
       {expanded && (
         <ExpandedModal
@@ -747,6 +989,8 @@ export default function NodeDetail() {
           shared={shared}
           onStep={step}
           onClose={() => setExpanded(null)}
+          netStats={charts[expandedIndex]!.key === 'network' ? netStats : undefined}
+          peaks={peaks}
         />
       )}
 
@@ -771,6 +1015,8 @@ function ExpandedModal({
   shared,
   onStep,
   onClose,
+  netStats,
+  peaks,
 }: {
   chart: ChartDef
   index: number
@@ -784,6 +1030,13 @@ function ExpandedModal({
   }
   onStep: (delta: number) => void
   onClose: () => void
+  netStats?: {
+    totalRxBytes: number
+    totalTxBytes: number
+    liveRx: number
+    liveTx: number
+  }
+  peaks?: Peaks
 }) {
   return (
     <div
@@ -835,10 +1088,63 @@ function ExpandedModal({
         </div>
 
         <div className="p-5">
+          {/* If network chart, show Speedometer & Cumulative Counters in Modal */}
+          {chart.key === 'network' && netStats && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4 p-3 rounded-lg bg-white/[0.02] border border-white/[0.06]">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded bg-[#d6409f]/10 border border-[#d6409f]/25 flex items-center justify-center text-[#d6409f] shrink-0 font-mono text-[13px] font-bold">
+                  ↓
+                </div>
+                <div className="min-w-0">
+                  <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">Inbound (Rx)</div>
+                  <div className="font-mono text-[14px] font-bold text-white tabular-nums truncate">
+                    {formatRate(netStats.liveRx)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pl-2 border-l border-white/[0.06]">
+                <div className="min-w-0">
+                  <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">Total Inbound</div>
+                  <div className="font-mono text-[14px] font-bold text-[#d6409f] tabular-nums truncate">
+                    {formatBytes(netStats.totalRxBytes)}
+                  </div>
+                  <div className="font-mono text-[9px] text-white/30 truncate">
+                    peak {formatRate(peaks?.netRxMax)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pl-2 border-l border-white/[0.06]">
+                <div className="w-8 h-8 rounded bg-[#f59e0b]/10 border border-[#f59e0b]/25 flex items-center justify-center text-[#f59e0b] shrink-0 font-mono text-[13px] font-bold">
+                  ↑
+                </div>
+                <div className="min-w-0">
+                  <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">Outbound (Tx)</div>
+                  <div className="font-mono text-[14px] font-bold text-white tabular-nums truncate">
+                    {formatRate(netStats.liveTx)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pl-2 border-l border-white/[0.06]">
+                <div className="min-w-0">
+                  <div className="font-mono text-[9px] uppercase tracking-wider text-white/40">Total Outbound</div>
+                  <div className="font-mono text-[14px] font-bold text-[#f59e0b] tabular-nums truncate">
+                    {formatBytes(netStats.totalTxBytes)}
+                  </div>
+                  <div className="font-mono text-[9px] text-white/30 truncate">
+                    peak {formatRate(peaks?.netTxMax)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div key={chart.key} style={{ animation: 'fade-up 0.24s var(--ease-out-expo) both' }}>
             <TimeSeriesChart
               {...shared}
-              height={Math.max(320, Math.round(window.innerHeight * 0.62))}
+              height={Math.max(320, Math.round(window.innerHeight * 0.58))}
               series={chart.series}
               ceiling={chart.ceiling}
               unit={chart.unit}
