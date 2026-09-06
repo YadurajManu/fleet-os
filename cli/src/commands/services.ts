@@ -1,5 +1,5 @@
 import { readFile, writeFile, access } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { request, requireFleet, CliError, EXIT } from '../api.js'
 import { c, table, statusColour, keyValues, relativeTime, mb } from '../render.js'
 import { task, glyph } from '../ui.js'
@@ -309,10 +309,18 @@ async function waitUntilRunning(fleetId: string, name: string, timeoutMs = 180_0
  * repository is legitimate for a prebuilt `image:` service, and should not
  * become an error about a file the operator never needed.
  */
-async function buildContextFor(serviceName: string): Promise<string | undefined> {
+async function buildContextFor(
+  serviceName: string,
+  manifestPath?: string,
+  baseDir?: string
+): Promise<string | undefined> {
   try {
-    const source = await readFile('fleet.yaml', 'utf8')
-    return planFromManifest(source).find((s) => s.name === serviceName)?.build
+    const file = manifestPath ?? (baseDir ? join(baseDir, 'fleet.yaml') : 'fleet.yaml')
+    const source = await readFile(file, 'utf8')
+    const buildRel = planFromManifest(source).find((s) => s.name === serviceName)?.build
+    if (!buildRel) return undefined
+    const dir = baseDir ?? (manifestPath ? dirname(manifestPath) : process.cwd())
+    return join(dir, buildRel)
   } catch {
     return undefined
   }
@@ -322,7 +330,7 @@ export const deployCommand = {
   async run(args: string[], flags: Flags) {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
     const [name] = args
-    if (!name) throw new CliError('usage: fleet deploy <service> [--sha <git-sha>] [--no-wait]', EXIT.usage)
+    if (!name) throw new CliError('usage: fleet deploy <service> [--sha <git-sha>] [--no-wait] [--dir <path>]', EXIT.usage)
 
     const service = await findService(fleetId, name)
     const gitSha = typeof flags.sha === 'string' ? flags.sha : undefined
@@ -347,14 +355,19 @@ export const deployCommand = {
 
     // A service that builds from source needs its directory sent, or the
     // control plane has nothing to build and says the context does not exist.
-    // Read from the manifest here rather than from the service row, because
-    // the build path is relative to the file the operator is standing in.
     let contextId: string | undefined
-    const buildContext = await buildContextFor(service.name)
-    if (buildContext) {
+    const baseDir = typeof flags.dir === 'string' ? flags.dir : undefined
+    const manifestFile =
+      typeof flags.file === 'string'
+        ? flags.file
+        : typeof flags.manifest === 'string'
+        ? flags.manifest
+        : undefined
+    const buildPath = await buildContextFor(service.name, manifestFile, baseDir)
+    if (buildPath) {
       const uploaded = await task(
         `packaging ${c.bold(service.name)}`,
-        async () => uploadContext(service.id, join(process.cwd(), buildContext)),
+        async () => uploadContext(service.id, buildPath),
         { done: (r) => `uploaded ${humanBytes(r.bytes)} of build context` }
       )
       contextId = uploaded.contextId

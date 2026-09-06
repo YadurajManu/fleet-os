@@ -46,7 +46,7 @@ export function parseArgs(argv: string[]): { positional: string[]; flags: Flags 
 export const KNOWN_FLAGS = new Set([
   // global
   'fleet', 'api', 'json', 'yes', 'y', 'help', 'h', 'version', 'v', 'no-wait',
-  'plan', 'dry-run', 'force',
+  'plan', 'dry-run', 'force', 'dir', 'file', 'manifest',
   // per command
   'ai', 'all', 'apply', 'channel', 'deploy', 'email', 'events', 'f', 'follow', 'limit',
   'name', 'node', 'only', 'out', 'password', 'secret', 'service', 'sha',

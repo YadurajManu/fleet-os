@@ -8,7 +8,7 @@
  * the operator from the loop between them.
  */
 import { readFile, writeFile, access } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { request, requireFleet, CliError, EXIT } from '../api.js'
 import { c } from '../render.js'
 import { task, glyph } from '../ui.js'
@@ -41,7 +41,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export const upCommand = {
   async run(args: string[], flags: Flags) {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
-    const manifestPath = 'fleet.yaml'
+    const rootDir = typeof flags.dir === 'string' ? flags.dir : process.cwd()
+    const manifestPath =
+      typeof flags.file === 'string'
+        ? flags.file
+        : typeof flags.manifest === 'string'
+        ? flags.manifest
+        : join(rootDir, 'fleet.yaml')
 
     // ── Step 1: scaffold if needed ────────────────────────────────────
     let needsApply = false
@@ -50,17 +56,17 @@ export const upCommand = {
     } catch {
       // No fleet.yaml — run the smart init inline.
       const { detect, manifestTemplate } = await import('../detect.js')
-      const d = await task('detecting project framework', async () => detect())
+      const d = await task('detecting project framework', async () => detect(rootDir))
 
       const name =
         (typeof flags.name === 'string' ? flags.name : '') ||
         args[0] ||
-        process.cwd().split('/').pop()?.toLowerCase().replace(/[^a-z0-9-]+/g, '-') ||
+        rootDir.split('/').pop()?.toLowerCase().replace(/[^a-z0-9-]+/g, '-') ||
         'app'
 
       // Write Dockerfile if generated
       if (d.dockerfile) {
-        await writeFile(join(process.cwd(), 'Dockerfile'), d.dockerfile)
+        await writeFile(join(rootDir, 'Dockerfile'), d.dockerfile)
         console.log(`${glyph.ok} ${c.green('created')} Dockerfile  ${c.dim(`(${d.label}, port ${d.port})`)}`)
       }
 
@@ -84,7 +90,7 @@ export const upCommand = {
             orphaned: string[]
             warnings: string[]
           }>('POST', `/fleets/${fleetId}/services`, {
-            body: { manifest, project: projectNameFor(process.cwd()) },
+            body: { manifest, project: projectNameFor(rootDir) },
           })
         ).body,
       {
@@ -128,13 +134,6 @@ export const upCommand = {
     })
 
     // A database that is already serving is left alone.
-    //
-    // Redeploying one replaces a running container for no reason, and every
-    // service that talks to it loses its connections while it restarts. It is
-    // in the plan so that a database which is *not* running comes back — which
-    // is the case that used to need `fleet up db` by name — not so that every
-    // deploy of the stack restarts the database underneath it. Naming it
-    // explicitly still redeploys it.
     const skipped = args[0]
       ? []
       : resolved.filter((s) => isDatabase.has(s.name) && s.current?.status === 'running')
@@ -158,6 +157,7 @@ export const upCommand = {
         gitSha,
         buildContext: buildContexts.get(service.name),
         wait: !flags['no-wait'],
+        rootDir: typeof flags.file === 'string' ? dirname(flags.file) : rootDir,
       })
       deployed.push({ service, url })
     }
@@ -182,21 +182,14 @@ export const upCommand = {
 /**
  * Deploy one service: upload its build context if it has one, run the deploy,
  * and wait for it to report running.
- *
- * Returns the URL the control plane handed back, or null for a service that
- * has none — an internal one, which is reached by name from its neighbours
- * rather than from outside.
  */
 async function deployOne(
   service: Service,
-  opts: { fleetId: string; gitSha?: string; buildContext?: string; wait: boolean }
+  opts: { fleetId: string; gitSha?: string; buildContext?: string; wait: boolean; rootDir: string }
 ): Promise<string | null> {
-  // A service that builds from source sends its directory first. The control
-  // plane then builds it for every architecture the fleet has, which is the
-  // part that is easy to get wrong by hand and silent when you do.
   let contextId: string | undefined
   if (opts.buildContext) {
-    const dir = join(process.cwd(), opts.buildContext)
+    const dir = join(opts.rootDir, opts.buildContext)
     const uploaded = await task(
       `packaging ${c.bold(service.name)}`,
       async () => uploadContext(service.id, dir),
