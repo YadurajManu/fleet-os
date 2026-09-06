@@ -200,6 +200,16 @@ const EDITS_SCHEMA: Schema = {
           properties: {
             service: { type: 'string' },
             field: { type: 'string' },
+            // Present but untyped. Leaving it out entirely — the loop's schema
+            // does, and it was copied from there — showed the model an edit
+            // shape with no value in it while the prompt asked for one, and a
+            // schema and a prompt that disagree is a worse instruction than
+            // either alone. A description-only subschema accepts any scalar or
+            // null without asking a validator to express that union.
+            value: {
+              description:
+                'The new value: a string, number, boolean, or null to remove the field.',
+            },
             why: { type: 'string' },
           },
           required: ['service', 'field', 'why'],
