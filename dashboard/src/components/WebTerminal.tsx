@@ -57,25 +57,19 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(440)
   const [showQuickBar, setShowQuickBar] = useState(true)
-  const [fastEcho, setFastEcho] = useState(true)
   const [latency, setLatency] = useState<number | null>(null)
   const [fontSize, setFontSize] = useState(13)
   const [copiedNote, setCopiedNote] = useState(false)
 
-  // Performance & Latency optimizations refs
-  const inputQueueRef = useRef<string[]>([])
-  const flushTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const predictedQueueRef = useRef<string[]>([])
+  // Refs for resize debouncing
   const lastResizeDims = useRef<{ cols: number; rows: number }>({ cols: 0, rows: 0 })
   const resizeTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const fastEchoRef = useRef(fastEcho)
-  fastEchoRef.current = fastEcho
 
   // Debounced resize to eliminate SIGWINCH redraw thrashing on the remote shell
   const sendResize = useCallback((cols: number, rows: number) => {
     if (cols <= 0 || rows <= 0) return
     if (lastResizeDims.current.cols === cols && lastResizeDims.current.rows === rows) {
-      return // Dimensions identical; suppress redundant resize
+      return
     }
     lastResizeDims.current = { cols, rows }
 
@@ -95,62 +89,16 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     }, 150)
   }, [])
 
-  // Micro-batching input flush
-  const flushInputQueue = useCallback(() => {
-    flushTimerRef.current = null
-    if (inputQueueRef.current.length === 0) return
-    const chunk = inputQueueRef.current.join('')
-    inputQueueRef.current = []
-
-    const ws = wsRef.current
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'terminal_data',
-        data: toBase64(chunk),
-      }))
-    }
-  }, [])
-
-  // Send input with optimistic predictive echo
+  // Simple direct send — no prediction, no batching, no local echo
   const handleTerminalInput = useCallback((data: string) => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
 
-    // Fast predictive echo for printable characters (ASCII 32 to 126)
-    if (fastEchoRef.current) {
-      const isSimplePrintable = !data.includes('\x1b') && !data.includes('\r') && !data.includes('\n') &&
-                                !data.includes('\t') && !data.includes('\x7f') && !data.includes('\x08')
-      if (isSimplePrintable) {
-        terminalRef.current?.write(data)
-        for (const ch of data) {
-          predictedQueueRef.current.push(ch)
-        }
-      } else if (data === '\x7f' || data === '\x08') {
-        // Backspace: if we recently predicted, backspace locally
-        if (predictedQueueRef.current.length > 0) {
-          predictedQueueRef.current.pop()
-          terminalRef.current?.write('\b \b')
-        }
-      }
-    }
-
-    // Control characters (Enter, Ctrl+C, Ctrl+D, Escape) flush instantly
-    const isImmediate = data.includes('\r') || data.includes('\n') || data.includes('\x03') ||
-                        data.includes('\x04') || data.includes('\x1b')
-
-    inputQueueRef.current.push(data)
-
-    if (isImmediate) {
-      if (flushTimerRef.current) {
-        clearTimeout(flushTimerRef.current)
-        flushTimerRef.current = null
-      }
-      flushInputQueue()
-    } else if (!flushTimerRef.current) {
-      // 6ms micro-task coalescing window
-      flushTimerRef.current = setTimeout(flushInputQueue, 6)
-    }
-  }, [flushInputQueue])
+    ws.send(JSON.stringify({
+      type: 'terminal_data',
+      data: toBase64(data),
+    }))
+  }, [])
 
   const connect = useCallback(() => {
     const sess = session.get()
@@ -195,23 +143,8 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
       try {
         const msg = JSON.parse(event.data)
         if (msg.type === 'terminal_data' && msg.data) {
-          let text = fromBase64(msg.data)
-
-          // Reconcile predicted characters if fastEcho is active
-          if (fastEchoRef.current && predictedQueueRef.current.length > 0) {
-            while (predictedQueueRef.current.length > 0 && text.length > 0) {
-              const expected = predictedQueueRef.current[0]
-              if (text.startsWith(expected)) {
-                predictedQueueRef.current.shift()
-                text = text.slice(expected.length)
-              } else {
-                // If ANSI escape code or divergence, flush prediction queue and write remaining
-                predictedQueueRef.current = []
-                break
-              }
-            }
-          }
-
+          // Simple: just decode and write directly — no reconciliation needed
+          const text = fromBase64(msg.data)
           if (text.length > 0) {
             terminalRef.current?.write(text)
           }
@@ -320,7 +253,7 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     terminalRef.current = terminal
     fitRef.current = fit
 
-    // Input handler
+    // Input handler — direct send, no local echo
     terminal.onData((data) => {
       handleTerminalInput(data)
     })
@@ -356,7 +289,6 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     return () => {
       ro.disconnect()
       window.removeEventListener('resize', handleWindowResize)
-      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
       terminal.dispose()
       wsRef.current?.close()
@@ -377,8 +309,6 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
   const handleReconnect = () => {
     wsRef.current?.close()
     terminalRef.current?.clear()
-    predictedQueueRef.current = []
-    inputQueueRef.current = []
     terminalRef.current?.write('\x1b[90mReconnecting to \x1b[37m' + nodeName + '\x1b[90m…\x1b[0m\r\n')
     connect()
   }
@@ -515,20 +445,6 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
               {latency}ms
             </span>
           )}
-
-          {/* Instant Echo Indicator */}
-          <button
-            onClick={() => setFastEcho(!fastEcho)}
-            className={`hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10.5px] transition-colors ${
-              fastEcho
-                ? 'bg-[#3fe08b]/10 text-[#3fe08b] border border-[#3fe08b]/20 hover:bg-[#3fe08b]/20'
-                : 'bg-white/[0.03] text-white/40 border border-white/[0.06] hover:text-white/70'
-            }`}
-            title={fastEcho ? 'Predictive Instant Echo active (0ms typing latency)' : 'Instant Echo disabled (waiting for remote echo)'}
-          >
-            <span>⚡</span>
-            <span>{fastEcho ? 'Instant Echo' : 'Echo Off'}</span>
-          </button>
         </div>
 
         {/* Right: Controls & Actions */}
@@ -732,3 +648,4 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     </div>
   )
 }
+
