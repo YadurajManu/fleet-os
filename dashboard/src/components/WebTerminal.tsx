@@ -22,11 +22,20 @@ const QUICK_COMMANDS = [
 ]
 
 function toBase64(str: string): string {
-  return btoa(String.fromCharCode(...new TextEncoder().encode(str)))
+  const bytes = new TextEncoder().encode(str)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
 }
 
 function fromBase64(b64: string): string {
-  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
   return new TextDecoder().decode(bytes)
 }
 
@@ -69,6 +78,20 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
 
     ws.onopen = () => {
       setConnState('connected')
+      requestAnimationFrame(() => {
+        try {
+          fitRef.current?.fit()
+          terminalRef.current?.focus()
+          const dims = fitRef.current?.proposeDimensions()
+          if (dims && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'terminal_resize',
+              cols: dims.cols,
+              rows: dims.rows,
+            }))
+          }
+        } catch {}
+      })
     }
 
     ws.onmessage = (event) => {
@@ -143,10 +166,20 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     terminal.loadAddon(fit)
     terminal.open(termRef.current)
 
-    // Small delay so the DOM has settled before measuring
+    // Small delay so the DOM has settled before measuring & focusing
     requestAnimationFrame(() => {
-      fit.fit()
+      try {
+        fit.fit()
+        terminal.focus()
+      } catch {}
     })
+
+    setTimeout(() => {
+      try {
+        fit.fit()
+        terminal.focus()
+      } catch {}
+    }, 150)
 
     terminalRef.current = terminal
     fitRef.current = fit
@@ -179,15 +212,28 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     // Connect
     connect()
 
+    // ResizeObserver on the terminal element for silky-smooth responsive resize
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        try {
+          fit.fit()
+        } catch {}
+      })
+    })
+    ro.observe(termRef.current)
+
     // Window resize handler
     const handleResize = () => {
       requestAnimationFrame(() => {
-        fit.fit()
+        try {
+          fit.fit()
+        } catch {}
       })
     }
     window.addEventListener('resize', handleResize)
 
     return () => {
+      ro.disconnect()
       window.removeEventListener('resize', handleResize)
       terminal.dispose()
       wsRef.current?.close()
@@ -413,6 +459,18 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
         style={{ minHeight: 0 }}
         onClick={() => terminalRef.current?.focus()}
       />
+      <style>{`
+        #web-terminal-drawer .xterm {
+          height: 100% !important;
+          padding: 6px 10px;
+        }
+        #web-terminal-drawer .xterm-viewport {
+          overflow-y: auto !important;
+        }
+        #web-terminal-drawer .xterm-screen {
+          height: 100% !important;
+        }
+      `}</style>
     </div>
   )
 }
