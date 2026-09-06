@@ -456,7 +456,7 @@ export default function NodeDetail() {
   }
 
   // Live real-time gauge values
-  const liveCpu = t?.cpuPct ?? (peaks?.cpuAvg != null ? Math.round(peaks.cpuAvg) : 0)
+  const liveCpu = t?.cpuPct != null ? Math.round(t.cpuPct) : (peaks?.cpuAvg != null ? Math.round(peaks.cpuAvg) : 0)
   const liveRamMb = t?.ramUsedMb ?? peaks?.ramAvgMb ?? 0
   const liveRamPct = node.ramMb ? Math.round((liveRamMb / node.ramMb) * 100) : 0
   const liveDiskMb = t?.diskUsedMb ?? 0
