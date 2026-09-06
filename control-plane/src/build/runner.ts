@@ -11,6 +11,18 @@ export type BuildProgress = {
   ofSteps?: number
   platform?: string
   detail: string
+  /** Which buildx builder is running this, for logs and for the CLI. */
+  builder?: string
+  /**
+   * Whether this group of platforms is being emulated.
+   *
+   * Answered by the builder, not inferred from the control plane's own
+   * architecture. Once a native arm64 builder exists, an amd64 control plane
+   * producing an arm64 image is the fast path — and comparing the target to
+   * `process.arch` would report that fast path as emulated, which is the
+   * opposite of the truth.
+   */
+  emulated?: boolean
 }
 
 export type BuildRequest = {
@@ -38,6 +50,15 @@ export type BuildResult = {
   digest?: string
   logUrl?: string
   durationMs?: number
+  /** One entry per builder the platforms were split across. */
+  builds?: Array<{
+    builder: string
+    platforms: string[]
+    emulated: boolean
+    durationMs: number
+    /** Steps BuildKit reported as CACHED — how much the cache actually saved. */
+    cachedSteps: number
+  }>
 }
 
 /**

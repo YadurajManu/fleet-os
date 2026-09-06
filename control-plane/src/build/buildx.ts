@@ -20,6 +20,8 @@ export class BuildxRunner implements BuildRunner {
       /** "username:password" for a registry that requires them. */
       credentials?: string
       builder?: string
+      /** `linux/arm64=name,...` — which builder serves which platform. */
+      platformBuilders?: string
       /** Root the build context must stay inside. */
       workdir: string
       /** Skip `--push` and load locally instead; used when no registry is set. */
@@ -45,19 +47,22 @@ export class BuildxRunner implements BuildRunner {
     }
   }
 
-  /** Platforms the local builder can actually target. */
-  async supportedPlatforms(): Promise<string[]> {
+  /**
+   * What a builder can target, and which of it is emulated.
+   *
+   * `--bootstrap` starts the builder if it is not running, which is also how a
+   * remote arm64 builder gets woken before the first build of the day.
+   */
+  async platformsOf(builder?: string): Promise<BuilderPlatforms> {
     try {
-      const { stdout } = await run('docker', ['buildx', 'inspect', '--bootstrap'], { timeoutMs: 60_000 })
-      const line = stdout.split('\n').find((l) => l.trim().toLowerCase().startsWith('platforms:'))
-      if (!line) return []
-      return line
-        .slice(line.indexOf(':') + 1)
-        .split(',')
-        .map((p) => p.trim())
-        .filter(Boolean)
+      const args = ['buildx', 'inspect', '--bootstrap']
+      if (builder) args.push(builder)
+      const { stdout } = await run('docker', args, { timeoutMs: 120_000 })
+      return parseInspectPlatforms(stdout)
     } catch {
-      return []
+      // Unknown, not empty. An inspect that fails must not be read as "this
+      // builder can do nothing", which would refuse every build.
+      return { native: new Set(), emulated: new Set() }
     }
   }
 
@@ -115,91 +120,206 @@ export class BuildxRunner implements BuildRunner {
     await this.login()
 
     const context = await this.resolveContext(req.buildContext, req.contextRoot)
+    const tag = this.tagFor(req)
+    const pushing = this.opts.pushToRegistry !== false && Boolean(this.opts.registry)
 
-    // Refuse rather than silently building fewer architectures than the fleet
-    // needs: a node would otherwise fail to pull an image that looks fine.
-    const supported = await this.supportedPlatforms()
-    const missing = req.platforms.filter((p) => !supported.includes(p))
-    if (supported.length && missing.length) {
+    // Which builder runs which platform. With nothing configured this is one
+    // group on the default builder, which is exactly what it did before.
+    const routing = parseBuilderRouting(this.opts.platformBuilders)
+    const plan = planBuilds(req.platforms, routing, this.opts.builder)
+
+    if (!pushing && (req.platforms.length > 1 || plan.length > 1)) {
+      // A multi-platform build cannot be --load into the local daemon, and two
+      // builders cannot be joined into one manifest without somewhere to put it.
       throw new BuildUnavailableError(
-        `this builder cannot target ${missing.join(', ')}. ` +
-          `Install QEMU emulators (docker run --privileged --rm tonistiigi/binfmt --install all) ` +
-          `or remove those architectures from the fleet. Supported: ${supported.join(', ')}.`
+        'a multi-architecture build needs a registry to push to; set REGISTRY_URL'
       )
     }
 
-    const tag = this.tagFor(req)
-    const args = [
-      'buildx', 'build',
-      '--platform', req.platforms.join(','),
-      '--tag', tag,
-      '--label', `org.opencontainers.image.revision=${req.gitSha}`,
-      '--label', 'org.opencontainers.image.source=fleet-os',
-      '--progress', 'plain',
-    ]
-
-    if (this.opts.builder) args.push('--builder', this.opts.builder)
-
-    if (this.opts.pushToRegistry !== false && this.opts.registry) {
-      args.push('--push')
-
-      // Build cache is an optimisation, and it is exported *after* the image
-      // has already been pushed. Letting a failed cache upload fail the whole
-      // build throws away a perfectly good image — which is exactly what
-      // happened behind Cloudflare, whose free plan rejects request bodies
-      // over 100MB with a 413 and took the deploy down with it.
-      //
-      // ignore-error keeps that a slow build next time instead of a failed one
-      // now. mode is configurable because "max" exports every intermediate
-      // stage, which is the version most likely to exceed such a limit.
-      const cacheMode = this.opts.cacheMode ?? 'max'
-      if (cacheMode !== 'off') {
-        args.push(
-          '--cache-to',
-          `type=registry,ref=${repositoryOf(tag)}:buildcache,mode=${cacheMode},ignore-error=true`
-        )
-      }
-    } else {
-      // A multi-platform build cannot be --load into the local daemon, so
-      // without a registry only a single-platform build is possible.
-      if (req.platforms.length > 1) {
+    // Ask each builder what it can do before running anything, so a fleet does
+    // not wait twenty minutes to be told the architecture was never available.
+    const groups: Array<BuildGroup & { emulated: boolean }> = []
+    for (const group of plan) {
+      const caps = await this.platformsOf(group.builder)
+      const known = caps.native.size + caps.emulated.size > 0
+      const missing = known
+        ? group.platforms.filter((p) => !caps.native.has(p) && !caps.emulated.has(p))
+        : []
+      if (missing.length) {
         throw new BuildUnavailableError(
-          'a multi-architecture build needs a registry to push to; set REGISTRY_URL'
+          `builder "${group.builder ?? 'default'}" cannot target ${missing.join(', ')}. ` +
+            `Install QEMU emulators (docker run --privileged --rm tonistiigi/binfmt --install all), ` +
+            `add a native builder for it, or remove those architectures from the fleet. ` +
+            `Supported: ${[...caps.native, ...[...caps.emulated].map((p) => `${p} (emulated)`)].join(', ')}.`
         )
       }
-      args.push('--load')
+      groups.push({
+        ...group,
+        emulated: known ? group.platforms.some((p) => !caps.native.has(p)) : false,
+      })
     }
 
-    args.push(context)
-
     const started = Date.now()
-    // Only walk the output when something is listening: the split-and-parse is
-    // cheap per line, but a large build emits thousands of them.
-    const watching = Boolean(this.opts.log || req.onProgress)
-    const { stdout, stderr, code } = await run('docker', args, {
-      timeoutMs: this.opts.timeoutMs ?? 20 * 60_000,
-      onLine: watching
-        ? (line) => {
-            this.opts.log?.(line)
-            if (!req.onProgress) return
-            const progress = parseBuildLine(line)
-            if (progress) req.onProgress(progress)
-          }
-        : undefined,
-    })
+    const builds: NonNullable<BuildResult['builds']> = []
+    const groupTags: string[] = []
+    let lastOutput = ''
 
-    if (code !== 0) {
-      // The last few lines are what a user needs; the whole log is noise.
-      const tail = (stderr || stdout).trim().split('\n').slice(-12).join('\n')
-      throw new BuildUnavailableError(`buildx failed for "${req.serviceName}":\n${tail}`)
+    for (const group of groups) {
+      // One tag per group only when there is more than one, so the common case
+      // pushes the final name directly and needs no manifest step at all.
+      const groupTag =
+        groups.length === 1
+          ? tag
+          : `${tag}-${group.platforms.map((p) => p.replace(/[^A-Za-z0-9]+/g, '-')).join('_')}`
+
+      const args = [
+        'buildx', 'build',
+        '--platform', group.platforms.join(','),
+        '--tag', groupTag,
+        '--label', `org.opencontainers.image.revision=${req.gitSha}`,
+        '--label', 'org.opencontainers.image.source=fleet-os',
+        '--progress', 'plain',
+      ]
+      if (group.builder) args.push('--builder', group.builder)
+
+      if (pushing) {
+        args.push('--push')
+
+        const cacheRef = cacheRefFor(tag, group.platforms)
+
+        // Read the cache. This was missing entirely: every build exported one
+        // to the registry and no build ever imported one, so the export was
+        // write-only and every `pip install` ran again from nothing. A ref that
+        // does not exist yet is a warning from buildx rather than an error,
+        // which is what makes it safe to ask for unconditionally.
+        args.push('--cache-from', `type=registry,ref=${cacheRef}`)
+
+        // Build cache is an optimisation, and it is exported *after* the image
+        // has already been pushed. Letting a failed cache upload fail the whole
+        // build throws away a perfectly good image — which is exactly what
+        // happened behind Cloudflare, whose free plan rejects request bodies
+        // over 100MB with a 413 and took the deploy down with it.
+        //
+        // ignore-error keeps that a slow build next time instead of a failed one
+        // now. mode is configurable because "max" exports every intermediate
+        // stage, which is the version most likely to exceed such a limit.
+        const cacheMode = this.opts.cacheMode ?? 'max'
+        if (cacheMode !== 'off') {
+          args.push('--cache-to', `type=registry,ref=${cacheRef},mode=${cacheMode},ignore-error=true`)
+        }
+      } else {
+        // No registry, so no registry cache — `type=registry` needs somewhere
+        // to put it, and that is the whole of the limitation.
+        //
+        // It is narrower than it sounds. BuildKit keeps its own cache inside
+        // the builder container, so consecutive `--load` builds on this host
+        // still reuse layers and cache mounts; a repeated build is near
+        // instant. What is lost is cache that outlives the builder — nothing
+        // is shared with another machine, and `docker buildx rm` or a prune
+        // takes it with them, so the next build is cold.
+        //
+        // Deliberately not papered over with `type=local`: a directory export
+        // grows without bound and would need its own eviction policy, which is
+        // a bigger commitment than the case deserves. A fleet that wants cache
+        // reuse sets REGISTRY_URL, which it needs anyway to deploy to more than
+        // one node.
+        args.push('--load')
+      }
+
+      args.push(context)
+
+      // One line per group, not per build line. Enough to answer "why was this
+      // slow" without a log store: which builder, which platforms, and whether
+      // the whole Dockerfile ran through QEMU.
+      this.opts.log?.(
+        `builder=${group.builder ?? 'default'} platform=${group.platforms.join(',')} ` +
+          `emulation=${group.emulated} cache=${pushing ? (this.opts.cacheMode ?? 'max') : 'off'} ` +
+          `service=${req.serviceName}`
+      )
+
+      const groupStarted = Date.now()
+      const watching = Boolean(this.opts.log || req.onProgress)
+      const { stdout, stderr, code } = await run('docker', args, {
+        timeoutMs: this.opts.timeoutMs ?? 20 * 60_000,
+        onLine: watching
+          ? (line) => {
+              this.opts.log?.(line)
+              if (!req.onProgress) return
+              const progress = parseBuildLine(line)
+              // Decorated with who is running it. A consumer cannot work out
+              // emulation from the platform alone once a native remote builder
+              // exists, because the answer stops being a property of the
+              // control plane's own architecture.
+              if (progress) {
+                req.onProgress({
+                  ...progress,
+                  // buildx only prefixes a stage header with the platform on a
+                  // multi-platform build -- a single-arch build emits "[5/6]",
+                  // not "[linux/arm64 5/6]". The platform is no less true for
+                  // being unstated, and it is the field that answers "why is
+                  // this slow", so it is supplied from the group when the line
+                  // does not carry one. Only when the group is one platform:
+                  // with several, the line genuinely does not say which.
+                  ...(progress.platform === undefined && group.platforms.length === 1
+                    ? { platform: group.platforms[0]! }
+                    : {}),
+                  ...(group.builder ? { builder: group.builder } : {}),
+                  emulated: group.emulated,
+                })
+              }
+            }
+          : undefined,
+      })
+
+      lastOutput = stderr + stdout
+      if (code !== 0) {
+        // The last few lines are what a user needs; the whole log is noise.
+        const tail = (stderr || stdout).trim().split('\n').slice(-12).join('\n')
+        throw new BuildUnavailableError(
+          `buildx failed for "${req.serviceName}" on builder "${group.builder ?? 'default'}" ` +
+            `(${group.platforms.join(',')}${group.emulated ? ', emulated' : ''}):\n${tail}`
+        )
+      }
+
+      groupTags.push(groupTag)
+      builds.push({
+        builder: group.builder ?? 'default',
+        platforms: group.platforms,
+        emulated: group.emulated,
+        durationMs: Date.now() - groupStarted,
+        // BuildKit's own count, not an estimate. A build that reports zero
+        // cached steps after a cache was configured is the tell that the
+        // cache is not being read — which is how the missing --cache-from
+        // went unnoticed for as long as it did.
+        cachedSteps: (lastOutput.match(/^#\d+ CACHED\b/gm) ?? []).length,
+      })
+    }
+
+    // Two builders produce two images; a node pulls one name. `imagetools
+    // create` writes the manifest list that makes them one, without pulling or
+    // rebuilding either — it is a registry-side operation on digests.
+    if (groupTags.length > 1) {
+      const { stdout, stderr, code } = await run(
+        'docker',
+        ['buildx', 'imagetools', 'create', '--tag', tag, ...groupTags],
+        { timeoutMs: 5 * 60_000 }
+      )
+      lastOutput = stderr + stdout
+      if (code !== 0) {
+        const tail = (stderr || stdout).trim().split('\n').slice(-12).join('\n')
+        throw new BuildUnavailableError(
+          `could not combine ${groupTags.length} per-architecture images into "${tag}":\n${tail}`
+        )
+      }
     }
 
     return {
       imageTags: [tag],
-      digest: extractDigest(stderr + stdout) ?? undefined,
+      digest: extractDigest(lastOutput) ?? undefined,
       logUrl: undefined,
       durationMs: Date.now() - started,
-    } as BuildResult & { durationMs: number }
+      builds,
+    }
   }
 
   private tagFor(req: BuildRequest): string {
@@ -256,6 +376,134 @@ export function repositoryOf(imageRef: string): string {
   const slash = imageRef.lastIndexOf('/')
   const colon = imageRef.lastIndexOf(':')
   return colon > slash ? imageRef.slice(0, colon) : imageRef
+}
+
+/**
+ * Which builder serves which platform, from `linux/arm64=arm64,linux/amd64=main`.
+ *
+ * Malformed pairs are dropped rather than throwing. This is read at startup
+ * from an environment variable, and a typo in it must not stop a control plane
+ * from booting — the consequence of ignoring one pair is a slower build, and
+ * the consequence of throwing is no control plane at all.
+ */
+export function parseBuilderRouting(spec: string | undefined): Map<string, string> {
+  const routing = new Map<string, string>()
+  if (!spec) return routing
+  for (const pair of spec.split(',')) {
+    const eq = pair.indexOf('=')
+    if (eq < 1) continue
+    const platform = pair.slice(0, eq).trim()
+    const builder = pair.slice(eq + 1).trim()
+    if (platform && builder) routing.set(platform, builder)
+  }
+  return routing
+}
+
+/** What a builder can do, and which of it is emulated. */
+export type BuilderPlatforms = { native: Set<string>; emulated: Set<string> }
+
+/** The architecture part of a platform: linux/amd64/v2 -> amd64, linux/arm/v7 -> arm. */
+const archOf = (platform: string): string => platform.split('/')[1] ?? ''
+
+/**
+ * Read `docker buildx inspect` for what a builder can actually target, and
+ * which of it would be emulated.
+ *
+ * Two signals, because neither is sufficient alone.
+ *
+ * Older buildx marks an emulated platform with a trailing asterisk, and where
+ * that appears it is authoritative. But buildx v0.30 — the version on Docker
+ * Desktop today — prints no asterisks at all, so an arm64 Mac and an amd64
+ * server advertising arm64 through QEMU produce identical lines. Trusting the
+ * asterisk alone would report the twenty-minute path as native.
+ *
+ * So the fallback is ordering: buildkit reports a node's OWN platform first,
+ * then its variants, then everything it can only emulate. Verified against a
+ * native arm64 daemon, which lists `linux/arm64` first with binfmt installed
+ * for six other architectures.
+ *
+ * A platform any node can do natively is native, whatever another node said —
+ * which is the entire point of appending an arm64 node to an amd64 builder.
+ */
+export function parseInspectPlatforms(stdout: string): BuilderPlatforms {
+  const native = new Set<string>()
+  const emulated = new Set<string>()
+
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.toLowerCase().startsWith('platforms:')) continue
+
+    const entries = trimmed
+      .slice(trimmed.indexOf(':') + 1)
+      .split(',')
+      .map((e) => e.trim())
+      .filter(Boolean)
+    if (!entries.length) continue
+
+    // This node's own architecture, from the platform it named first.
+    const hostArch = archOf(entries[0]!.replace(/\*$/, '').trim())
+
+    for (const entry of entries) {
+      const starred = entry.endsWith('*')
+      const platform = starred ? entry.slice(0, -1).trim() : entry
+      if (starred || archOf(platform) !== hostArch) emulated.add(platform)
+      else native.add(platform)
+    }
+  }
+
+  for (const platform of native) emulated.delete(platform)
+  return { native, emulated }
+}
+
+/** One buildx invocation: a set of platforms and the builder that will run it. */
+export type BuildGroup = { builder?: string; platforms: string[] }
+
+/**
+ * Split the requested platforms across the builders configured to serve them.
+ *
+ * Order is preserved so the resulting tags and logs are stable between builds,
+ * and platforms with no routing entry fall to the default builder — which is
+ * how a fleet that has configured nothing keeps behaving exactly as before.
+ */
+export function planBuilds(
+  platforms: string[],
+  routing: Map<string, string>,
+  fallback?: string
+): BuildGroup[] {
+  const groups: BuildGroup[] = []
+  const byBuilder = new Map<string, BuildGroup>()
+
+  for (const platform of platforms) {
+    const builder = routing.get(platform) ?? fallback
+    // A group per builder, with `undefined` — buildx's own default — its own
+    // key rather than being merged into whatever was named first.
+    const key = builder ?? '\u0000default'
+    let group = byBuilder.get(key)
+    if (!group) {
+      group = { ...(builder ? { builder } : {}), platforms: [] }
+      byBuilder.set(key, group)
+      groups.push(group)
+    }
+    group.platforms.push(platform)
+  }
+
+  return groups
+}
+
+/**
+ * Where this group's build cache lives in the registry.
+ *
+ * Per platform group, because two groups pushing to one ref overwrite each
+ * other's manifest and every build then misses. A tag may only contain
+ * `[A-Za-z0-9_.-]`, so the slashes in `linux/arm64` have to go.
+ */
+export function cacheRefFor(tag: string, platforms: string[]): string {
+  const suffix = platforms
+    .map((p) => p.replace(/[^A-Za-z0-9]+/g, '-'))
+    .sort()
+    .join('_')
+    .replace(/^-+|-+$/g, '')
+  return `${repositoryOf(tag)}:buildcache-${suffix || 'default'}`
 }
 
 function extractDigest(output: string): string | null {

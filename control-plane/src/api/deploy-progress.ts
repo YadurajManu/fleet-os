@@ -192,6 +192,8 @@ export type DeployProgress = {
    * so only the control plane can answer this.
    */
   emulated?: boolean
+  /** Which buildx builder is running it, when more than one is configured. */
+  builder?: string
   /**
    * How long this service's deploys usually take, in milliseconds.
    *
@@ -278,14 +280,21 @@ export async function readProgress(
     if (typeof line.detail === 'string') progress.detail = line.detail
     if (typeof line.step === 'number') progress.step = line.step
     if (typeof line.ofSteps === 'number') progress.ofSteps = line.ofSteps
-    if (typeof line.platform === 'string') {
-      progress.platform = line.platform
-      // "linux/arm64" against a control plane running amd64. Compared on the
-      // architecture alone: the OS is linux on both sides of any build we do.
+    if (typeof line.builder === 'string') progress.builder = line.builder
+    if (typeof line.emulated === 'boolean') {
+      // The builder's own answer, which is the only correct one. Comparing the
+      // target platform with `process.arch` was right while every build ran on
+      // the control plane's own daemon, and became wrong the moment a native
+      // arm64 builder was added: it reports the fast path as emulated.
+      progress.emulated = line.emulated
+    } else if (typeof line.platform === 'string') {
+      // No builder said. Fall back to the old comparison, which is still right
+      // for a single-daemon control plane and is all the information there is.
       const target = line.platform.split('/')[1]
       const host = process.arch === 'x64' ? 'amd64' : process.arch === 'arm64' ? 'arm64' : process.arch
       if (target && target !== host) progress.emulated = true
     }
+    if (typeof line.platform === 'string') progress.platform = line.platform
   } catch {
     // A malformed value is not worth failing the request over.
   }

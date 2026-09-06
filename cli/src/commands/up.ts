@@ -18,6 +18,16 @@ import { planFromManifest, deployOrder, projectNameFor } from '../plan.js'
 import { uploadContext, humanBytes } from '../archive.js'
 import type { Flags } from '../args.js'
 
+/** The live build line the control plane already publishes. */
+type DeployProgress = {
+  status: string
+  detail?: string
+  step?: number
+  ofSteps?: number
+  platform?: string
+  emulated?: boolean
+}
+
 type Service = {
   id: string
   name: string
@@ -259,6 +269,24 @@ async function deployOne(
         // is measured in tens of minutes, not minutes.
         const deadline = Date.now() + 45 * 60_000
         while (Date.now() < deadline) {
+          // What the builder is doing, rather than a hint about what it might
+          // be doing. Every field here has been reaching /progress since the
+          // phase writer was added and nothing asked for it, so this loop sat
+          // cycling generic advice past a reader who could have been told the
+          // step number. Failures are swallowed: this is a label, and losing it
+          // must not end a deploy that is going fine.
+          const line = await request<DeployProgress>('GET', `/services/${service.id}/progress`)
+            .then((r) => r.body)
+            .catch(() => null)
+          if (line && ['queued', 'building', 'pushing'].includes(line.status)) {
+            const parts = [line.status]
+            if (line.step && line.ofSteps) parts.push(`${line.step}/${line.ofSteps}`)
+            if (line.platform) parts.push(line.platform)
+            if (line.emulated) parts.push('emulated')
+            s.update(`${c.bold(service.name)} · ${parts.join(' · ')}`)
+            if (line.detail) s.hints([line.detail])
+          }
+
           const { body } = await request<{ services: Service[] }>(
             'GET',
             `/fleets/${opts.fleetId}/services`

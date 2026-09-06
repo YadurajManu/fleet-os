@@ -458,6 +458,31 @@ export const rescheduleCommand = {
   },
 }
 
+/**
+ * A building row, with what the builder is actually doing.
+ *
+ * Every field here has been travelling from buildx through Redis to the API for
+ * a while and stopping there, so this shows what already exists rather than
+ * measuring anything new. Emulation is called out because it is the usual
+ * answer to "why is this taking twenty minutes".
+ */
+function buildStatus(
+  status: string,
+  progress: {
+    step?: number
+    ofSteps?: number
+    platform?: string
+    builder?: string
+    emulated?: boolean
+  }
+): string {
+  const parts = [statusColour(status)]
+  if (progress.step && progress.ofSteps) parts.push(c.dim(`${progress.step}/${progress.ofSteps}`))
+  if (progress.platform) parts.push(c.dim(progress.platform))
+  if (progress.emulated) parts.push(c.yellow('emulated'))
+  return parts.join(' ')
+}
+
 export const deploymentsCommand = {
   async run(args: string[], flags: Flags) {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
@@ -473,6 +498,15 @@ export const deploymentsCommand = {
         nodeName: string | null
         startedAt: string
         failureReason: string | null
+        /** Present only on a row that is still building. */
+        progress?: {
+          detail?: string
+          step?: number
+          ofSteps?: number
+          platform?: string
+          builder?: string
+          emulated?: boolean
+        }
       }>
     }>('GET', `/services/${service.id}/deployments`)
 
@@ -484,8 +518,10 @@ export const deploymentsCommand = {
           relativeTime(d.startedAt),
           d.gitSha?.slice(0, 7) ?? c.dim('—'),
           d.nodeName ?? c.dim('—'),
-          statusColour(d.status),
-          d.failureReason ?? '',
+          // "building" alone reads as stuck. The step counter is what tells a
+          // reader the difference between a slow build and a hung one.
+          d.progress ? buildStatus(d.status, d.progress) : statusColour(d.status),
+          d.failureReason ?? (d.progress?.detail ? c.dim(d.progress.detail) : ''),
         ])
       )
     )

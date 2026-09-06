@@ -82,11 +82,12 @@ const hasDep = (pkg: Record<string, unknown>, name: string): boolean => {
 
 // ── Dockerfile templates ────────────────────────────────────────────────
 
-const NEXTJS_DOCKERFILE = `# --- Build ---
+const NEXTJS_DOCKERFILE = `# syntax=docker/dockerfile:1
+# --- Build ---
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npm run build
 
@@ -101,11 +102,12 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 `
 
-const VITE_DOCKERFILE = `# --- Build ---
+const VITE_DOCKERFILE = `# syntax=docker/dockerfile:1
+# --- Build ---
 FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npm run build
 
@@ -116,39 +118,64 @@ EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
 `
 
-const NODE_DOCKERFILE = `FROM node:22-alpine
+const NODE_DOCKERFILE = `# syntax=docker/dockerfile:1
+FROM node:22-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 COPY . .
 EXPOSE 3000
 CMD ["node", "src/index.js"]
 `
 
+/**
+ * `--mount=type=cache` rather than `--no-cache-dir`.
+ *
+ * The two look interchangeable and are opposites. `--no-cache-dir` tells pip to
+ * keep no wheel cache *inside the layer*, which keeps the image small and makes
+ * every rebuild download and recompile from nothing. A BuildKit cache mount
+ * lives outside the image entirely — it is not a layer, so it adds nothing to
+ * the final size — and survives between builds, so a rebuild that changes only
+ * application source reuses every wheel it already has.
+ *
+ * That is the difference between a two-minute rebuild and a twenty-minute one
+ * for anything with `cryptography` or `psycopg2` in it, and more again when the
+ * build is emulated.
+ *
+ * The syntax line is required: `RUN --mount` is a Dockerfile frontend feature,
+ * and without it an older builder fails on the flag rather than ignoring it.
+ */
 const PYTHON_DOCKERFILE = (
   entry: string,
   usesPoetry: boolean,
-) => `FROM python:3.12-slim
+) => `# syntax=docker/dockerfile:1
+FROM python:3.12-slim
 WORKDIR /app
 ${
   usesPoetry
     ? `COPY pyproject.toml poetry.lock* ./
-RUN pip install --no-cache-dir poetry && poetry config virtualenvs.create false && poetry install --no-interaction --no-ansi --no-dev`
+RUN --mount=type=cache,target=/root/.cache/pip \\
+    --mount=type=cache,target=/root/.cache/pypoetry \\
+    pip install poetry && poetry config virtualenvs.create false && poetry install --no-interaction --no-ansi --no-dev`
     : `COPY requirements*.txt ./
-RUN pip install --no-cache-dir -r requirements.txt`
+RUN --mount=type=cache,target=/root/.cache/pip \\
+    pip install -r requirements.txt`
 }
 COPY . .
 EXPOSE 8000
 CMD ["python", "-m", "${entry}"]
 `
 
-const GO_DOCKERFILE = (module: string) => `# --- Build ---
+const GO_DOCKERFILE = (module: string) => `# syntax=docker/dockerfile:1
+# --- Build ---
 FROM golang:1.24-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum* ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /server .
+RUN --mount=type=cache,target=/go/pkg/mod \\
+    --mount=type=cache,target=/root/.cache/go-build \\
+    CGO_ENABLED=0 go build -o /server .
 
 # --- Run ---
 FROM alpine:3.21
@@ -157,13 +184,21 @@ EXPOSE 8080
 CMD ["/server"]
 `
 
-const RUST_DOCKERFILE = `# --- Build ---
+const RUST_DOCKERFILE = `# syntax=docker/dockerfile:1
+# --- Build ---
 FROM rust:1.87-slim AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
-RUN mkdir src && echo 'fn main(){}' > src/main.rs && cargo build --release && rm -rf src
+RUN --mount=type=cache,target=/usr/local/cargo/registry \\
+    mkdir src && echo 'fn main(){}' > src/main.rs && cargo build --release && rm -rf src
 COPY . .
-RUN cargo build --release
+# Only the registry is cached, deliberately. A cache mount on /app/target would
+# speed the compile up and put the binary somewhere the runtime stage cannot
+# copy from: a mount is not part of the image, so "COPY --from=builder
+# /app/target/release/*" would find an empty directory and the image would
+# build cleanly and contain nothing.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \\
+    cargo build --release
 
 # --- Run ---
 FROM debian:bookworm-slim

@@ -694,6 +694,10 @@ export async function serviceRoutes(app: FastifyInstance) {
                 platforms: buildPlan.platforms,
                 image: finalImage,
                 durationMs: built.durationMs,
+                // Per builder, so "why was this slow" is answerable from one
+                // line: which builder ran it, whether it was emulated, and how
+                // many steps the cache saved.
+                builds: built.builds,
               },
               'multi-arch build complete'
             )
@@ -941,7 +945,39 @@ export async function serviceRoutes(app: FastifyInstance) {
         .where(eq(deployments.serviceId, service.id))
         .orderBy(desc(deployments.startedAt))
         .limit(50)
-      return { deployments: rows.map((r) => ({ ...r.deployment, nodeName: r.nodeName })) }
+
+      // The live build line, on the row it belongs to.
+      //
+      // Everything needed to say "building 4/6 · linux/arm64 · RUN pip install"
+      // has been reaching /progress for a while, and this list showed a bare
+      // "building" beside it — which is the difference between waiting for a
+      // slow build and killing one that looked hung. Read once, and only when
+      // the newest row is still in a build phase, so listing history stays one
+      // query.
+      const newest = rows[0]?.deployment
+      const live =
+        newest && ['queued', 'building', 'pushing'].includes(newest.status)
+          ? await readProgress(app.ctx, service.id).catch(() => null)
+          : null
+
+      return {
+        deployments: rows.map((r) => ({
+          ...r.deployment,
+          nodeName: r.nodeName,
+          ...(live && live.deploymentId === r.deployment.id
+            ? {
+                progress: {
+                  ...(live.detail ? { detail: live.detail } : {}),
+                  ...(live.step ? { step: live.step } : {}),
+                  ...(live.ofSteps ? { ofSteps: live.ofSteps } : {}),
+                  ...(live.platform ? { platform: live.platform } : {}),
+                  ...(live.builder ? { builder: live.builder } : {}),
+                  ...(live.emulated !== undefined ? { emulated: live.emulated } : {}),
+                },
+              }
+            : {}),
+        })),
+      }
     }
   )
 

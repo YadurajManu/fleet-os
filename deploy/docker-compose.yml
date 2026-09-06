@@ -124,6 +124,9 @@ services:
       # operator holds the key and pays for the calls, so this is theirs to set.
       AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-20}
       BUILDX_BUILDER: ${BUILDX_BUILDER:-}
+      # linux/arm64=fleet-builder — see deploy/setup-arm64-builder.sh. Unset means
+      # one builder for every platform, with QEMU for whatever it cannot do.
+      BUILDX_PLATFORM_BUILDERS: ${BUILDX_PLATFORM_BUILDERS:-}
       # "min" when the registry is behind a proxy with a request size limit —
       # Cloudflare's free plan rejects bodies over 100MB, and "max" exports
       # every intermediate build stage.

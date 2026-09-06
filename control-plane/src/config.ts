@@ -51,6 +51,18 @@ const schema = z.object({
   REGISTRY_CREDENTIALS: z.string().optional(),
   BUILDX_BUILDER: z.string().optional(),
   /**
+   * Which builder serves which platform, as `linux/arm64=name,linux/amd64=name`.
+   *
+   * The control plane runs on amd64 and the fleet's nodes are mostly arm64, so
+   * without this every arm64 image is produced by QEMU emulating an entire
+   * Dockerfile — a `pip install` that takes forty seconds natively takes twenty
+   * minutes, which is indistinguishable from a hang.
+   *
+   * Unset keeps today's behaviour exactly: one builder, whatever BUILDX_BUILDER
+   * names, and QEMU for anything it cannot do natively.
+   */
+  BUILDX_PLATFORM_BUILDERS: z.string().optional(),
+  /**
    * How much build cache to push back to the registry. "max" reuses the most
    * between builds; "min" uploads far less, which is what you want when the
    * registry is behind a proxy that caps request bodies — Cloudflare's free
