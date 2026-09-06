@@ -46,14 +46,22 @@ export async function deployFromPush(
   try {
     let image = service.image ?? ''
     if (!image) {
-      const arches = [
-        ...new Set(
-          snapshot
-            .filter((n) => n.status === 'online')
-            .map((n) => n.arch)
-            .filter((a) => !service.compatibleArches.length || service.compatibleArches.includes(a))
-        ),
-      ]
+      // Build only for the target node's architecture when there is no registry,
+      // because buildx --load cannot handle multi-platform images. Even with a
+      // registry, npm ci / pip install under QEMU emulation is fragile and slow,
+      // so prefer the target node's arch and only widen when a registry exists.
+      const targetNode = snapshot.find((n) => n.id === decision.nodeId)
+      const hasRegistry = Boolean(ctx.config.REGISTRY_URL)
+      const arches = hasRegistry
+        ? [
+            ...new Set(
+              snapshot
+                .filter((n) => n.status === 'online')
+                .map((n) => n.arch)
+                .filter((a) => !service.compatibleArches.length || service.compatibleArches.includes(a))
+            ),
+          ]
+        : targetNode ? [targetNode.arch] : ['amd64']
       await phases.set('building')
       const built = await ctx.builds.build({
         serviceName: service.name,
