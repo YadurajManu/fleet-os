@@ -7,6 +7,7 @@ import { Dot, ErrorNote, Panel, StatusPill } from '../components/ui'
 import TimeSeriesChart, { type ChartSeries, type Marker } from '../components/TimeSeriesChart'
 import { HeartbeatStrip, projectFull } from '../components/viz'
 import { beatsFrom, dockerBeatsFrom, type NodeSample } from '../lib/useSamples'
+import WebTerminal from '../components/WebTerminal'
 
 /**
  * Everything known about one machine.
@@ -15,11 +16,6 @@ import { beatsFrom, dockerBeatsFrom, type NodeSample } from '../lib/useSamples'
  * memory over one is a way to reach a confident wrong conclusion, so the
  * selector is deliberately not per-chart — and it lives in the URL, because
  * /nodes/:id?range=24h is a link worth sending someone mid-incident.
- *
- * The crosshair is shared for the same reason. Four charts on a shared axis
- * exist so you can ask "what was memory doing when CPU spiked", and answering
- * that by eye across four panels is guesswork. Hovering anywhere reads every
- * metric at that instant.
  */
 
 const RANGES = [
@@ -47,17 +43,139 @@ const SERIES = { cpu: '#3987e5', ram: '#9a6bd8', disk: '#12a594', netRx: '#d6409
 const toneColour = (tone: string) =>
   tone === 'down' ? 'var(--color-down)' : tone === 'warn' ? 'var(--color-warn)' : 'var(--color-fg-muted)'
 
-function Tile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+// ─── Mini Sparkline for Metric Tiles ──────────────────────────────────────────
+
+function MiniSparkline({ data, colour = '#3987e5' }: { data: number[]; colour?: string }) {
+  if (!data || data.length < 2) return null
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const range = max - min || 1
+  const width = 76
+  const height = 26
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width
+    const y = height - ((v - min) / range) * (height - 6) - 3
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  })
+  const pathD = `M ${pts.join(' L ')}`
+  const areaD = `M 0,${height} L ${pts.join(' L ')} L ${width},${height} Z`
+  const gradId = `spark-${colour.replace(/[^a-zA-Z0-9]/g, '')}`
+
   return (
-    <div className="bg-[var(--color-ink-950)] p-4">
-      <div className="mono-label text-[9px] text-[var(--color-fg-dim)]">{label}</div>
-      <div
-        className="mt-1.5 text-[19px] font-semibold tabular-nums tracking-[-0.02em]"
-        style={{ color: tone ?? 'var(--color-fg)' }}
-      >
-        {value}
+    <svg width={width} height={height} className="overflow-visible shrink-0 opacity-70 group-hover:opacity-100 transition-opacity">
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={colour} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={colour} stopOpacity="0.0" />
+        </linearGradient>
+      </defs>
+      <path d={areaD} fill={`url(#${gradId})`} />
+      <path d={pathD} fill="none" stroke={colour} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function Tile({
+  label,
+  value,
+  sub,
+  tone,
+  sparkline,
+  sparkColor,
+}: {
+  label: string
+  value: string
+  sub?: string
+  tone?: string
+  sparkline?: number[]
+  sparkColor?: string
+}) {
+  return (
+    <div className="bg-[var(--color-ink-950)] p-4 flex items-center justify-between gap-2 group hover:bg-white/[0.02] transition-colors">
+      <div className="min-w-0">
+        <div className="mono-label text-[9px] text-[var(--color-fg-dim)]">{label}</div>
+        <div
+          className="mt-1.5 text-[19px] font-semibold tabular-nums tracking-[-0.02em]"
+          style={{ color: tone ?? 'var(--color-fg)' }}
+        >
+          {value}
+        </div>
+        {sub && <div className="mt-0.5 font-mono text-[10.5px] text-[var(--color-fg-muted)] truncate">{sub}</div>}
       </div>
-      {sub && <div className="mt-0.5 font-mono text-[10.5px] text-[var(--color-fg-muted)]">{sub}</div>}
+      {sparkline && sparkline.length >= 2 && (
+        <MiniSparkline data={sparkline} colour={sparkColor ?? '#3987e5'} />
+      )}
+    </div>
+  )
+}
+
+// ─── Circular SVG Resource Gauge ──────────────────────────────────────────────
+
+function CircularGauge({
+  label,
+  pct,
+  valueText,
+  subText,
+  colour = '#3fe08b',
+  size = 112,
+}: {
+  label: string
+  pct: number
+  valueText: string
+  subText?: string
+  colour?: string
+  size?: number
+}) {
+  const strokeWidth = 7
+  const radius = (size - strokeWidth) / 2
+  const circ = 2 * Math.PI * radius
+  const clamped = Math.max(0, Math.min(100, pct))
+  const strokeDashoffset = circ - (clamped / 100) * circ
+
+  return (
+    <div className="flex flex-col items-center justify-center p-4 bg-[var(--color-ink-950)] border border-[var(--color-line)] rounded-lg relative overflow-hidden group hover:border-white/[0.12] transition-all">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="rotate-[-90deg]">
+          {/* Background track */}
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="transparent"
+            stroke="rgba(255, 255, 255, 0.06)"
+            strokeWidth={strokeWidth}
+          />
+          {/* Active progress */}
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="transparent"
+            stroke={colour}
+            strokeWidth={strokeWidth}
+            strokeDasharray={circ}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            className="transition-all duration-700 ease-out"
+            style={{
+              filter: `drop-shadow(0 0 6px ${colour}40)`,
+            }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="font-mono text-[17px] font-bold tracking-tight text-white/95 tabular-nums">
+            {valueText}
+          </span>
+          <span className="font-mono text-[9px] uppercase tracking-wider text-white/40 mt-0.5">
+            {label}
+          </span>
+        </div>
+      </div>
+      {subText && (
+        <span className="mt-2.5 font-mono text-[11px] text-[var(--color-fg-muted)] text-center truncate max-w-full">
+          {subText}
+        </span>
+      )}
     </div>
   )
 }
@@ -86,10 +204,10 @@ export default function NodeDetail() {
   const [hoverT, setHoverT] = useState<number | null>(null)
   const [zoom, setZoom] = useState<{ from: number; to: number } | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [showTerminal, setShowTerminal] = useState(false)
+  const [copiedId, setCopiedId] = useState(false)
 
-  // A zoom is a window inside a range. Changing the range makes it meaningless,
-  // and keeping it would silently show a slice of a period the reader thinks
-  // they are seeing in full.
+  // Reset zoom on range change
   useEffect(() => setZoom(null), [range.key])
 
   const nodes = usePoll(
@@ -99,8 +217,6 @@ export default function NodeDetail() {
   )
   const node = nodes.data?.nodes.find((n) => n.id === nodeId)
 
-  // History refreshes far more slowly than the node list. The list answers "is
-  // it alive", which must be current; a chart's left edge has not moved.
   const hist = usePoll(
     () => api<SamplesResponse>(`/fleets/${fleet!.id}/nodes/${nodeId}/samples?since=${range.minutes}`),
     fleet?.id && nodeId ? `/fleets/${fleet.id}/nodes/${nodeId}/samples?since=${range.minutes}` : null,
@@ -124,9 +240,6 @@ export default function NodeDetail() {
     })
   }, [allSamples, zoom])
 
-  /* Zooming has to move the summary too. Tiles that still describe the whole
-     range while the charts show ten minutes of it is a mismatch nobody reads
-     carefully enough to catch. */
   const peaks: Peaks | undefined = useMemo(() => {
     if (!zoom) return hist.data?.peaks
     const num = (pick: (s: NodeSample) => number | null | undefined) =>
@@ -164,9 +277,6 @@ export default function NodeDetail() {
     return diskTotal ? projectFull(d, diskTotal) : null
   }, [samples, diskTotal])
 
-  // Zooming narrows the window the strip describes too. Left at the full range
-  // it would draw a zoomed selection as a short run of beats followed by hours
-  // of "no data", which reads as an outage rather than as a chosen window.
   const beatWindowMs = zoom ? Math.max(zoom.to - zoom.from, 60_000) : range.minutes * 60_000
   const beats = useMemo(() => beatsFrom(samples, 60, beatWindowMs), [samples, beatWindowMs])
   const recorded = beats.filter((b) => b !== 'nodata')
@@ -174,8 +284,6 @@ export default function NodeDetail() {
   const dockerRecorded = dockerBeats.filter((b) => b !== 'nodata')
   const uptime = recorded.length ? (recorded.filter((b) => b === 'ok').length / recorded.length) * 100 : null
 
-  /* Only true when a node has actually reported one. An agent too old to send
-     network or temperature should show nothing, not a confident zero. */
   const hasNet = samples.some((s) => s.netRxKbps != null || s.netTxKbps != null)
   const hasTemp = samples.some((s) => s.tempC != null)
   const hasLoad = samples.some((s) => s.load1 != null)
@@ -184,10 +292,6 @@ export default function NodeDetail() {
   const hasContainers = samples.some((s) => s.containers != null)
   const hasDocker = samples.some((s) => s.dockerOk != null)
 
-  /* Which metrics this agent never sends, named once rather than as a grid of
-     empty boxes. Four charts beside three "agent upgrade required" panels
-     looks like something is broken; a single line saying what is missing and
-     how to get it does not. */
   const missing = [
     !hasNet && 'network',
     !hasSwap && 'swap',
@@ -197,6 +301,16 @@ export default function NodeDetail() {
 
   const diskCeiling = samples.reduce((m, s) => Math.max(m, s.diskTotalMb ?? 0), 0) || diskTotal
 
+  // Sparkline data extracts from recent samples (up to 30 points)
+  const recentSlice = useMemo(() => samples.slice(-30), [samples])
+  const cpuSparkData = useMemo(() => recentSlice.map((s) => s.cpuPct ?? 0), [recentSlice])
+  const ramSparkData = useMemo(() => recentSlice.map((s) => s.ramUsedMb ?? 0), [recentSlice])
+  const diskSparkData = useMemo(() => recentSlice.map((s) => s.diskUsedMb ?? 0), [recentSlice])
+  const uptimeSparkData = useMemo(
+    () => recorded.slice(-30).map((b) => (b === 'ok' ? 100 : b === 'slow' ? 50 : 0)),
+    [recorded]
+  )
+
   const charts: ChartDef[] = useMemo(() => {
     if (!node) return []
     const list: ChartDef[] = [
@@ -205,8 +319,6 @@ export default function NodeDetail() {
         title: 'cpu',
         note: 'band is min to max, line is the mean',
         ceiling: 100,
-        // No `unit` here: the tooltip appends unit to the formatted value, and
-        // this formatter already carries the sign. Setting both printed "52%%".
         format: (v) => `${Math.round(v)}%`,
         emptyHint: 'No CPU history in this window yet. It fills in as the node reports.',
         series: [{
@@ -246,10 +358,6 @@ export default function NodeDetail() {
       list.push({
         key: 'disk',
         title: 'disk',
-        // Capacity as the ceiling, so the line reads as a share of full rather
-        // than a number that happens to be large. The card projects a date the
-        // disk runs out; this is the evidence that projection comes from, and
-        // it is the metric most likely to actually stop a node.
         ceiling: diskCeiling || undefined,
         format: (v) => mb(v),
         emptyHint: 'No disk history in this window yet.',
@@ -298,7 +406,6 @@ export default function NodeDetail() {
     [charts, expandedIndex]
   )
 
-  // Esc closes, arrows move between metrics without leaving the expanded view.
   useEffect(() => {
     if (!expanded) return
     const onKey = (e: KeyboardEvent) => {
@@ -307,7 +414,6 @@ export default function NodeDetail() {
       else if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1) }
     }
     window.addEventListener('keydown', onKey)
-    // Nothing behind the overlay should scroll under it.
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
@@ -343,27 +449,132 @@ export default function NodeDetail() {
     ? `${new Date(zoom.from).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}–${new Date(zoom.to).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     : range.label
 
+  const handleCopyNodeId = async () => {
+    await navigator.clipboard.writeText(node.id)
+    setCopiedId(true)
+    setTimeout(() => setCopiedId(false), 2000)
+  }
+
+  // Live real-time gauge values
+  const liveCpu = t?.cpuPct ?? (peaks?.cpuAvg != null ? Math.round(peaks.cpuAvg) : 0)
+  const liveRamMb = t?.ramUsedMb ?? peaks?.ramAvgMb ?? 0
+  const liveRamPct = node.ramMb ? Math.round((liveRamMb / node.ramMb) * 100) : 0
+  const liveDiskMb = t?.diskUsedMb ?? 0
+  const liveDiskPct = diskTotal ? Math.round((liveDiskMb / diskTotal) * 100) : 0
+
+  const cpuColor = liveCpu > 85 ? '#f87171' : liveCpu > 70 ? '#fbbf24' : '#3fe08b'
+  const ramColor = liveRamPct > 85 ? '#f87171' : liveRamPct > 70 ? '#fbbf24' : '#9a6bd8'
+  const diskColor = liveDiskPct > 90 ? '#f87171' : liveDiskPct > 75 ? '#fbbf24' : '#12a594'
+
   return (
-    <div className="space-y-5">
-      {/* header */}
+    <div className="space-y-6">
+      {/* ─── Header & Primary Action Bar ─── */}
       <div>
         <Link to="/nodes" className="font-mono text-[11.5px] text-[var(--color-fg-dim)] transition-colors hover:text-[var(--color-fg)]">
           ← nodes
         </Link>
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <h1 className="text-[24px] font-semibold tracking-[-0.03em]">{node.name}</h1>
-          <StatusPill status={node.status} />
-          <span className="font-mono text-[11.5px] text-[var(--color-fg-dim)]">
-            {node.os} ({node.arch}) · {node.cpuCores} cores · {mb(node.ramMb)} RAM
-          </span>
-          <span className="ml-auto flex items-center gap-2 font-mono text-[11px] text-[var(--color-fg-dim)]">
-            <Dot tone={node.status === 'online' ? 'ok' : 'down'} size={6} />
-            {since(node.lastHeartbeatAt)}
-          </span>
+        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-y-3 gap-x-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <h1 className="text-[26px] font-semibold tracking-[-0.03em]">{node.name}</h1>
+            <StatusPill status={node.status} />
+            <span className="font-mono text-[11.5px] text-[var(--color-fg-dim)]">
+              {node.os} ({node.arch}) · {node.cpuCores} cores · {mb(node.ramMb)} RAM
+            </span>
+          </div>
+
+          {/* Action Buttons & Status */}
+          <div className="flex items-center gap-2.5 ml-auto sm:ml-0">
+            {/* Direct Launch Terminal Button */}
+            <button
+              onClick={() => setShowTerminal(true)}
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#3fe08b]/10 hover:bg-[#3fe08b]/20 border border-[#3fe08b]/30 hover:border-[#3fe08b]/60 text-[#3fe08b] font-mono text-[12px] font-semibold transition-all shadow-[0_0_20px_rgba(63,224,139,0.15)] group"
+              title="Open interactive remote web terminal"
+            >
+              <svg className="w-3.5 h-3.5 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" y1="19" x2="20" y2="19" />
+              </svg>
+              <span>Terminal</span>
+              <span className="px-1 py-0.2 text-[9px] rounded bg-[#3fe08b]/20 text-[#3fe08b] border border-[#3fe08b]/30">
+                &gt;_
+              </span>
+            </button>
+
+            {/* Copy Node ID */}
+            <button
+              onClick={handleCopyNodeId}
+              className="p-1.5 rounded-lg bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.08] text-white/60 hover:text-white transition-colors relative"
+              title="Copy Node UUID"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+              </svg>
+              {copiedId && (
+                <span className="absolute -top-7 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-[#3fe08b] text-[#07080a] text-[10px] font-mono font-bold shadow-lg">
+                  Copied!
+                </span>
+              )}
+            </button>
+
+            {/* Heartbeat status */}
+            <span className="flex items-center gap-1.5 font-mono text-[11px] text-[var(--color-fg-dim)] pl-2 border-l border-white/[0.08]">
+              <Dot tone={node.status === 'online' ? 'ok' : 'down'} size={6} />
+              {since(node.lastHeartbeatAt)}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* one range control for every chart on the page */}
+      {/* ─── Real-Time Live Resource Gauges ─── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <CircularGauge
+          label="CPU Load"
+          pct={liveCpu}
+          valueText={`${liveCpu}%`}
+          subText={t?.load1 != null ? `1m load: ${t.load1.toFixed(2)}` : `${node.cpuCores} cores online`}
+          colour={cpuColor}
+        />
+        <CircularGauge
+          label="RAM Usage"
+          pct={liveRamPct}
+          valueText={`${liveRamPct}%`}
+          subText={`${mb(liveRamMb)} of ${mb(node.ramMb)}`}
+          colour={ramColor}
+        />
+        <CircularGauge
+          label="Storage"
+          pct={liveDiskPct}
+          valueText={`${liveDiskPct}%`}
+          subText={projection ? `full in ${Math.round(projection.days)}d` : `${mb(liveDiskMb)} used`}
+          colour={diskColor}
+        />
+        <div className="flex flex-col justify-between p-4 bg-[var(--color-ink-950)] border border-[var(--color-line)] rounded-lg hover:border-white/[0.12] transition-colors">
+          <div className="flex items-center justify-between">
+            <span className="mono-label text-[9px] text-[var(--color-fg-dim)]">SYSTEM SPECS</span>
+            <span className="w-2 h-2 rounded-full" style={{ background: node.status === 'online' ? '#3fe08b' : '#f87171' }} />
+          </div>
+          <div className="space-y-1.5 my-2">
+            <div className="flex items-center justify-between font-mono text-[11px]">
+              <span className="text-white/40">Agent</span>
+              <span className="text-white/80">{node.agentVersion ? `v${node.agentVersion}` : 'latest'}</span>
+            </div>
+            <div className="flex items-center justify-between font-mono text-[11px]">
+              <span className="text-white/40">Arch</span>
+              <span className="text-white/80">{node.arch} ({node.os})</span>
+            </div>
+            <div className="flex items-center justify-between font-mono text-[11px]">
+              <span className="text-white/40">Containers</span>
+              <span className="text-white/80">{t?.containers != null ? `${t.containers} running` : '—'}</span>
+            </div>
+          </div>
+          <div className="font-mono text-[10px] text-white/30 truncate" title={node.id}>
+            ID: {node.id.slice(0, 18)}…
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Range Selector ─── */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="mono-label text-[9px] text-[var(--color-fg-dim)]">RANGE</span>
         {RANGES.map((r) => (
@@ -371,9 +582,9 @@ export default function NodeDetail() {
             key={r.key}
             onClick={() => setParams({ range: r.key }, { replace: true })}
             aria-pressed={r.key === range.key}
-            className={`px-2.5 py-1 font-mono text-[11px] transition-colors duration-200 ${
+            className={`px-2.5 py-1 font-mono text-[11px] rounded transition-colors duration-200 ${
               r.key === range.key
-                ? 'bg-[var(--color-signal)] text-[#04140c]'
+                ? 'bg-[var(--color-signal)] text-[#04140c] font-semibold'
                 : 'border border-[var(--color-line-2)] text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]'
             }`}
           >
@@ -383,7 +594,7 @@ export default function NodeDetail() {
         {zoom && (
           <button
             onClick={() => setZoom(null)}
-            className="flash-signal flex items-center gap-1.5 border border-[var(--color-signal)] px-2.5 py-1 font-mono text-[11px] text-[var(--color-signal)] transition-colors hover:bg-[var(--color-signal)] hover:text-[#04140c]"
+            className="flash-signal flex items-center gap-1.5 border border-[var(--color-signal)] px-2.5 py-1 font-mono text-[11px] text-[var(--color-signal)] rounded transition-colors hover:bg-[var(--color-signal)] hover:text-[#04140c]"
           >
             ✕ zoomed {windowLabel} · back to {range.label}
           </button>
@@ -396,7 +607,7 @@ export default function NodeDetail() {
         )}
       </div>
 
-      {/* what changed, on the same axis the charts use */}
+      {/* ─── Change Events Timeline ─── */}
       {events.length > 0 && (
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
           <span className="mono-label shrink-0 text-[9px] text-[var(--color-fg-dim)]">CHANGES</span>
@@ -406,7 +617,7 @@ export default function NodeDetail() {
               onMouseEnter={() => setHoverT(+new Date(e.at))}
               onMouseLeave={() => setHoverT(null)}
               title={new Date(e.at).toLocaleString()}
-              className="shrink-0 border-l-2 bg-[var(--color-ink-950)] py-1 pl-2 pr-3 text-left transition-colors hover:bg-[var(--color-ink-900)]"
+              className="shrink-0 border-l-2 bg-[var(--color-ink-950)] py-1 pl-2 pr-3 text-left rounded-r transition-colors hover:bg-[var(--color-ink-900)]"
               style={{ borderColor: toneColour(e.tone) }}
             >
               <span className="font-mono text-[10px] text-[var(--color-fg-dim)]">
@@ -427,38 +638,43 @@ export default function NodeDetail() {
         </p>
       )}
 
-      {/* the summary before the detail */}
-      <div className="grid gap-px bg-[var(--color-line)] sm:grid-cols-2 lg:grid-cols-4">
+      {/* ─── Summary Tiles with Embedded Mini-Sparklines ─── */}
+      <div className="grid gap-px bg-[var(--color-line)] sm:grid-cols-2 lg:grid-cols-4 rounded-lg overflow-hidden border border-[var(--color-line)]">
         <Tile
           label={`cpu peak · ${windowLabel}`}
           value={peaks?.cpuMax != null ? `${Math.round(peaks.cpuMax)}%` : '—'}
           sub={peaks?.cpuAvg != null ? `avg ${Math.round(peaks.cpuAvg)}%` : undefined}
           tone={peaks?.cpuMax != null && peaks.cpuMax > 85 ? 'var(--color-warn)' : undefined}
+          sparkline={cpuSparkData}
+          sparkColor={SERIES.cpu}
         />
         <Tile
           label={`memory peak · ${windowLabel}`}
           value={peaks?.ramMaxMb != null ? mb(peaks.ramMaxMb) : '—'}
           sub={`of ${mb(node.ramMb)}`}
           tone={peaks?.ramMaxMb != null && peaks.ramMaxMb / node.ramMb > 0.9 ? 'var(--color-warn)' : undefined}
+          sparkline={ramSparkData}
+          sparkColor={SERIES.ram}
         />
         <Tile
           label="disk"
           value={t?.diskUsedMb != null ? mb(t.diskUsedMb) : '—'}
           sub={projection ? `full in ${Math.round(projection.days)} days` : diskTotal ? `of ${mb(diskTotal)}` : undefined}
           tone={projection && projection.days < 14 ? 'var(--color-warn)' : undefined}
+          sparkline={diskSparkData}
+          sparkColor={SERIES.disk}
         />
         <Tile
           label={`uptime · ${windowLabel}`}
           value={uptime != null ? `${uptime.toFixed(1)}%` : '—'}
           sub={recorded.length ? `${recorded.filter((b) => b === 'missed').length} gaps` : 'no history yet'}
           tone={uptime != null && uptime < 99 ? 'var(--color-warn)' : undefined}
+          sparkline={uptimeSparkData}
+          sparkColor="#3fe08b"
         />
       </div>
 
-      {/* Small multiples: every metric on one screen, on one time axis and one
-          crosshair. Full width each, they were 9:1 boxes you had to scroll
-          past one at a time; half width they read better AND fit together.
-          The grid is the glance, and expanding is where a value gets read. */}
+      {/* ─── Metric Time Series Charts ─── */}
       <div className="grid gap-4 lg:grid-cols-2">
         {charts.map((c) => (
           <Panel
@@ -492,7 +708,7 @@ export default function NodeDetail() {
         </p>
       )}
 
-      {/* reporting history */}
+      {/* ─── Reporting History ─── */}
       <Panel title={`reporting · ${windowLabel}`}>
         <div className="space-y-2.5 p-4">
           <div className="flex items-center gap-3">
@@ -505,10 +721,6 @@ export default function NodeDetail() {
             </span>
           </div>
 
-          {/* Not a chart, because it is a yes or no. A node can report
-              faithfully every five seconds with a dead Docker daemon, and the
-              row above would be unbroken green - the state where nothing can
-              be deployed and everything looks fine. */}
           {hasDocker && (
             <div className="flex items-center gap-3">
               <span className="mono-label w-[68px] shrink-0 text-[9px] text-[var(--color-fg-dim)]">
@@ -525,75 +737,40 @@ export default function NodeDetail() {
         </div>
       </Panel>
 
-      {/* context */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="what the scheduler sees">
-          <dl className="divide-y divide-[var(--color-line)]">
-            {[
-              ['architecture', node.arch],
-              ['cores', String(node.cpuCores)],
-              ['memory', mb(node.ramMb)],
-              ['free disk', mb(node.diskMb)],
-              ['gpu', node.hasGpu ? 'yes' : 'no'],
-              ['reliability', node.reliabilityTier],
-              ['tags', node.tags.length ? node.tags.join(', ') : '—'],
-              ['agent', node.agentVersion ?? '—'],
-            ].map(([k, v]) => (
-              <div key={k} className="flex items-center justify-between gap-4 px-5 py-2.5">
-                <dt className="mono-label text-[10px] text-[var(--color-fg-dim)]">{k}</dt>
-                <dd className="truncate font-mono text-[12px] text-[var(--color-fg-muted)]">{v}</dd>
-              </div>
-            ))}
-          </dl>
-        </Panel>
-
-        <Panel title={`what happened · ${range.label}`}>
-          {events.length ? (
-            <div className="max-h-[280px] divide-y divide-[var(--color-line)] overflow-y-auto">
-              {events.map((e, i) => (
-                <div key={i} className="flex items-baseline gap-3 px-5 py-2.5">
-                  <span className="min-w-[74px] shrink-0 font-mono text-[10.5px] text-[var(--color-fg-dim)]">
-                    {since(e.at)}
-                  </span>
-                  <span className="font-mono text-[11.5px]" style={{ color: toneColour(e.tone) }}>
-                    {e.label}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="px-5 py-8 text-center font-mono text-[11px] text-[var(--color-fg-dim)]">
-              nothing deployed or moved here in this window
-            </p>
-          )}
-        </Panel>
-      </div>
-
-      {expandedIndex >= 0 && (
-        <ExpandedChart
+      {/* ─── Expanded Chart Modal ─── */}
+      {expanded && (
+        <ExpandedModal
           chart={charts[expandedIndex]!}
           index={expandedIndex}
           total={charts.length}
           windowLabel={windowLabel}
           shared={shared}
-          onClose={() => setExpanded(null)}
           onStep={step}
+          onClose={() => setExpanded(null)}
+        />
+      )}
+
+      {/* ─── Interactive In-Browser Web Terminal Drawer ─── */}
+      {showTerminal && fleet && (
+        <WebTerminal
+          nodeId={node.id}
+          nodeName={node.name}
+          fleetId={fleet.id}
+          onClose={() => setShowTerminal(false)}
         />
       )}
     </div>
   )
 }
 
-/**
- * The same chart, given the room to be read.
- *
- * Stacked four to a page a chart is about 150px tall against 1400 wide — nearly
- * all horizontal, so a four percent wobble and a forty percent one look alike.
- * Here it gets most of the viewport, which is the only thing that actually
- * fixes that.
- */
-function ExpandedChart({
-  chart, index, total, windowLabel, shared, onClose, onStep,
+function ExpandedModal({
+  chart,
+  index,
+  total,
+  windowLabel,
+  shared,
+  onStep,
+  onClose,
 }: {
   chart: ChartDef
   index: number
@@ -605,22 +782,18 @@ function ExpandedChart({
     onZoom: (from: number, to: number) => void
     markers: Marker[]
   }
-  onClose: () => void
   onStep: (delta: number) => void
+  onClose: () => void
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm sm:p-8"
-      style={{ animation: 'fade-up 0.2s var(--ease-out-expo) both' }}
       onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${chart.title} expanded`}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+      style={{ animation: 'fade-in 0.18s var(--ease-out-expo) both' }}
     >
       <div
-        // Clicking the backdrop closes; clicking the chart must not.
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-[1200px] border border-[var(--color-line-2)] bg-[var(--color-ink-950)] shadow-2xl"
+        className="w-full max-w-[1200px] border border-[var(--color-line-2)] bg-[var(--color-ink-950)] shadow-2xl rounded-lg overflow-hidden"
         style={{ animation: 'rise-in 0.28s var(--ease-out-expo) both' }}
       >
         <div className="flex items-center gap-3 border-b border-[var(--color-line)] px-5 py-3">
@@ -637,7 +810,7 @@ function ExpandedChart({
             <button
               onClick={() => onStep(-1)}
               aria-label="Previous metric"
-              className="flex h-7 w-7 items-center justify-center border border-[var(--color-line-2)] font-mono text-[12px] text-[var(--color-fg-dim)] transition-colors hover:border-[var(--color-signal)] hover:text-[var(--color-signal)]"
+              className="flex h-7 w-7 items-center justify-center border border-[var(--color-line-2)] rounded font-mono text-[12px] text-[var(--color-fg-dim)] transition-colors hover:border-[var(--color-signal)] hover:text-[var(--color-signal)]"
             >
               ←
             </button>
@@ -647,14 +820,14 @@ function ExpandedChart({
             <button
               onClick={() => onStep(1)}
               aria-label="Next metric"
-              className="flex h-7 w-7 items-center justify-center border border-[var(--color-line-2)] font-mono text-[12px] text-[var(--color-fg-dim)] transition-colors hover:border-[var(--color-signal)] hover:text-[var(--color-signal)]"
+              className="flex h-7 w-7 items-center justify-center border border-[var(--color-line-2)] rounded font-mono text-[12px] text-[var(--color-fg-dim)] transition-colors hover:border-[var(--color-signal)] hover:text-[var(--color-signal)]"
             >
               →
             </button>
             <button
               onClick={onClose}
               aria-label="Close"
-              className="ml-2 flex h-7 w-7 items-center justify-center border border-[var(--color-line-2)] font-mono text-[12px] text-[var(--color-fg-dim)] transition-colors hover:border-[var(--color-down)] hover:text-[var(--color-down)]"
+              className="ml-2 flex h-7 w-7 items-center justify-center border border-[var(--color-line-2)] rounded font-mono text-[12px] text-[var(--color-fg-dim)] transition-colors hover:border-[var(--color-down)] hover:text-[var(--color-down)]"
             >
               ✕
             </button>
@@ -662,8 +835,6 @@ function ExpandedChart({
         </div>
 
         <div className="p-5">
-          {/* Keyed on the metric so switching re-runs the entrance animation
-              rather than swapping the paths under a static frame. */}
           <div key={chart.key} style={{ animation: 'fade-up 0.24s var(--ease-out-expo) both' }}>
             <TimeSeriesChart
               {...shared}

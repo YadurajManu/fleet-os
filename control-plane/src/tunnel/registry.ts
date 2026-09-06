@@ -7,7 +7,7 @@ import { hashToken, isAgentToken } from '../lib/tokens.js'
 import { randomUUID } from 'node:crypto'
 
 export interface TunnelRequest {
-  type: 'http_request' | 'terminal_start' | 'terminal_data' | 'terminal_resize' | 'terminal_close'
+  type: 'http_request' | 'terminal_start' | 'terminal_data' | 'terminal_resize' | 'terminal_close' | 'terminal_ping'
   id: string
   port: number
   method: string
@@ -19,16 +19,18 @@ export interface TunnelRequest {
   rows?: number
   shell?: string
   data?: string // base64
+  t?: number
 }
 
 export interface TunnelResponse {
-  type: 'http_response' | 'terminal_data' | 'terminal_close'
+  type: 'http_response' | 'terminal_data' | 'terminal_close' | 'terminal_pong'
   id: string
   status: number
   headers: Record<string, string>
   body?: string // base64
   error?: string
   data?: string // base64
+  t?: number
 }
 
 type PendingRequest = {
@@ -171,8 +173,8 @@ export class TunnelRegistry {
             this.pending.delete(msg.id)
             handler.resolve(msg)
           }
-        } else if ((msg.type === 'terminal_data' || msg.type === 'terminal_close') && msg.id) {
-          // Route terminal output from agent back to the browser WS that started this session.
+        } else if ((msg.type === 'terminal_data' || msg.type === 'terminal_close' || msg.type === 'terminal_pong') && msg.id) {
+          // Route terminal output / pong from agent back to the browser WS that started this session.
           const browserWs = this.terminalSessions.get(msg.id)
           if (browserWs && browserWs.readyState === WebSocket.OPEN) {
             browserWs.send(JSON.stringify(msg))
@@ -299,10 +301,6 @@ export class TunnelRegistry {
     agentWs.send(JSON.stringify({
       type: 'terminal_data',
       id: sessionId,
-      port: 0,
-      method: '',
-      path: '',
-      headers: {},
       data,
     }))
     return true
@@ -316,12 +314,21 @@ export class TunnelRegistry {
     agentWs.send(JSON.stringify({
       type: 'terminal_resize',
       id: sessionId,
-      port: 0,
-      method: '',
-      path: '',
-      headers: {},
       cols,
       rows,
+    }))
+    return true
+  }
+
+  /** Forward terminal latency ping to agent. */
+  public pingTerminal(nodeId: string, sessionId: string, t: number): boolean {
+    const agentWs = this.sockets.get(nodeId)
+    if (!agentWs || agentWs.readyState !== WebSocket.OPEN) return false
+
+    agentWs.send(JSON.stringify({
+      type: 'terminal_ping',
+      id: sessionId,
+      t,
     }))
     return true
   }

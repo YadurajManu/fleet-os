@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { session } from '../lib/api'
-import { useAuth } from '../lib/auth'
 import '@xterm/xterm/css/xterm.css'
 
 export interface WebTerminalProps {
@@ -13,18 +12,23 @@ export interface WebTerminalProps {
 }
 
 const QUICK_COMMANDS = [
-  { label: 'uptime', cmd: 'uptime\n' },
+  { label: 'docker ps', cmd: 'docker ps\n' },
   { label: 'df -h', cmd: 'df -h\n' },
   { label: 'free -m', cmd: 'free -m\n' },
-  { label: 'docker ps', cmd: 'docker ps\n' },
+  { label: 'uptime', cmd: 'uptime\n' },
   { label: 'uname -a', cmd: 'uname -a\n' },
-  { label: 'top -bn1 | head -20', cmd: 'top -bn1 | head -20\n' },
+  { label: 'top (summary)', cmd: 'top -bn1 | head -20\n' },
+  { label: 'ip addr', cmd: 'ip -br a 2>/dev/null || ifconfig\n' },
 ]
 
+const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder('utf-8')
+
 function toBase64(str: string): string {
-  const bytes = new TextEncoder().encode(str)
+  const bytes = textEncoder.encode(str)
   let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
+  const len = bytes.byteLength
+  for (let i = 0; i < len; i++) {
     binary += String.fromCharCode(bytes[i])
   }
   return btoa(binary)
@@ -32,11 +36,12 @@ function toBase64(str: string): string {
 
 function fromBase64(b64: string): string {
   const binary = atob(b64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
+  const len = binary.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) {
     bytes[i] = binary.charCodeAt(i)
   }
-  return new TextDecoder().decode(bytes)
+  return textDecoder.decode(bytes)
 }
 
 type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -46,12 +51,106 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
   const terminalRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const { fleet } = useAuth()
 
+  // State
   const [connState, setConnState] = useState<ConnectionState>('connecting')
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [drawerHeight, setDrawerHeight] = useState(420)
-  const [showPresets, setShowPresets] = useState(false)
+  const [drawerHeight, setDrawerHeight] = useState(440)
+  const [showQuickBar, setShowQuickBar] = useState(true)
+  const [fastEcho, setFastEcho] = useState(true)
+  const [latency, setLatency] = useState<number | null>(null)
+  const [fontSize, setFontSize] = useState(13)
+  const [copiedNote, setCopiedNote] = useState(false)
+
+  // Performance & Latency optimizations refs
+  const inputQueueRef = useRef<string[]>([])
+  const flushTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const predictedQueueRef = useRef<string[]>([])
+  const lastResizeDims = useRef<{ cols: number; rows: number }>({ cols: 0, rows: 0 })
+  const resizeTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const fastEchoRef = useRef(fastEcho)
+  fastEchoRef.current = fastEcho
+
+  // Debounced resize to eliminate SIGWINCH redraw thrashing on the remote shell
+  const sendResize = useCallback((cols: number, rows: number) => {
+    if (cols <= 0 || rows <= 0) return
+    if (lastResizeDims.current.cols === cols && lastResizeDims.current.rows === rows) {
+      return // Dimensions identical; suppress redundant resize
+    }
+    lastResizeDims.current = { cols, rows }
+
+    if (resizeTimerRef.current) {
+      clearTimeout(resizeTimerRef.current)
+    }
+
+    resizeTimerRef.current = setTimeout(() => {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'terminal_resize',
+          cols,
+          rows,
+        }))
+      }
+    }, 150)
+  }, [])
+
+  // Micro-batching input flush
+  const flushInputQueue = useCallback(() => {
+    flushTimerRef.current = null
+    if (inputQueueRef.current.length === 0) return
+    const chunk = inputQueueRef.current.join('')
+    inputQueueRef.current = []
+
+    const ws = wsRef.current
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'terminal_data',
+        data: toBase64(chunk),
+      }))
+    }
+  }, [])
+
+  // Send input with optimistic predictive echo
+  const handleTerminalInput = useCallback((data: string) => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+
+    // Fast predictive echo for printable characters (ASCII 32 to 126)
+    if (fastEchoRef.current) {
+      const isSimplePrintable = !data.includes('\x1b') && !data.includes('\r') && !data.includes('\n') &&
+                                !data.includes('\t') && !data.includes('\x7f') && !data.includes('\x08')
+      if (isSimplePrintable) {
+        terminalRef.current?.write(data)
+        for (const ch of data) {
+          predictedQueueRef.current.push(ch)
+        }
+      } else if (data === '\x7f' || data === '\x08') {
+        // Backspace: if we recently predicted, backspace locally
+        if (predictedQueueRef.current.length > 0) {
+          predictedQueueRef.current.pop()
+          terminalRef.current?.write('\b \b')
+        }
+      }
+    }
+
+    // Control characters (Enter, Ctrl+C, Ctrl+D, Escape) flush instantly
+    const isImmediate = data.includes('\r') || data.includes('\n') || data.includes('\x03') ||
+                        data.includes('\x04') || data.includes('\x1b')
+
+    inputQueueRef.current.push(data)
+
+    if (isImmediate) {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
+      flushInputQueue()
+    } else if (!flushTimerRef.current) {
+      // 6ms micro-task coalescing window
+      flushTimerRef.current = setTimeout(flushInputQueue, 6)
+    }
+  }, [flushInputQueue])
 
   const connect = useCallback(() => {
     const sess = session.get()
@@ -60,7 +159,6 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
       return
     }
 
-    // Build the WebSocket URL from the API base
     const apiBase = import.meta.env?.VITE_API ?? '/api'
     let wsBase: string
     if (apiBase.startsWith('http')) {
@@ -83,25 +181,46 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
           fitRef.current?.fit()
           terminalRef.current?.focus()
           const dims = fitRef.current?.proposeDimensions()
-          if (dims && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: 'terminal_resize',
-              cols: dims.cols,
-              rows: dims.rows,
-            }))
+          if (dims) {
+            sendResize(dims.cols, dims.rows)
           }
         } catch {}
       })
+
+      // Send initial latency probe
+      ws.send(JSON.stringify({ type: 'terminal_ping', t: Date.now() }))
     }
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data)
         if (msg.type === 'terminal_data' && msg.data) {
-          const text = fromBase64(msg.data)
-          terminalRef.current?.write(text)
+          let text = fromBase64(msg.data)
+
+          // Reconcile predicted characters if fastEcho is active
+          if (fastEchoRef.current && predictedQueueRef.current.length > 0) {
+            while (predictedQueueRef.current.length > 0 && text.length > 0) {
+              const expected = predictedQueueRef.current[0]
+              if (text.startsWith(expected)) {
+                predictedQueueRef.current.shift()
+                text = text.slice(expected.length)
+              } else {
+                // If ANSI escape code or divergence, flush prediction queue and write remaining
+                predictedQueueRef.current = []
+                break
+              }
+            }
+          }
+
+          if (text.length > 0) {
+            terminalRef.current?.write(text)
+          }
+        } else if (msg.type === 'terminal_pong' && msg.t) {
+          const rtt = Date.now() - msg.t
+          setLatency(rtt)
         } else if (msg.type === 'terminal_close') {
           setConnState('disconnected')
+          setLatency(null)
           if (msg.error) {
             terminalRef.current?.write(`\r\n\x1b[31m[Session ended: ${msg.error}]\x1b[0m\r\n`)
           } else {
@@ -115,29 +234,46 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
 
     ws.onerror = () => {
       setConnState('error')
+      setLatency(null)
     }
 
     ws.onclose = () => {
       if (connState !== 'error') {
         setConnState('disconnected')
       }
+      setLatency(null)
     }
-  }, [nodeId, fleetId, connState])
+  }, [nodeId, fleetId, connState, sendResize])
+
+  // Latency Heartbeat ping
+  useEffect(() => {
+    const pingTimer = setInterval(() => {
+      const ws = wsRef.current
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'terminal_ping',
+          t: Date.now(),
+        }))
+      }
+    }, 4000)
+
+    return () => clearInterval(pingTimer)
+  }, [])
 
   // Initialize terminal
   useEffect(() => {
     if (!termRef.current) return
 
     const terminal = new Terminal({
-      fontSize: 13,
+      fontSize,
       fontFamily: "'JetBrains Mono', 'SFMono-Regular', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
       theme: {
         background: '#07080a',
         foreground: '#e8ebef',
         cursor: '#3fe08b',
         cursorAccent: '#07080a',
-        selectionBackground: 'rgba(63, 224, 139, 0.2)',
-        selectionForeground: '#e8ebef',
+        selectionBackground: 'rgba(63, 224, 139, 0.25)',
+        selectionForeground: '#ffffff',
         black: '#1a1d23',
         red: '#f87171',
         green: '#3fe08b',
@@ -158,15 +294,15 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
       cursorBlink: true,
       cursorStyle: 'bar',
       allowTransparency: true,
-      scrollback: 5000,
+      scrollback: 10000,
       convertEol: true,
+      smoothScrollDuration: 0,
     })
 
     const fit = new FitAddon()
     terminal.loadAddon(fit)
     terminal.open(termRef.current)
 
-    // Small delay so the DOM has settled before measuring & focusing
     requestAnimationFrame(() => {
       try {
         fit.fit()
@@ -184,35 +320,21 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     terminalRef.current = terminal
     fitRef.current = fit
 
-    // Handle user input → send to server
+    // Input handler
     terminal.onData((data) => {
-      const ws = wsRef.current
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'terminal_data',
-          data: toBase64(data),
-        }))
-      }
+      handleTerminalInput(data)
     })
 
-    // Handle resize
+    // Resize handler
     terminal.onResize(({ cols, rows }) => {
-      const ws = wsRef.current
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'terminal_resize',
-          cols,
-          rows,
-        }))
-      }
+      sendResize(cols, rows)
     })
 
     terminal.write('\x1b[90mConnecting to \x1b[37m' + nodeName + '\x1b[90m…\x1b[0m\r\n')
 
-    // Connect
     connect()
 
-    // ResizeObserver on the terminal element for silky-smooth responsive resize
+    // ResizeObserver
     const ro = new ResizeObserver(() => {
       requestAnimationFrame(() => {
         try {
@@ -222,19 +344,20 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     })
     ro.observe(termRef.current)
 
-    // Window resize handler
-    const handleResize = () => {
+    const handleWindowResize = () => {
       requestAnimationFrame(() => {
         try {
           fit.fit()
         } catch {}
       })
     }
-    window.addEventListener('resize', handleResize)
+    window.addEventListener('resize', handleWindowResize)
 
     return () => {
       ro.disconnect()
-      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('resize', handleWindowResize)
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
+      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
       terminal.dispose()
       wsRef.current?.close()
     }
@@ -245,7 +368,7 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     requestAnimationFrame(() => {
       fitRef.current?.fit()
     })
-  }, [drawerHeight, isFullscreen])
+  }, [drawerHeight, isFullscreen, showQuickBar, fontSize])
 
   const handleClear = () => {
     terminalRef.current?.clear()
@@ -254,20 +377,40 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
   const handleReconnect = () => {
     wsRef.current?.close()
     terminalRef.current?.clear()
+    predictedQueueRef.current = []
+    inputQueueRef.current = []
     terminalRef.current?.write('\x1b[90mReconnecting to \x1b[37m' + nodeName + '\x1b[90m…\x1b[0m\r\n')
     connect()
   }
 
   const handlePreset = (cmd: string) => {
-    const ws = wsRef.current
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'terminal_data',
-        data: toBase64(cmd),
-      }))
-    }
-    setShowPresets(false)
+    handleTerminalInput(cmd)
     terminalRef.current?.focus()
+  }
+
+  const handleCtrlC = () => {
+    handleTerminalInput('\x03')
+    terminalRef.current?.focus()
+  }
+
+  const handleCopySelection = async () => {
+    const selection = terminalRef.current?.getSelection()
+    if (selection) {
+      await navigator.clipboard.writeText(selection)
+      setCopiedNote(true)
+      setTimeout(() => setCopiedNote(false), 2000)
+    }
+  }
+
+  const handleZoom = (delta: number) => {
+    setFontSize((prev) => {
+      const next = Math.max(10, Math.min(18, prev + delta))
+      if (terminalRef.current) {
+        terminalRef.current.options.fontSize = next
+        requestAnimationFrame(() => fitRef.current?.fit())
+      }
+      return next
+    })
   }
 
   const handleClose = () => {
@@ -285,7 +428,7 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
     const onMove = (ev: MouseEvent) => {
       if (!dragStart.current) return
       const delta = dragStart.current.startY - ev.clientY
-      setDrawerHeight(Math.max(200, Math.min(window.innerHeight - 80, dragStart.current.startH + delta)))
+      setDrawerHeight(Math.max(220, Math.min(window.innerHeight - 80, dragStart.current.startH + delta)))
     }
     const onUp = () => {
       dragStart.current = null
@@ -305,26 +448,28 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
 
   const statusText = {
     connecting: 'Connecting…',
-    connected: 'Connected',
+    connected: 'Live',
     disconnected: 'Disconnected',
     error: 'Error',
   }[connState]
 
+  const latencyColor = !latency ? '#5a6270' : latency < 80 ? '#3fe08b' : latency < 200 ? '#fbbf24' : '#f87171'
+
   return (
     <div
       id="web-terminal-drawer"
-      className="fixed inset-x-0 bottom-0 z-50 flex flex-col"
+      className="fixed inset-x-0 bottom-0 z-50 flex flex-col font-sans"
       style={{
         height: isFullscreen ? '100vh' : `${drawerHeight}px`,
         background: '#07080a',
         borderTop: '1px solid rgba(255,255,255,0.08)',
-        boxShadow: '0 -8px 40px -8px rgba(0,0,0,0.6)',
+        boxShadow: '0 -12px 48px -8px rgba(0,0,0,0.75)',
       }}
     >
       {/* ─── Resize Handle + Header ─── */}
       <div
         onMouseDown={!isFullscreen ? onDragStart : undefined}
-        className="flex items-center justify-between gap-3 px-4 py-2 select-none shrink-0"
+        className="flex items-center justify-between gap-3 px-3.5 py-2 select-none shrink-0"
         style={{
           cursor: isFullscreen ? 'default' : 'ns-resize',
           background: 'rgba(255,255,255,0.02)',
@@ -333,99 +478,185 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
       >
         {/* Drag grip */}
         {!isFullscreen && (
-          <div className="absolute inset-x-0 top-0 flex justify-center pt-1">
-            <div className="w-8 h-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.15)' }} />
+          <div className="absolute inset-x-0 top-0 flex justify-center pt-1 pointer-events-none">
+            <div className="w-10 h-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.2)' }} />
           </div>
         )}
 
-        {/* Left: Target + Status */}
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5 text-[#3fe08b]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {/* Left: Node badge + Connection status + RTT latency */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/[0.04] border border-white/[0.08]">
+            <svg className="w-3.5 h-3.5 text-[#3fe08b]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="4 17 10 11 4 5" />
               <line x1="12" y1="19" x2="20" y2="19" />
             </svg>
-            <span className="font-mono text-[12px] font-medium text-white/90 truncate">
+            <span className="font-mono text-[12px] font-semibold text-white/95 truncate">
               {nodeName}
             </span>
             <span className="font-mono text-[10px] text-white/40">(host)</span>
           </div>
+
           <span
-            className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.1em]"
-            style={{ color: statusColor }}
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded font-mono text-[10.5px] uppercase tracking-wider font-medium"
+            style={{ background: `${statusColor}14`, color: statusColor }}
           >
-            <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: statusColor }} />
+            <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: statusColor }} />
             {statusText}
           </span>
+
+          {/* Live RTT Latency badge */}
+          {connState === 'connected' && latency !== null && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[11px] font-medium transition-colors"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', color: latencyColor }}
+              title="End-to-end WebSocket round-trip latency to node agent"
+            >
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: latencyColor }} />
+              {latency}ms
+            </span>
+          )}
+
+          {/* Instant Echo Indicator */}
+          <button
+            onClick={() => setFastEcho(!fastEcho)}
+            className={`hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10.5px] transition-colors ${
+              fastEcho
+                ? 'bg-[#3fe08b]/10 text-[#3fe08b] border border-[#3fe08b]/20 hover:bg-[#3fe08b]/20'
+                : 'bg-white/[0.03] text-white/40 border border-white/[0.06] hover:text-white/70'
+            }`}
+            title={fastEcho ? 'Predictive Instant Echo active (0ms typing latency)' : 'Instant Echo disabled (waiting for remote echo)'}
+          >
+            <span>⚡</span>
+            <span>{fastEcho ? 'Instant Echo' : 'Echo Off'}</span>
+          </button>
         </div>
 
-        {/* Right: Actions */}
+        {/* Right: Controls & Actions */}
         <div className="flex items-center gap-1">
-          {/* Quick Presets */}
-          <div className="relative">
-            <button
-              onClick={() => setShowPresets(!showPresets)}
-              className="p-1.5 rounded hover:bg-white/[0.06] text-white/40 hover:text-white/70 transition-colors"
-              title="Quick commands"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-              </svg>
-            </button>
-            {showPresets && (
-              <div
-                className="absolute bottom-full right-0 mb-1 rounded-lg overflow-hidden"
-                style={{
-                  background: '#13151a',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
-                  minWidth: '180px',
-                }}
-              >
-                <div className="px-3 py-1.5 border-b border-white/[0.06]">
-                  <span className="font-mono text-[10px] text-white/40 uppercase tracking-wider">Quick Commands</span>
-                </div>
-                {QUICK_COMMANDS.map((cmd) => (
-                  <button
-                    key={cmd.label}
-                    onClick={() => handlePreset(cmd.cmd)}
-                    className="w-full text-left px-3 py-1.5 font-mono text-[12px] text-white/70 hover:bg-white/[0.06] hover:text-white transition-colors"
-                  >
-                    $ {cmd.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Quick bar toggle */}
+          <button
+            onClick={() => setShowQuickBar(!showQuickBar)}
+            className={`p-1.5 rounded transition-colors text-[11px] font-mono flex items-center gap-1 ${
+              showQuickBar ? 'bg-white/[0.08] text-white/90' : 'hover:bg-white/[0.04] text-white/40 hover:text-white/70'
+            }`}
+            title="Toggle Quick Commands bar"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m4 6 8 8 8-8" />
+            </svg>
+            <span className="hidden md:inline">Commands</span>
+          </button>
 
-          {/* Reconnect (only when disconnected) */}
+          <div className="w-px h-4 bg-white/[0.08] mx-1 hidden sm:block" />
+
+          {/* Font Zoom Out */}
+          <button
+            onClick={() => handleZoom(-1)}
+            disabled={fontSize <= 10}
+            className="p-1.5 rounded hover:bg-white/[0.06] text-white/40 hover:text-white/80 disabled:opacity-30 transition-colors font-mono text-[11px]"
+            title="Decrease font size"
+          >
+            A-
+          </button>
+
+          {/* Font Zoom In */}
+          <button
+            onClick={() => handleZoom(1)}
+            disabled={fontSize >= 18}
+            className="p-1.5 rounded hover:bg-white/[0.06] text-white/40 hover:text-white/80 disabled:opacity-30 transition-colors font-mono text-[11px]"
+            title="Increase font size"
+          >
+            A+
+          </button>
+
+          {/* Copy Selection */}
+          <button
+            onClick={handleCopySelection}
+            className="p-1.5 rounded hover:bg-white/[0.06] text-white/40 hover:text-white/80 transition-colors relative"
+            title="Copy selected text"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+            </svg>
+            {copiedNote && (
+              <span className="absolute -top-7 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-[#3fe08b] text-[#07080a] text-[10px] font-mono font-bold shadow-lg">
+                Copied!
+              </span>
+            )}
+          </button>
+
+          {/* Ctrl+C Interrupt */}
+          <button
+            onClick={handleCtrlC}
+            className="px-1.5 py-0.5 rounded bg-white/[0.03] hover:bg-red-500/20 text-white/40 hover:text-red-400 border border-white/[0.06] hover:border-red-500/30 transition-colors font-mono text-[10.5px]"
+            title="Send Ctrl+C (SIGINT)"
+          >
+            ^C
+          </button>
+
+          {/* Reconnect (when disconnected/error) */}
           {(connState === 'disconnected' || connState === 'error') && (
             <button
               onClick={handleReconnect}
-              className="p-1.5 rounded hover:bg-white/[0.06] text-white/40 hover:text-white/70 transition-colors"
-              title="Reconnect"
+              className="p-1.5 rounded bg-[#fbbf24]/10 text-[#fbbf24] hover:bg-[#fbbf24]/20 transition-colors flex items-center gap-1 px-2 font-mono text-[11px]"
+              title="Reconnect to terminal"
             >
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
               </svg>
+              Reconnect
             </button>
           )}
 
-          {/* Clear */}
+          {/* Clear screen */}
           <button
             onClick={handleClear}
-            className="p-1.5 rounded hover:bg-white/[0.06] text-white/40 hover:text-white/70 transition-colors"
-            title="Clear terminal"
+            className="p-1.5 rounded hover:bg-white/[0.06] text-white/40 hover:text-white/80 transition-colors"
+            title="Clear terminal screen"
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 12H3" /><path d="m9 6-6 6 6 6" />
             </svg>
           </button>
 
+          {/* Height Presets (when not fullscreen) */}
+          {!isFullscreen && (
+            <div className="hidden sm:flex items-center gap-0.5 bg-white/[0.03] p-0.5 rounded border border-white/[0.06]">
+              <button
+                onClick={() => setDrawerHeight(320)}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                  drawerHeight === 320 ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/70'
+                }`}
+                title="Compact height (320px)"
+              >
+                S
+              </button>
+              <button
+                onClick={() => setDrawerHeight(480)}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                  drawerHeight === 480 ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/70'
+                }`}
+                title="Standard height (480px)"
+              >
+                M
+              </button>
+              <button
+                onClick={() => setDrawerHeight(640)}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                  drawerHeight === 640 ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white/70'
+                }`}
+                title="Tall height (640px)"
+              >
+                L
+              </button>
+            </div>
+          )}
+
           {/* Fullscreen */}
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-1.5 rounded hover:bg-white/[0.06] text-white/40 hover:text-white/70 transition-colors"
+            className="p-1.5 rounded hover:bg-white/[0.06] text-white/40 hover:text-white/80 transition-colors"
             title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
           >
             {isFullscreen ? (
@@ -442,15 +673,39 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
           {/* Close */}
           <button
             onClick={handleClose}
-            className="p-1.5 rounded hover:bg-red-500/20 text-white/40 hover:text-red-400 transition-colors"
+            className="p-1.5 rounded hover:bg-red-500/20 text-white/40 hover:text-red-400 transition-colors ml-1"
             title="Close terminal"
           >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 6 6 18" /><path d="m6 6 12 12" />
             </svg>
           </button>
         </div>
       </div>
+
+      {/* ─── Quick Commands Bar (Chips) ─── */}
+      {showQuickBar && (
+        <div
+          className="flex items-center gap-1.5 px-3.5 py-1.5 overflow-x-auto border-b select-none scrollbar-none"
+          style={{
+            background: 'rgba(255,255,255,0.015)',
+            borderColor: 'rgba(255,255,255,0.04)',
+          }}
+        >
+          <span className="font-mono text-[9px] uppercase tracking-wider text-white/30 shrink-0 mr-1">
+            Quick:
+          </span>
+          {QUICK_COMMANDS.map((cmd) => (
+            <button
+              key={cmd.label}
+              onClick={() => handlePreset(cmd.cmd)}
+              className="shrink-0 px-2 py-0.5 rounded font-mono text-[11px] text-white/60 hover:text-[#3fe08b] bg-white/[0.025] hover:bg-[#3fe08b]/10 border border-white/[0.05] hover:border-[#3fe08b]/30 transition-all duration-150"
+            >
+              $ {cmd.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ─── Terminal Canvas ─── */}
       <div
@@ -462,13 +717,16 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
       <style>{`
         #web-terminal-drawer .xterm {
           height: 100% !important;
-          padding: 6px 10px;
+          padding: 6px 12px;
         }
         #web-terminal-drawer .xterm-viewport {
           overflow-y: auto !important;
         }
         #web-terminal-drawer .xterm-screen {
           height: 100% !important;
+        }
+        #web-terminal-drawer .scrollbar-none::-webkit-scrollbar {
+          display: none;
         }
       `}</style>
     </div>

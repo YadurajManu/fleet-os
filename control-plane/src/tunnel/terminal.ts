@@ -129,6 +129,9 @@ export function setupTerminalServer(
                   msg.rows ?? 24
                 )
                 break
+              case 'terminal_ping':
+                registry.pingTerminal(nodeId!, sessionId, msg.t ?? Date.now())
+                break
               case 'terminal_close':
                 registry.closeTerminal(nodeId!, sessionId)
                 browserWs.close()

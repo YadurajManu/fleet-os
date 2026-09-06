@@ -32,6 +32,7 @@ type TunnelRequest struct {
 	Rows  uint16 `json:"rows,omitempty"`
 	Shell string `json:"shell,omitempty"`
 	Data  string `json:"data,omitempty"` // base64
+	T     int64  `json:"t,omitempty"`
 }
 
 type TunnelResponse struct {
@@ -44,6 +45,7 @@ type TunnelResponse struct {
 
 	// Terminal session output
 	Data string `json:"data,omitempty"` // base64
+	T    int64  `json:"t,omitempty"`
 }
 
 // Keepalive timings. Both ends ping, because both failures are real: the control
@@ -246,6 +248,12 @@ func (c *Client) connectAndServe(ctx context.Context, wsURL string) error {
 			}
 		case "terminal_resize":
 			_ = c.termMgr.Resize(req.ID, req.Cols, req.Rows)
+		case "terminal_ping":
+			c.sendResponse(&TunnelResponse{
+				Type: "terminal_pong",
+				ID:   req.ID,
+				T:    req.T,
+			})
 		case "terminal_close":
 			c.termMgr.Close(req.ID)
 		}
