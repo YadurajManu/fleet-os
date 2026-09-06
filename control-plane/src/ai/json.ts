@@ -44,3 +44,22 @@ export function firstObject(raw: string): string | null {
 
   return null
 }
+
+/**
+ * The start of a reply, for an error message.
+ *
+ * "The model did not return JSON" is true and useless — it does not say whether
+ * the model refused, wrote prose, spent its budget thinking, or answered in
+ * some tool-call syntax of its own, and those have four different fixes. One
+ * run of the review failed this way and the only route to the reply itself was
+ * the container logs on the server.
+ *
+ * Whitespace is collapsed so a reasoning model's paragraphs do not fill the
+ * terminal, and the cut is short: this is a hint about a shape, not a
+ * transcript.
+ */
+export function snippet(raw: string, max = 200): string {
+  const flat = raw.replace(/\s+/g, ' ').trim()
+  if (!flat) return '(empty)'
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat
+}

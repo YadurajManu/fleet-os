@@ -1,5 +1,5 @@
 import { chat } from './provider.js'
-import { firstObject } from './json.js'
+import { firstObject, snippet } from './json.js'
 import { parseManifest, ManifestError } from '../manifest/parse.js'
 import { applyEdits, parseEdits, type Edit } from './edits.js'
 import { nodes, services } from '../db/schema.js'
@@ -234,7 +234,7 @@ function parseReply(content: string): { manifest: string; notes: string[]; quest
   // that parsed as neither — "Unexpected non-whitespace character after JSON at
   // position 36", with the whole usable answer sitting in the first 36.
   const object = firstObject(raw)
-  if (!object) throw new Error('the model did not return JSON')
+  if (!object) throw new Error(`the model did not return JSON — it replied: ${snippet(raw)}`)
 
   const parsed = JSON.parse(object) as {
     manifest?: unknown
@@ -409,7 +409,7 @@ export async function assistManifest(
                 .join('\n\n'),
             },
           ],
-          { maxTokens: 1200, schema: EDITS_SCHEMA },
+          { maxTokens: 1200, schema: EDITS_SCHEMA, noReasoning: true },
           fetchImpl
         )
         const out = parseEdits(content)
@@ -517,7 +517,7 @@ export async function assistManifest(
       ],
       // Larger than the explainer's: the answer contains a whole manifest, and
       // a reasoning model spends part of this budget before writing any of it.
-      { maxTokens: 3000, schema: REVIEW_SCHEMA },
+      { maxTokens: 3000, schema: REVIEW_SCHEMA, noReasoning: true },
       fetchImpl
     )
 

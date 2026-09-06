@@ -1,5 +1,5 @@
 import { parseDocument, isMap } from 'yaml'
-import { firstObject } from './json.js'
+import { firstObject, snippet } from './json.js'
 
 /**
  * A review expressed as edits rather than as a rewritten manifest.
@@ -235,7 +235,7 @@ export function parseEdits(content: string): { edits: Edit[]; questions: unknown
   // and the naive span joined them into something that parsed as neither, with
   // the whole usable answer sitting in the first 36 characters.
   const object = firstObject(raw)
-  if (!object) throw new Error('the model did not return JSON')
+  if (!object) throw new Error(`the model did not return JSON — it replied: ${snippet(raw)}`)
 
   const parsed = JSON.parse(object) as { edits?: unknown; questions?: unknown }
 
