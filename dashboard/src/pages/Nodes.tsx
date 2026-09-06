@@ -123,7 +123,15 @@ export default function Nodes() {
   const [confirmRemove, setConfirmRemove] = useState<Node | null>(null)
   const [terminalNode, setTerminalNode] = useState<Node | null>(null)
 
-  const nodes = useMemo(() => data?.nodes ?? [], [data])
+  const nodes = useMemo(() => {
+    const list = data?.nodes ?? []
+    return [...list].sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0
+      if (tA !== tB) return tA - tB
+      return a.name.localeCompare(b.name)
+    })
+  }, [data])
   const liveNodes = useMemo(() => nodes.filter((n) => n.live || n.status === 'online'), [nodes])
 
   // Cluster aggregate compute metrics
@@ -137,9 +145,9 @@ export default function Nodes() {
     return { totalNodes, onlineCount, totalCores, totalRamMb, totalTunnels, totalWorkloads }
   }, [nodes, liveNodes])
 
-  // Filtered nodes
+  // Filtered nodes (stable order guaranteed)
   const filteredNodes = useMemo(() => {
-    return nodes.filter((n) => {
+    const res = nodes.filter((n) => {
       // Status & Platform filters
       if (filter === 'ONLINE' && n.status !== 'online') return false
       if (filter === 'OFFLINE' && n.status !== 'offline') return false
@@ -160,6 +168,12 @@ export default function Nodes() {
         n.tags.some((t) => t.toLowerCase().includes(q)) ||
         (n.telemetry?.containers ?? []).some((c) => c.name.toLowerCase().includes(q))
       )
+    })
+    return [...res].sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0
+      if (tA !== tB) return tA - tB
+      return a.name.localeCompare(b.name)
     })
   }, [nodes, filter, search])
 

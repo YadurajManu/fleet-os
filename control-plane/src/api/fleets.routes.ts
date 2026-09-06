@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, or } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, or } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
 import {
@@ -156,7 +156,11 @@ export async function fleetRoutes(app: FastifyInstance) {
       const [fleet] = await db.select().from(fleets).where(eq(fleets.id, fleetId)).limit(1)
       if (!fleet) throw ApiError.notFound('Fleet')
 
-      const rows = await db.select().from(nodes).where(eq(nodes.fleetId, fleetId))
+      const rows = await db
+        .select()
+        .from(nodes)
+        .where(eq(nodes.fleetId, fleetId))
+        .orderBy(asc(nodes.createdAt), asc(nodes.name))
       const live = new Set(
         await heartbeats.liveNodes(fleetId, {
           intervalSec: fleet.heartbeatIntervalSec,

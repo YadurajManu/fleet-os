@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { nodes, services, deployments } from '../db/schema.js'
 import type { AppContext } from '../api/context.js'
 import type { AntiAffinityIndex, Arch, NodeSnapshot, Placements, ServiceSpec } from './types.js'
@@ -18,7 +18,11 @@ export async function fleetSnapshot(
   ctx: AppContext,
   fleetId: string
 ): Promise<{ nodes: NodeSnapshot[]; placements: Placements; antiAffinityBy: AntiAffinityIndex }> {
-  const nodeRows = await ctx.db.select().from(nodes).where(eq(nodes.fleetId, fleetId))
+  const nodeRows = await ctx.db
+    .select()
+    .from(nodes)
+    .where(eq(nodes.fleetId, fleetId))
+    .orderBy(asc(nodes.createdAt), asc(nodes.name))
 
   const active = await ctx.db
     .select({
