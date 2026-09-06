@@ -19,6 +19,7 @@ agent.json
 # ── dependencies ───────────────────────────────────────────────────
 node_modules/
 .pnpm-store/
+cli/bin/
 
 # ── build output ───────────────────────────────────────────────────
 dist/
