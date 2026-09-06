@@ -615,15 +615,16 @@ export async function serviceRoutes(app: FastifyInstance) {
           )
         }
 
-        const eligibleArches = [
-          ...new Set(
-            snapshot
-              .filter((n) => n.status === 'online')
-              .map((n) => n.arch)
-              .filter((a) => !service.compatibleArches.length || service.compatibleArches.includes(a))
-          ),
-        ]
-        const platforms = platformsFor(eligibleArches)
+        // Target the scheduled node's architecture unless the service explicitly specifies
+        // compatible architectures. Building for all cluster architectures under QEMU
+        // emulation is fragile and fails with native dependencies.
+        const targetNode = snapshot.find((n) => n.id === decision.nodeId)
+        const arches = service.compatibleArches.length
+          ? service.compatibleArches
+          : targetNode
+            ? [targetNode.arch]
+            : ['amd64']
+        const platforms = platformsFor(arches)
         if (!platforms.length) {
           throw ApiError.unprocessable(
             'no_buildable_platform',
