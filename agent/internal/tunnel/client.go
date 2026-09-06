@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/fleet-os/fleet-os/agent/internal/terminal"
 )
 
 type TunnelRequest struct {
@@ -24,15 +26,24 @@ type TunnelRequest struct {
 	Path    string            `json:"path"`
 	Headers map[string]string `json:"headers"`
 	Body    string            `json:"body,omitempty"` // base64
+
+	// Terminal session fields
+	Cols  uint16 `json:"cols,omitempty"`
+	Rows  uint16 `json:"rows,omitempty"`
+	Shell string `json:"shell,omitempty"`
+	Data  string `json:"data,omitempty"` // base64
 }
 
 type TunnelResponse struct {
 	Type    string            `json:"type"`
 	ID      string            `json:"id"`
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers"`
+	Status  int               `json:"status,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 	Body    string            `json:"body,omitempty"` // base64
 	Error   string            `json:"error,omitempty"`
+
+	// Terminal session output
+	Data string `json:"data,omitempty"` // base64
 }
 
 // Keepalive timings. Both ends ping, because both failures are real: the control
@@ -62,10 +73,11 @@ type Client struct {
 	httpClient      *http.Client
 	mu              sync.Mutex
 	conn            *websocket.Conn
+	termMgr         *terminal.Manager
 }
 
 func New(controlPlaneURL, agentToken string, log *slog.Logger) *Client {
-	return &Client{
+	c := &Client{
 		controlPlaneURL: controlPlaneURL,
 		agentToken:      agentToken,
 		log:             log,
@@ -73,6 +85,19 @@ func New(controlPlaneURL, agentToken string, log *slog.Logger) *Client {
 			Timeout: 30 * time.Second,
 		},
 	}
+	c.termMgr = terminal.NewManager(log, func(sessionID string, data []byte) {
+		c.sendResponse(&TunnelResponse{
+			Type: "terminal_data",
+			ID:   sessionID,
+			Data: base64.StdEncoding.EncodeToString(data),
+		})
+	}, func(sessionID string) {
+		c.sendResponse(&TunnelResponse{
+			Type: "terminal_close",
+			ID:   sessionID,
+		})
+	})
+	return c
 }
 
 func (c *Client) Run(ctx context.Context) {
@@ -136,6 +161,9 @@ func (c *Client) connectAndServe(ctx context.Context, wsURL string) error {
 			c.conn = nil
 		}
 		c.mu.Unlock()
+		if c.termMgr != nil {
+			c.termMgr.CloseAll()
+		}
 	}()
 
 	// Silence past pongWait means the socket is gone, whatever the OS thinks.
@@ -196,8 +224,30 @@ func (c *Client) connectAndServe(ctx context.Context, wsURL string) error {
 			continue
 		}
 
-		if req.Type == "http_request" {
+		switch req.Type {
+		case "http_request":
 			go c.handleHttpRequest(&req)
+		case "terminal_start":
+			go func(r TunnelRequest) {
+				if err := c.termMgr.Start(r.ID, r.Cols, r.Rows, r.Shell); err != nil {
+					c.sendResponse(&TunnelResponse{
+						Type:  "terminal_close",
+						ID:    r.ID,
+						Error: err.Error(),
+					})
+				}
+			}(req)
+		case "terminal_data":
+			if req.Data != "" {
+				decoded, err := base64.StdEncoding.DecodeString(req.Data)
+				if err == nil {
+					_ = c.termMgr.HandleInput(req.ID, decoded)
+				}
+			}
+		case "terminal_resize":
+			_ = c.termMgr.Resize(req.ID, req.Cols, req.Rows)
+		case "terminal_close":
+			c.termMgr.Close(req.ID)
 		}
 	}
 }

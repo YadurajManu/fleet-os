@@ -7,22 +7,28 @@ import { hashToken, isAgentToken } from '../lib/tokens.js'
 import { randomUUID } from 'node:crypto'
 
 export interface TunnelRequest {
-  type: 'http_request'
+  type: 'http_request' | 'terminal_start' | 'terminal_data' | 'terminal_resize' | 'terminal_close'
   id: string
   port: number
   method: string
   path: string
   headers: Record<string, string>
   body?: string // base64
+  // Terminal fields
+  cols?: number
+  rows?: number
+  shell?: string
+  data?: string // base64
 }
 
 export interface TunnelResponse {
-  type: 'http_response'
+  type: 'http_response' | 'terminal_data' | 'terminal_close'
   id: string
   status: number
   headers: Record<string, string>
   body?: string // base64
   error?: string
+  data?: string // base64
 }
 
 type PendingRequest = {
@@ -51,6 +57,8 @@ type TunnelLogger = { warn: (obj: unknown, msg: string) => void }
 export class TunnelRegistry {
   private sockets = new Map<string, WebSocket>()
   private pending = new Map<string, PendingRequest>()
+  /** Maps terminal sessionId → the browser WebSocket that owns it. */
+  private terminalSessions = new Map<string, WebSocket>()
 
   constructor(private ctx: AppContext) {}
 
@@ -163,6 +171,15 @@ export class TunnelRegistry {
             this.pending.delete(msg.id)
             handler.resolve(msg)
           }
+        } else if ((msg.type === 'terminal_data' || msg.type === 'terminal_close') && msg.id) {
+          // Route terminal output from agent back to the browser WS that started this session.
+          const browserWs = this.terminalSessions.get(msg.id)
+          if (browserWs && browserWs.readyState === WebSocket.OPEN) {
+            browserWs.send(JSON.stringify(msg))
+          }
+          if (msg.type === 'terminal_close') {
+            this.terminalSessions.delete(msg.id)
+          }
         }
       } catch (err) {
         // ignore malformed message
@@ -238,6 +255,101 @@ export class TunnelRegistry {
         }
       })
     })
+  }
+
+  // ─── Terminal session management ──────────────────────────────────────
+
+  /**
+   * Start a terminal session on a node. The browser WebSocket is tracked so
+   * agent output can be routed back to it.
+   */
+  public startTerminal(
+    nodeId: string,
+    sessionId: string,
+    browserWs: WebSocket,
+    cols: number,
+    rows: number,
+    shell?: string
+  ): boolean {
+    const agentWs = this.sockets.get(nodeId)
+    if (!agentWs || agentWs.readyState !== WebSocket.OPEN) return false
+
+    this.terminalSessions.set(sessionId, browserWs)
+
+    const payload: TunnelRequest = {
+      type: 'terminal_start',
+      id: sessionId,
+      port: 0,
+      method: '',
+      path: '',
+      headers: {},
+      cols,
+      rows,
+      shell,
+    }
+    agentWs.send(JSON.stringify(payload))
+    return true
+  }
+
+  /** Forward terminal stdin from browser to agent. */
+  public sendTerminalData(nodeId: string, sessionId: string, data: string): boolean {
+    const agentWs = this.sockets.get(nodeId)
+    if (!agentWs || agentWs.readyState !== WebSocket.OPEN) return false
+
+    agentWs.send(JSON.stringify({
+      type: 'terminal_data',
+      id: sessionId,
+      port: 0,
+      method: '',
+      path: '',
+      headers: {},
+      data,
+    }))
+    return true
+  }
+
+  /** Forward terminal resize from browser to agent. */
+  public resizeTerminal(nodeId: string, sessionId: string, cols: number, rows: number): boolean {
+    const agentWs = this.sockets.get(nodeId)
+    if (!agentWs || agentWs.readyState !== WebSocket.OPEN) return false
+
+    agentWs.send(JSON.stringify({
+      type: 'terminal_resize',
+      id: sessionId,
+      port: 0,
+      method: '',
+      path: '',
+      headers: {},
+      cols,
+      rows,
+    }))
+    return true
+  }
+
+  /** Close a terminal session and clean up. */
+  public closeTerminal(nodeId: string, sessionId: string): void {
+    this.terminalSessions.delete(sessionId)
+
+    const agentWs = this.sockets.get(nodeId)
+    if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+      agentWs.send(JSON.stringify({
+        type: 'terminal_close',
+        id: sessionId,
+        port: 0,
+        method: '',
+        path: '',
+        headers: {},
+      }))
+    }
+  }
+
+  /** Remove all terminal sessions that belong to a specific browser WS. */
+  public closeTerminalSessionsForBrowser(browserWs: WebSocket): void {
+    for (const [sessionId, ws] of this.terminalSessions) {
+      if (ws === browserWs) {
+        this.terminalSessions.delete(sessionId)
+      }
+    }
   }
 }
 

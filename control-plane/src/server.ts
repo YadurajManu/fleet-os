@@ -12,6 +12,7 @@ import { serviceRoutes } from './api/services.routes.js'
 import { secretRoutes } from './api/secrets.routes.js'
 import { backupRoutes } from './api/backups.routes.js'
 import { setupTunnelServer } from './tunnel/registry.js'
+import { setupTerminalServer } from './tunnel/terminal.js'
 import type { AppContext } from './api/context.js'
 
 export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
@@ -93,6 +94,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   await app.register(backupRoutes)
 
   setupTunnelServer(app, ctx, ctx.tunnels)
+  setupTerminalServer(app, ctx, ctx.tunnels)
 
   return app
 }
