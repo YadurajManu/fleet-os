@@ -620,7 +620,13 @@ export default function NodeDetail() {
             </div>
             <div className="flex items-center justify-between font-mono text-[11px]">
               <span className="text-white/40">Containers</span>
-              <span className="text-white/80">{t?.containers != null ? `${t.containers} running` : '—'}</span>
+              <span className="text-white/80">
+                {Array.isArray(t?.containers)
+                  ? `${t.containers.length} running`
+                  : typeof t?.containers === 'number'
+                  ? `${t.containers} running`
+                  : '—'}
+              </span>
             </div>
           </div>
           <div className="font-mono text-[10px] text-white/30 truncate" title={node.id}>
