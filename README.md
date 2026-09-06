@@ -1,182 +1,309 @@
-<h1 align="center">Fleet OS</h1>
+<div align="center">
 
-<p align="center">
-  <strong>Git push to the hardware you already own.</strong><br>
-  A Raspberry Pi, an old laptop and a spare VPS, treated as one deploy target.
-</p>
+  <img src="docs/assets/social-preview.svg" alt="Fleet OS Banner" width="100%" />
 
-<p align="center">
-  <a href="https://fleet.plastikworld.xyz"><b>Website</b></a> ·
-  <a href="docs/ARCHITECTURE.md"><b>Architecture</b></a> ·
-  <a href="docs/fleet-yaml-spec.md"><b>fleet.yaml</b></a> ·
-  <a href="docs/self-hosting.md"><b>Self-hosting</b></a>
-</p>
+  <br />
+  <br />
 
-<p align="center">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <a href="https://github.com/YadurajManu/fleet-os/actions"><img alt="Build" src="https://github.com/YadurajManu/fleet-os/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://www.npmjs.com/package/@yadurajfleetos/cli"><img alt="npm" src="https://img.shields.io/npm/v/@yadurajfleetos/cli?label=cli&color=cb3837"></a>
-  <a href="https://go.dev/"><img alt="Go 1.24+" src="https://img.shields.io/badge/go-1.24%2B-00ADD8.svg"></a>
-  <a href="https://nodejs.org/"><img alt="Node 20+" src="https://img.shields.io/badge/node-20%2B-339933.svg"></a>
-</p>
+  # Fleet OS
+
+  **Git push to the hardware you already own.**<br />
+  *Turn a Raspberry Pi, an Apple Silicon Mac, an Arch Linux box, and a spare VPS into a unified edge cloud.*
+
+  <br />
+
+  [![npm version](https://img.shields.io/npm/v/@yadurajfleetos/cli?style=for-the-badge&color=3fe08b&label=%40yadurajfleetos%2Fcli&logo=npm)](https://www.npmjs.com/package/@yadurajfleetos/cli)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+  [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8.svg?style=for-the-badge&logo=go)](https://go.dev/)
+  [![Node Version](https://img.shields.io/badge/Node.js-24+-339933.svg?style=for-the-badge&logo=nodedotjs)](https://nodejs.org/)
+  [![Docker Engine](https://img.shields.io/badge/Docker-v29+-2496ED.svg?style=for-the-badge&logo=docker)](https://www.docker.com/)
+  [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+  [![Author](https://img.shields.io/badge/Author-Yaduraj%20Singh-7928CA?style=for-the-badge)](https://github.com/YadurajManu)
+
+  <br />
+
+  <p align="center">
+    <a href="https://fleetapp.plastikworld.xyz"><b>🌐 Live Dashboard</b></a> •
+    <a href="https://fleet.plastikworld.xyz"><b>📖 Website</b></a> •
+    <a href="docs/ARCHITECTURE.md"><b>🏗️ Architecture</b></a> •
+    <a href="docs/fleet-yaml-spec.md"><b>📄 fleet.yaml Spec</b></a> •
+    <a href="docs/self-hosting.md"><b>🚀 Self-Hosting</b></a> •
+    <a href="#-quickstart"><b>⚡ Quickstart</b></a>
+  </p>
+
+</div>
 
 ---
 
-```console
-$ fleet nodes pair                 # prints a single-use command to run on the machine
-$ fleet init                       # writes a fleet.yaml, scaffolds a Dockerfile if needed
-$ fleet up web                     # apply → build for that node's arch → deploy → wait → URL
-```
+## 💡 Why Fleet OS?
 
-Fleet OS turns the computers you already own into one deploy target. Push a repository and it builds the declared services, places each one on a node that can run it, exposes a stable HTTPS hostname, and reschedules flexible workloads when a Raspberry Pi, laptop, or spare VPS disappears. It is for homelabs, small teams, and operators who need useful orchestration without replacing their hardware or pretending that every node is identical.
+Tools like **Coolify**, **Dokploy**, and **CapRover** are fantastic for single-server setups, but their scheduling models assume one stable host or homogeneous servers. **Kubernetes** is extraordinarily complex and demands dedicated infrastructure.
 
-Agents are **outbound-only**. There is no inbound Docker socket, no SSH key on your machines, and no port to forward — a node behind a home router with no static IP is a first-class member of a fleet.
+**Fleet OS** is designed from the ground up for **heterogeneous, intermittently connected, real-world hardware**:
+- An Apple Silicon Mac (`arm64`), an Arch Linux rig with an NVIDIA GPU (`amd64`), a Windows workstation, and a $4 VPS can live in the same fleet.
+- **100% Outbound-Only Zero-Trust Connectivity**: Node agents establish outbound reverse WebSocket tunnels to the control plane. **No open inbound ports, no SSH keys on your machines, and zero router port forwarding** — machines behind residential NAT, university Wi-Fi, or CGNAT are first-class citizens.
+- **Architecture-Aware Native Scheduling**: Stateless services are dynamically placed based on real-time headroom and CPU architecture (`arm64` vs `amd64`), while persistent databases stay safely pinned to designated disks.
 
-## Why Fleet OS
+---
 
-Coolify, Dokploy, and CapRover are excellent single-server deployment tools, but their scheduling model assumes one stable host (or a fairly uniform cluster). Balena assumes a fleet of similarly managed devices. Fleet OS makes heterogeneous, intermittently connected hardware the design centre: capability discovery is reported by agents, placement explains rejected nodes, and pinned stateful services are treated differently from movable stateless services.
+## 📸 Visual Showcase
 
-## What it provides
+### 🎛️ Multi-Node Cluster Fleet View
+Monitor diverse platforms simultaneously with real-time CPU, RAM, and Disk telemetry, sparklines, and predictive disk pressure warnings:
 
-- GitHub push deployments at the exact pushed commit, including private-repository access through a GitHub App. An App installation belongs to exactly one organisation, so a shared control plane never lets one tenant reach another's repositories.
-- Import a repository from the dashboard and it deploys immediately — pushes arrive at the App's own webhook, so there is no per-repository webhook to configure.
-- `fleet.yaml` validation, dry-run placement plans, architecture-aware builds, and registry-backed image rollout.
-- Deploy from a local directory with no git remote: `fleet up` uploads the build context itself.
-- A manifest is a project. Its services stay grouped after they are applied, in both the CLI and the dashboard.
-- Encrypted secrets with per-secret keys, injected only into the services that declare them, and importable straight from a `.env`.
-- Health-gated rollouts: the release that works keeps serving until its replacement proves it can serve too.
-- Weighted scheduling across CPU, memory headroom, reliability tier, tags, GPU, affinity, and anti-affinity constraints.
-- Heartbeat-based liveness, cordon/drain controls, automatic failover for flexible services, and explicit handling for pinned services.
-- Agent runtime telemetry: Docker availability/version, registry pull status, disk pressure, reconciliation errors, and bounded log tails.
-- CLI and dashboard workflows for health checks, logs, deployments, restart, rollback, events, and signed alerts.
-- Self-hosted control plane with Postgres, Redis, a local registry, and optional Cloudflare Tunnel ingress.
+<div align="center">
+  <img src="docs/assets/dashboard-nodes.png" alt="Fleet Cluster Overview" width="94%" />
+</div>
 
-## Architecture
+<br />
 
-The control plane owns identity, fleet state, scheduling, builds, ingress routes, and deployment history. A small Go agent runs on each node, reports capabilities and heartbeats over outbound HTTPS, and reconciles the desired container state locally; it never requires an inbound Docker or SSH port.
+### 🐳 Per-Container Process Explorer & Live Oscilloscope
+Track container-level resource consumption, live streaming 2-second oscilloscope metrics, and trigger instant root web terminals or 1-click rolling restarts:
+
+<div align="center">
+  <img src="docs/assets/dashboard-node-detail.png" alt="Node Detail & Container Explorer" width="94%" />
+</div>
+
+---
+
+## ✨ Key Features
+
+| Feature | Description |
+| :--- | :--- |
+| **⚡ Predictive Web Terminal** | In-browser PTY with 0ms perceived latency local echo, debounced window resize, and 1-click root container shell execution (`docker exec`). |
+| **📈 Streaming Oscilloscope** | `● LIVE` 2-second telemetry streaming mode with synchronized cross-chart scrubber HUD, drag-to-zoom, and real-time network speedometers. |
+| **🐳 Container Explorer** | Full process table reporting container memory MB, host RAM %, CPU load, Docker health check verdicts, and slide-over live log streaming. |
+| **🧠 Multi-Arch Build Engine** | Intelligent Docker Buildx runner that targets the exact CPU architecture of the scheduled node (`arm64` or `amd64`), avoiding brittle QEMU emulation. |
+| **🔒 Envelope-Encrypted Secrets** | Sensitive environment variables are encrypted at rest using per-secret random DEKs (Data Encryption Keys) wrapped by an organization Master Key. |
+| **💾 Volume Snapshots & Databases** | Pin databases (Postgres, Mongo, Redis, MySQL) to dedicated physical disks with scheduled automated backup snapshots and 1-click restore. |
+| **🤖 AI Root-Cause Diagnostics** | Integrated AI engine (`fleet diagnose`, `fleet fix`) that analyzes agent telemetry, system events, and container crash logs to prescribe manifest fixes. |
+| **🌐 Dynamic Ingress & TLS** | Public HTTPS routing terminating at Caddy / Cloudflare Tunnels, routing seamlessly through reverse tunnels to wherever a container is scheduled. |
+
+---
+
+## 🏗️ System Architecture
 
 ```mermaid
 flowchart TB
-    push["git push"]
-    cli["fleet CLI"]
-    visitor(["visitor"])
-
-    subgraph cp["Control plane — your server, or hosted"]
-        direction LR
-        api["API · scheduler · ingress"]
-        reg["registry"]
-        db[("Postgres + Redis")]
-        api --- reg
-        api --- db
+    subgraph Dev["Developer & Ingress"]
+        CLI["fleet CLI (@yadurajfleetos/cli)"]
+        GIT["git push / GitHub App"]
+        PUB["Public Traffic (*.plastikworld.xyz)"]
     end
 
-    subgraph nodes["Your hardware — anywhere, behind any NAT"]
-        direction LR
-        n1["agent<br/>Raspberry Pi · arm64"]
-        n2["agent<br/>old laptop · amd64"]
-        n3["agent<br/>spare VPS · amd64"]
+    subgraph CP["Fleet Control Plane (VPS / Cloud)"]
+        API["Fastify API & Auth Router"]
+        BUILD["Docker Buildx Engine (Native Arch Targeting)"]
+        SCHED["Weighted Headroom Scheduler"]
+        INGRESS["Caddy Reverse Proxy & Edge Router"]
+        REG["Private Docker Registry (v2)"]
+        DB[("PostgreSQL 16 (Drizzle ORM)")]
+        REDIS[("Redis 7 (Pub/Sub & Heartbeats)")]
+        
+        API --- DB
+        API --- REDIS
+        API --- BUILD
+        INGRESS --- API
     end
 
-    push --> api
-    cli --> api
-    visitor --> api
-    api == "reverse tunnel" ==> n2
-    n1 -. "outbound only" .-> api
-    n2 -.-> api
-    n3 -.-> api
+    subgraph Nodes["Your Hardware (Heterogeneous Clusters)"]
+        subgraph Node1["sayyestoheaven (Apple Silicon Mac)"]
+            AG1["Go Agent (v0.2.4)"]
+            DK1["Docker Engine (arm64)"]
+            C1["Fullstack Services"]
+            AG1 --- DK1
+        end
+
+        subgraph Node2["archlinux (Linux Box)"]
+            AG2["Go Agent (v0.2.4)"]
+            DK2["Docker Engine (amd64)"]
+            C2["lemeraportfolio (Nginx + React 19)"]
+            AG2 --- DK2
+        end
+
+        subgraph Node3["desktop-tc4vu9e (Windows Workstation)"]
+            AG3["Go Agent (v0.2.4)"]
+            DK3["Docker Desktop (Named Pipe)"]
+            AG3 --- DK3
+        end
+    end
+
+    CLI -->|HTTPS REST| API
+    GIT -->|Webhook| API
+    PUB -->|HTTPS| INGRESS
+
+    %% Outbound Reverse Tunnels
+    AG1 == "Outbound WSS Tunnel" ==> API
+    AG2 == "Outbound WSS Tunnel" ==> API
+    AG3 == "Outbound WSS Tunnel" ==> API
+
+    INGRESS -. "Traffic Proxied over Tunnel" .-> C2
+    INGRESS -. "Traffic Proxied over Tunnel" .-> C1
 ```
 
-Every arrow from a node points *outward*. The control plane never opens a connection to your hardware — it answers polls and holds a reverse tunnel for ingress, which is what lets a machine on a college LAN or a home router serve traffic without a port forward. See [Architecture](docs/ARCHITECTURE.md) for the data flow and failure model.
+> **Zero Inbound Ports**: Every arrow from a physical node points **outward**. The control plane never initiates raw connections to your hardware—it holds persistent reverse WebSocket tunnels, allowing machines behind NAT or dynamic IPs to serve global traffic securely.
 
-## Quickstart
+---
 
-Install the CLI:
+## ⚡ Quickstart
+
+### 1. Install the CLI
+Install the official Fleet CLI via npm:
 
 ```bash
 npm install -g @yadurajfleetos/cli
+
+# Or run directly without installation:
+npx @yadurajfleetos/cli <command>
+```
+
+Authenticate with your control plane:
+```bash
 fleet auth login
 ```
 
-Create a fleet and pair a node. `fleet nodes pair` prints a single-use command; run that command on the Raspberry Pi, laptop, or VPS you want to add:
+### 2. Pair a Machine in Seconds
+Generate a cryptographically signed, single-use pairing token:
 
 ```bash
 fleet nodes pair
-# run the printed curl ... --token flp_... command on the node
-fleet status
+```
+Run the printed one-line curl command on any machine (macOS, Linux, or Windows):
+```bash
+curl -fsSL https://fleetapi.plastikworld.xyz/install.sh | bash -s -- --token flp_xxxxxxxxxxxx
+```
+Verify the machine is online:
+```bash
+fleet nodes
 ```
 
-In a repository with a `Dockerfile` (or let Fleet scaffold one), declare a service and push it:
+---
+
+### 3. Deploy a Fullstack Application
+In your repository root (or any directory), let Fleet analyze your project:
 
 ```bash
-fleet init
-# review fleet.yaml, then:
+# Generate fleet.yaml with AI-assisted port & environment discovery:
+fleet init --ai
+```
+
+Example `fleet.yaml` manifest:
+```yaml
+fleet: homelab
+
+databases:
+  db:
+    engine: postgres
+    node: sayyestoheaven     # Pinned to preserve database volume
+    backup: daily
+
+services:
+  api:
+    build: ./backend
+    placement: flexible      # Scheduler places on best node automatically
+    container_port: 8000
+    resources:
+      ram: 512Mi
+      cpu: 0.5
+    health:
+      path: /healthz
+    secrets:
+      - DATABASE_URL
+    uses:
+      - db                   # Dependency ordering
+
+  web:
+    build: ./frontend
+    placement: flexible
+    container_port: 80
+    resources:
+      ram: 256Mi
+      cpu: 0.25
+    health:
+      path: /
+    uses:
+      - api
+```
+
+Apply and roll out the entire stack:
+```bash
+# Validate manifest syntax:
 fleet validate
-fleet up web                 # apply, build, deploy, wait for running, print URL
-# or use separate, reviewable steps:
-fleet apply
-fleet deploy web
-git add fleet.yaml Dockerfile
-git commit -m "deploy web"
-git push
+
+# Deploy the entire stack in dependency order:
+fleet up --yes
 ```
 
-Secrets never go in the manifest. Name them there and store the values separately — or import the ones you already have:
+---
 
-```bash
-fleet secrets set POSTGRES_PASSWORD          # prompts, never echoed
-fleet secrets import .env --dry-run          # shows keys, never values
+## ⌨️ CLI Command Cheat Sheet
+
+```console
+getting started
+  up [service]                   Deploy the whole fleet.yaml in dependency order
+  init [--ai]                    Scan repository and scaffold fleet.yaml
+  import [file]                  Convert a docker-compose.yml into fleet.yaml
+  validate [file]                Lint and validate fleet.yaml placement rules
+  apply [file]                   Register manifest services into the fleet
+  deploy <service>               Build, schedule, and roll out a single service
+
+looking around
+  status                         One-screen overview of nodes, resources & services
+  nodes                          List all cluster nodes, specs, architecture, status
+  services                       List running services, public HTTPS URLs, and nodes
+  where <service>                Explain where a service will be placed and why
+  tune                           Compare allocated RAM vs actual memory consumed
+  logs <service> --follow        Live follow stdout/stderr of container
+  events                         Unified cluster event timeline (deploys, restarts)
+  open <service>                 Open public service endpoint in default browser
+
+operating
+  restart <service>              Rolling zero-downtime container replacement
+  reschedule <service>           Force scheduler to evaluate and migrate service
+  rollback <service>             Instantly restore previous healthy deployment
+  down <service>                 Stop and tear down container workload
+  rm <service>                   Permanently delete service declaration
+  nodes cordon <name>            Stop scheduling new work onto node
+  nodes uncordon <name>          Re-enable scheduling on node
+  nodes rm <name> --force        Revoke credentials and remove node from fleet
+  unpair                         Safely teardown agent and credentials on local host
+
+state & secrets
+  secrets                        List configured secret keys
+  secrets set <KEY>              Securely store credential (never echoed in history)
+  secrets import [.env]          Import secrets declared in fleet.yaml from .env
+  backup <service>               Create on-demand persistent volume snapshot
+  backups <service>              List volume backups with timestamp and sizes
+  restore <service> [id]         Restore volume snapshot back to container disk
 ```
 
-For a self-hosted control plane, follow [Self-hosting](docs/self-hosting.md).
+---
 
-## Stack
+## 🛠️ Technology Stack
 
-- Go agent with static cross-compiled binaries for Linux, macOS and Windows (`arm64`, `armv7`, `amd64`). On Windows it speaks to the Docker Engine over its named pipe.
-- TypeScript control plane on Fastify, Drizzle ORM, Postgres, Redis, and Docker Buildx.
-- TypeScript CLI distributed as an npm package.
-- React dashboards and a Vite marketing site, served by nginx containers.
-- Docker Compose for local/self-hosted operation; Cloudflare Tunnel for optional public ingress.
+- **Node Agent**: Written in Go (`agent/`). Cross-compiled static binaries for Linux, macOS Darwin, and Windows (`amd64`, `arm64`, `armv7`). Native Docker Engine API client & named pipes.
+- **Control Plane**: TypeScript (`control-plane/`). Built on Fastify, Drizzle ORM, PostgreSQL 16, Redis 7, and Docker Buildx.
+- **CLI**: TypeScript (`cli/`). Zero-dependency core published as `@yadurajfleetos/cli` on npm.
+- **Dashboard**: React 19 + TypeScript + Vite + Tailwind CSS (`dashboard/`). High-performance WebSockets, SVG gauges, and canvas sparklines.
+- **Edge Ingress**: Caddy 2 reverse proxy with dynamic TLS and Cloudflare Tunnel integration.
 
-## Documentation
+---
 
-| Guide | Contents |
-| --- | --- |
-| [Architecture](docs/ARCHITECTURE.md) | Control plane, agents, scheduling, heartbeats, and failover |
-| [Data model](docs/DATA_MODEL.md) | Entities, lifecycle, and relationships |
-| [Self-hosting](docs/self-hosting.md) | Run the control plane, add nodes, tunnel, registry, GitHub, diagnostics, backup |
-| [fleet.yaml](docs/fleet-yaml-spec.md) | Manifest schema, secrets, volumes, health, and placement semantics |
+## 👨‍💻 Author & Maintainer
 
-## Contributing
+Fleet OS is conceptualized, built, and maintained by:
 
-Bug reports, design discussions, and pull requests are welcome.
+<div align="center">
+  <h3><b>Yaduraj Singh</b></h3>
+  <p>
+    <a href="https://github.com/YadurajManu">GitHub (@YadurajManu)</a> •
+    <a href="mailto:yaduraj.enc@gmail.com">yaduraj.enc@gmail.com</a> •
+    <a href="https://fleet.plastikworld.xyz/#/founder">Founder Note</a>
+  </p>
+</div>
 
-```bash
-git clone https://github.com/YadurajManu/fleet-os.git && cd fleet-os
-cd control-plane && npm ci && npm run typecheck && npm test   # needs Postgres + Redis
-cd ../cli && npm ci && npm test
-cd ../dashboard && npm ci && npm run build
-cd ../agent && go test ./...
-```
+---
 
-The control-plane tests need a Postgres and a Redis to talk to; `.github/workflows/ci.yml` shows the exact environment they expect, and copying `control-plane/.env.example` to `.env.test` is the local equivalent.
+## 📄 License
 
-Commits describe the behaviour that changed and why it was wrong before — see `git log` for the house style. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest: repository layout, what makes a bug report actionable, and what a pull request should contain.
-
-## Security
-
-Please do not open a public issue for anything exploitable. Email
-**security@fleet-os.dev** or use [private vulnerability reporting](https://github.com/YadurajManu/fleet-os/security/advisories/new).
-[SECURITY.md](SECURITY.md) sets out response times, safe harbour for good-faith
-research, and the design boundaries — outbound-only agents, per-organisation
-GitHub installations, envelope-encrypted secrets — that are meant to hold.
-
-## Who maintains this
-
-Fleet OS is built and maintained by [Yaduraj Singh](https://fleet.plastikworld.xyz/#/founder),
-alone, in the open. That page says what a one-person project can promise you and
-what it cannot — including the parts that might make you decide against it.
-
-## License
-
-Fleet OS is released under the [MIT License](LICENSE). No open-core split, no
-enterprise fork holding the good parts: what is here is the product.
+Fleet OS is open-source software licensed under the **[MIT License](LICENSE)**. There is no open-core split or paywalled enterprise tier—what is here is the complete product.
