@@ -13,7 +13,18 @@ export type HeartbeatPayload = {
    * anything reading a heartbeat could not match a container to its
    * deployment without casting.
    */
-  containers: Array<{ name: string; state: string; health?: string; deployment_id?: string }>
+  containers: Array<{
+    name: string
+    id?: string
+    image?: string
+    state: string
+    status?: string
+    health?: string
+    deployment_id?: string
+    memory_mb?: number
+    cpu_pct?: number
+    restarts?: number
+  }>
   meshConnected: boolean
   agentVersion?: string
   runtime?: {

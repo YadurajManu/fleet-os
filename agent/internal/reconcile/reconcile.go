@@ -475,9 +475,16 @@ func (e *Engine) List(ctx context.Context) ([]client.Container, error) {
 		if name == "" {
 			name = strings.TrimPrefix(strings.Join(c.Names, ","), "/")
 		}
+		cid := c.ID
+		if len(cid) > 12 {
+			cid = cid[:12]
+		}
 		container := client.Container{
 			Name:         name,
+			ID:           cid,
+			Image:        c.Image,
 			State:        c.State,
+			Status:       c.Status,
 			DeploymentID: c.Labels[docker.LabelDeployment],
 		}
 		container.Health = healthFromStatus(c.Status)

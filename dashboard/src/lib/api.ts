@@ -145,7 +145,18 @@ export type Node = {
     diskTotalMb: number | null
     meshConnected: boolean
     ageMs: number
-    containers: Array<{ name: string; state: string; health?: string }>
+    containers: Array<{
+      name: string
+      id?: string
+      image?: string
+      state: string
+      status?: string
+      health?: string
+      deployment_id?: string
+      memory_mb?: number
+      cpu_pct?: number
+      restarts?: number
+    }>
     runtime: { dockerAvailable: boolean; dockerVersion?: string; dockerApiVersion?: string; dockerError?: string; registryStatus?: 'ok' | 'failed' | 'not_tested'; registryError?: string; lastReconcileError?: string }
   } | null
 }

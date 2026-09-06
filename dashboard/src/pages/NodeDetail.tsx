@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { api, type Node } from '../lib/api'
+import { api, type Node, type Service } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { mb, since } from '../lib/format'
 import { Dot, ErrorNote, Panel, StatusPill } from '../components/ui'
@@ -8,6 +8,8 @@ import TimeSeriesChart, { type ChartSeries, type Marker } from '../components/Ti
 import { HeartbeatStrip, projectFull } from '../components/viz'
 import { beatsFrom, dockerBeatsFrom, type NodeSample } from '../lib/useSamples'
 import WebTerminal from '../components/WebTerminal'
+import ContainerExplorer, { type ContainerItem } from '../components/ContainerExplorer'
+import ContainerLogDrawer from '../components/ContainerLogDrawer'
 
 /**
  * Everything known about one machine.
@@ -222,6 +224,11 @@ export default function NodeDetail() {
   const [zoom, setZoom] = useState<{ from: number; to: number } | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [showTerminal, setShowTerminal] = useState(false)
+  const [terminalInitialCmd, setTerminalInitialCmd] = useState<string | undefined>(undefined)
+
+  /* ─── Container Explorer State ─── */
+  const [selectedLogContainer, setSelectedLogContainer] = useState<ContainerItem | null>(null)
+  const [restartToast, setRestartToast] = useState<{ message: string; error?: boolean } | null>(null)
 
   /* ─── Live Mode State ─── */
   const [isLive, setIsLive] = useState(false)
@@ -240,6 +247,13 @@ export default function NodeDetail() {
     10_000
   )
   const node = nodes.data?.nodes.find((n) => n.id === nodeId)
+
+  // Fetch all services to correlate containers with service metadata
+  const services = usePoll(
+    () => api<{ services: Service[] }>(`/fleets/${fleet!.id}/services`),
+    fleet?.id ? `/fleets/${fleet.id}/services` : null,
+    15_000
+  )
 
   // In live mode: poll every 2s for the short window; normal mode: 60s for the full range
   const liveActive = isLive && !isPaused
@@ -350,13 +364,14 @@ export default function NodeDetail() {
     [recorded]
   )
 
-  // Network cumulative throughput & live speeds
+  // Cumulative throughput & live speeds
   const netStats = useMemo(() => {
     let totalRxBytes = 0
     let totalTxBytes = 0
     for (let i = 1; i < samples.length; i++) {
       const prev = samples[i - 1]
       const curr = samples[i]
+      if (!curr || !prev) continue
       if (curr.netRxKbps == null && curr.netTxKbps == null) continue
       const dt = (+new Date(curr.at) - +new Date(prev.at)) / 1000
       if (dt > 0 && dt <= 600) {
@@ -374,6 +389,64 @@ export default function NodeDetail() {
       liveTx,
     }
   }, [samples, t])
+
+  // Correlate live node containers with Fleet services
+  const containerItems: ContainerItem[] = useMemo(() => {
+    if (!t?.containers || !Array.isArray(t.containers)) return []
+    const allServices = services.data?.services ?? []
+
+    return t.containers.map((c) => {
+      const cleanName = c.name.replace(/^\//, '')
+      const matched = allServices.find((s) => {
+        if (c.deployment_id && (s as unknown as { deploymentId?: string }).deploymentId === c.deployment_id) return true
+        const svcClean = s.name.toLowerCase()
+        return (
+          cleanName === svcClean ||
+          cleanName === `fleet-${svcClean}` ||
+          cleanName.startsWith(`fleet-${svcClean}-`)
+        )
+      })
+
+      return {
+        name: c.name,
+        id: c.id,
+        image: c.image || (matched as unknown as { image?: string })?.image,
+        state: c.state || 'running',
+        status: c.status,
+        health: c.health,
+        deployment_id: c.deployment_id,
+        memory_mb: c.memory_mb,
+        cpu_pct: c.cpu_pct,
+        restarts: c.restarts,
+        serviceId: matched?.id,
+        serviceName: matched?.name,
+        project: matched?.project,
+      }
+    })
+  }, [t?.containers, services.data?.services])
+
+  // Container Explorer Action Handlers
+  const handleRestartContainer = async (container: ContainerItem) => {
+    if (!container.serviceId) return
+    const name = container.serviceName || container.name.replace(/^\//, '')
+    const confirmed = window.confirm(`Restart container for service "${name}"?\nThis triggers a zero-downtime rolling replacement on this node.`)
+    if (!confirmed) return
+
+    try {
+      await api(`/services/${container.serviceId}/restart`, { method: 'POST' })
+      setRestartToast({ message: `Triggered rolling restart for "${name}"` })
+      setTimeout(() => setRestartToast(null), 4500)
+    } catch (err) {
+      setRestartToast({ message: `Failed to restart "${name}": ${(err as Error).message}`, error: true })
+      setTimeout(() => setRestartToast(null), 5500)
+    }
+  }
+
+  const handleExecContainer = (container: ContainerItem) => {
+    const cleanName = container.name.replace(/^\//, '')
+    setTerminalInitialCmd(`docker exec -it ${cleanName} sh || docker exec -it ${cleanName} bash`)
+    setShowTerminal(true)
+  }
 
   // Cross-chart synchronized hovered sample snapshot
   const hoveredSample = useMemo(() => {
@@ -660,11 +733,11 @@ export default function NodeDetail() {
             </div>
             <div className="flex items-center justify-between font-mono text-[11px]">
               <span className="text-white/40">Containers</span>
-              <span className="text-white/80">
+              <span className="text-white/80 font-bold text-[#3fe08b]">
                 {Array.isArray(t?.containers)
-                  ? `${t.containers.length} running`
+                  ? `${t.containers.length} active`
                   : typeof t?.containers === 'number'
-                  ? `${t.containers} running`
+                  ? `${t.containers} active`
                   : '—'}
               </span>
             </div>
@@ -674,6 +747,38 @@ export default function NodeDetail() {
           </div>
         </div>
       </div>
+
+      {/* ─── Toast Notification for Container Actions ─── */}
+      {restartToast && (
+        <div
+          className={`flex items-center justify-between gap-3 px-4 py-3 rounded-lg border font-mono text-[12px] shadow-lg transition-all animate-fade-in ${
+            restartToast.error
+              ? 'bg-red-500/10 border-red-500/30 text-red-300'
+              : 'bg-[#3fe08b]/10 border-[#3fe08b]/30 text-[#3fe08b]'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-base">{restartToast.error ? '⚠️' : '✓'}</span>
+            <span>{restartToast.message}</span>
+          </div>
+          <button
+            onClick={() => setRestartToast(null)}
+            className="text-white/40 hover:text-white font-bold"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* ─── Per-Container Live Resource Breakdown & Process Explorer ─── */}
+      <ContainerExplorer
+        containers={containerItems}
+        totalNodeRamMb={node.ramMb}
+        nodeName={node.name}
+        onViewLogs={(c) => setSelectedLogContainer(c)}
+        onRestart={handleRestartContainer}
+        onExec={handleExecContainer}
+      />
 
       {/* ─── Range Selector & Live Mode Controls ─── */}
       <div className="flex flex-wrap items-center gap-2">
@@ -696,7 +801,7 @@ export default function NodeDetail() {
           </button>
         ))}
 
-        {/* 🔴 LIVE Mode Toggle */}
+        {/* 🔴 LIVE Mode Toggle (Single Dot Fix) */}
         <button
           onClick={() => {
             const next = !isLive
@@ -718,7 +823,7 @@ export default function NodeDetail() {
               ? (isPaused ? 'bg-amber-400' : 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]')
               : 'bg-white/30'
           }`} />
-          {isLive ? (isPaused ? '⏸ PAUSED' : '● LIVE') : '● LIVE'}
+          {isLive ? (isPaused ? 'PAUSED' : 'LIVE') : 'LIVE'}
         </button>
 
         {/* Pause / Resume when live */}
@@ -1106,7 +1211,23 @@ export default function NodeDetail() {
           nodeId={node.id}
           nodeName={node.name}
           fleetId={fleet.id}
-          onClose={() => setShowTerminal(false)}
+          onClose={() => {
+            setShowTerminal(false)
+            setTerminalInitialCmd(undefined)
+          }}
+          initialCommand={terminalInitialCmd}
+        />
+      )}
+
+      {/* ─── Container Log Drawer ─── */}
+      {selectedLogContainer && (
+        <ContainerLogDrawer
+          containerName={selectedLogContainer.name}
+          containerId={selectedLogContainer.id}
+          serviceId={selectedLogContainer.serviceId}
+          serviceName={selectedLogContainer.serviceName}
+          nodeName={node.name}
+          onClose={() => setSelectedLogContainer(null)}
         />
       )}
     </div>

@@ -43,8 +43,14 @@ type RegisterResponse struct {
 }
 
 type Container struct {
-	Name  string `json:"name"`
+	Name string `json:"name"`
+	// Short 12-char container ID
+	ID string `json:"id,omitempty"`
+	// Image repository:tag
+	Image string `json:"image,omitempty"`
 	State string `json:"state"`
+	// Human-readable status (e.g. "Up 4 hours (healthy)")
+	Status string `json:"status,omitempty"`
 	// Docker's own health verdict: healthy, unhealthy, starting, or empty when
 	// the image declares no check. The control plane will not call a deployment
 	// running on the strength of "the process started".
@@ -56,6 +62,10 @@ type Container struct {
 	// Steady-state memory in megabytes, cache excluded. Absent when the node
 	// has not sampled yet, which is not the same as zero.
 	MemoryMb int `json:"memory_mb,omitempty"`
+	// Optional container CPU percentage
+	CPUPct float64 `json:"cpu_pct,omitempty"`
+	// Container restart count
+	Restarts int `json:"restarts,omitempty"`
 	// What the node found when it asked this container which paths it answers.
 	// Only ever present for a service with no health check configured, and only
 	// once the sweep has settled -- see agent/internal/health/discover.go.

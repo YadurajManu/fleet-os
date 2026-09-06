@@ -9,6 +9,7 @@ export interface WebTerminalProps {
   nodeName: string
   fleetId: string
   onClose: () => void
+  initialCommand?: string
 }
 
 const QUICK_COMMANDS = [
@@ -46,7 +47,7 @@ function fromBase64(b64: string): string {
 
 type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error'
 
-export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebTerminalProps) {
+export default function WebTerminal({ nodeId, nodeName, fleetId, onClose, initialCommand }: WebTerminalProps) {
   const termRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -137,6 +138,18 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose }: WebT
 
       // Send initial latency probe
       ws.send(JSON.stringify({ type: 'terminal_ping', t: Date.now() }))
+
+      // If an initial command is specified (e.g. docker exec -it <container> sh), send it once connected
+      if (initialCommand) {
+        setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'terminal_data',
+              data: toBase64(initialCommand.endsWith('\n') ? initialCommand : initialCommand + '\n'),
+            }))
+          }
+        }, 400)
+      }
     }
 
     ws.onmessage = (event) => {
