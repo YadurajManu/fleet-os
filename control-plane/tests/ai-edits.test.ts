@@ -171,3 +171,50 @@ describe('reading a reply that is not only JSON', () => {
     assert.throws(() => parseEdits('I could not review this service.'), /did not return JSON/)
   })
 })
+
+describe('the comments a filled omission makes false', () => {
+  // init writes this wherever it refused to guess a health path. The review
+  // adding one left the file saying "No health check" directly above a health
+  // check, and a reader has to decide which half to believe.
+  const WITH_NOTE = `fleet: homelab
+
+services:
+  api:
+    build: ./api
+    placement: flexible
+    container_port: 3000
+    # No health check: container state decides whether this
+    # is up. Add one once you know a path that returns 2xx —
+    #   health: { path: /healthz }
+    # Note the probe runs from the node, not inside the
+    # container, so the image needs nothing installed for it.
+    uses: [db]
+    node: n1
+`
+
+  test('adding the field removes the note explaining its absence', () => {
+    const { manifest, applied } = applyEdits(WITH_NOTE, [
+      { service: 'api', field: 'health', value: '/healthz', why: 'app.get("/healthz")' },
+    ])
+    assert.equal(applied.length, 1)
+    assert.ok(manifest.includes('/healthz'))
+    assert.ok(!manifest.includes('No health check'), 'the stale note survived')
+    assert.ok(!manifest.includes('Note the probe runs'), 'the rest of the note survived')
+  })
+
+  test('a comment about something else is left alone', () => {
+    const draft = WITH_NOTE.replace('    uses: [db]', '    # this one is pinned on purpose\n    uses: [db]')
+    const { manifest } = applyEdits(draft, [
+      { service: 'api', field: 'health', value: '/healthz', why: 'app.get("/healthz")' },
+    ])
+    assert.ok(manifest.includes('this one is pinned on purpose'), 'an unrelated comment was taken too')
+    assert.ok(!manifest.includes('No health check'))
+  })
+
+  test('the note stays when the edit does not fill it', () => {
+    const { manifest } = applyEdits(WITH_NOTE, [
+      { service: 'api', field: 'container_port', value: 8080, why: 'EXPOSE 8080' },
+    ])
+    assert.ok(manifest.includes('No health check'), 'a note was removed by an unrelated edit')
+  })
+})

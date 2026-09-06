@@ -137,6 +137,54 @@ function rename(doc: ReturnType<typeof parseDocument>, edit: Edit): boolean {
   return true
 }
 
+
+/**
+ * Comments that exist only to explain a field's absence.
+ *
+ * `init` writes these where it refused to guess, and they are the only
+ * explanation a generated file carries — which is why `applyEdits` edits the
+ * document in place rather than rebuilding it. But an explanation of an
+ * omission is false the moment the omission is filled, and a review that adds
+ * a health check leaves the file saying "No health check" directly above one.
+ * A reader then has to work out which half to believe, which is worse than
+ * having no comment at all.
+ *
+ * Matched per line rather than as a block: the `yaml` parser hands back every
+ * adjacent comment line as one string attached to whatever follows, so a block
+ * removed wholesale would take an unrelated neighbouring comment with it.
+ */
+const OMISSION_COMMENT: Record<string, RegExp> = {
+  health:
+    /no health check|is up\. add one once you know|health: \{ path|note the probe runs from the node|container, so the image needs nothing/i,
+}
+
+/**
+ * Drop the comment explaining why `field` was left out.
+ *
+ * The comment is not attached to the field it describes — there is no such
+ * field, that being the point. The parser attaches a run of comment lines to
+ * the key that follows them, or to the map itself when nothing does, so both
+ * have to be searched.
+ */
+function dropOmissionComment(body: unknown, field: string): void {
+  const pattern = OMISSION_COMMENT[field]
+  if (!pattern || !isMap(body)) return
+
+  const clean = (text: string | null | undefined): string | undefined => {
+    if (!text) return text ?? undefined
+    const kept = text.split('\n').filter((line) => !pattern.test(line))
+    // Every line went: remove the comment rather than leaving an empty one,
+    // which renders as a bare `#`.
+    return kept.length ? kept.join('\n') : undefined
+  }
+
+  for (const item of body.items as Array<{ key?: { commentBefore?: string | null } }>) {
+    if (item.key?.commentBefore) item.key.commentBefore = clean(item.key.commentBefore) ?? null
+  }
+  const map = body as { comment?: string | null }
+  if (map.comment) map.comment = clean(map.comment) ?? null
+}
+
 export type ApplyResult = {
   manifest: string
   applied: Edit[]
@@ -218,6 +266,8 @@ export function applyEdits(
       doc.deleteIn(['services', edit.service, edit.field])
     } else {
       doc.setIn(['services', edit.service, edit.field], shape(edit.field, edit.value))
+      // The file explained why this field was missing. It is not missing now.
+      dropOmissionComment(doc.getIn(['services', edit.service]), edit.field)
     }
     applied.push(edit)
   }

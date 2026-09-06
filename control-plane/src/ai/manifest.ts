@@ -1,4 +1,5 @@
 import { chat } from './provider.js'
+import { parseDocument } from 'yaml'
 import { firstObject, snippet } from './json.js'
 import { parseManifest, ManifestError } from '../manifest/parse.js'
 import { applyEdits, parseEdits, type Edit } from './edits.js'
@@ -141,6 +142,32 @@ Rules:
 5. Return an empty edits list when the draft is already right. That is the common answer and a good one.
 
 Write nothing outside the JSON.`
+
+
+/**
+ * The databases a service declares it uses.
+ *
+ * A per-service review is told to review one service and shown that service's
+ * directory, so nothing ever puts a database in front of it — and a database's
+ * name is precisely the thing a service's own source proves wrong. Reviewing
+ * the fixture that this was built for, it renamed the service and left a Redis
+ * called "cache" beside source connecting to "redis", which is the failure the
+ * whole rename rule exists to prevent.
+ *
+ * Read from the draft rather than passed in, so the CLI does not have to know
+ * that the review cares.
+ */
+function usesOf(draft: string, service: string): string[] {
+  try {
+    const list = parseDocument(draft).getIn(['services', service, 'uses'])
+    const items = (list as { items?: Array<{ value?: unknown }> })?.items
+    if (!Array.isArray(items)) return []
+    return items.map((i) => String(i.value)).filter(Boolean)
+  } catch {
+    // A draft that will not parse is the caller's problem, not this one's.
+    return []
+  }
+}
 
 /**
  * The questions block, shared by both reviews.
@@ -409,6 +436,15 @@ export async function assistManifest(
               content: [
                 `The manifest:\n\n${opts.draft}`,
                 `Review the service "${part.service}". Evidence from its directory:\n\n${part.map}`,
+                // Named explicitly, because "review this service" reads as a
+                // boundary and a database is the one thing outside it that
+                // this service's own source can prove wrong.
+                (() => {
+                  const uses = usesOf(opts.draft, part.service)
+                  return uses.length
+                    ? `"${part.service}" uses these databases: ${uses.join(', ')}. They are in scope for this review. Their names are the hostnames this service will resolve, so if the evidence above shows it connecting to a different hostname, propose a rename of the database — {"service": "<database name>", "field": "name", "value": "<the hostname in the source>"} — rather than leaving a service that runs and cannot reach its data.`
+                    : ''
+                })(),
                 opts.answers && Object.keys(opts.answers).length
                   ? `Already answered; treat as settled:\n${Object.entries(opts.answers)
                       .map(([id, value]) => `  ${id}: ${value}`)
