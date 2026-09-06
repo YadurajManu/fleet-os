@@ -93,8 +93,8 @@ export default function NodeDetail() {
   useEffect(() => setZoom(null), [range.key])
 
   const nodes = usePoll(
-    () => (fleet?.id ? api<{ nodes: Node[] }>(`/fleets/${fleet.id}/nodes`) : Promise.resolve({ nodes: [] })),
-    [fleet?.id],
+    () => api<{ nodes: Node[] }>(`/fleets/${fleet!.id}/nodes`),
+    fleet?.id ? `/fleets/${fleet.id}/nodes` : null,
     10_000
   )
   const node = nodes.data?.nodes.find((n) => n.id === nodeId)
@@ -102,20 +102,14 @@ export default function NodeDetail() {
   // History refreshes far more slowly than the node list. The list answers "is
   // it alive", which must be current; a chart's left edge has not moved.
   const hist = usePoll(
-    () =>
-      fleet?.id && nodeId
-        ? api<SamplesResponse>(`/fleets/${fleet.id}/nodes/${nodeId}/samples?since=${range.minutes}`)
-        : Promise.resolve(null as unknown as SamplesResponse),
-    [fleet?.id, nodeId, range.minutes],
+    () => api<SamplesResponse>(`/fleets/${fleet!.id}/nodes/${nodeId}/samples?since=${range.minutes}`),
+    fleet?.id && nodeId ? `/fleets/${fleet.id}/nodes/${nodeId}/samples?since=${range.minutes}` : null,
     60_000
   )
 
   const evts = usePoll(
-    () =>
-      fleet?.id && nodeId
-        ? api<{ events: NodeEvent[] }>(`/fleets/${fleet.id}/nodes/${nodeId}/events?since=${range.minutes}`)
-        : Promise.resolve({ events: [] }),
-    [fleet?.id, nodeId, range.minutes],
+    () => api<{ events: NodeEvent[] }>(`/fleets/${fleet!.id}/nodes/${nodeId}/events?since=${range.minutes}`),
+    fleet?.id && nodeId ? `/fleets/${fleet.id}/nodes/${nodeId}/events?since=${range.minutes}` : null,
     60_000
   )
 

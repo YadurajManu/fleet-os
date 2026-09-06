@@ -43,12 +43,12 @@ export default function Palette() {
   // component that is almost always closed would put a request every four
   // seconds behind a panel nobody is looking at.
   const services = usePoll(
-    () => (open && fleet ? api<{ services: Service[] }>(`/fleets/${fleet.id}/services`) : Promise.resolve(null)),
-    [fleet?.id, open]
+    () => api<{ services: Service[] }>(`/fleets/${fleet!.id}/services`),
+    open && fleet ? `/fleets/${fleet.id}/services` : null
   )
   const nodes = usePoll(
-    () => (open && fleet ? api<{ nodes: Node[] }>(`/fleets/${fleet.id}/nodes`) : Promise.resolve(null)),
-    [fleet?.id, open]
+    () => api<{ nodes: Node[] }>(`/fleets/${fleet!.id}/nodes`),
+    open && fleet ? `/fleets/${fleet.id}/nodes` : null
   )
 
   useEffect(() => {

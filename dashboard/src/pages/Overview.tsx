@@ -13,19 +13,19 @@ export default function Overview() {
 
   const map = usePoll(
     () => api<{ nodes: PlacementMapNode[]; unplaced: string[] }>(`/fleets/${id}/placement-map`),
-    [id]
+    `/fleets/${id}/placement-map`
   )
-  const nodes = usePoll(() => api<{ nodes: Node[] }>(`/fleets/${id}/nodes`), [id])
-  const events = usePoll(() => api<{ events: TimelineEvent[] }>(`/fleets/${id}/events?limit=8`), [id], 8000)
+  const nodes = usePoll(() => api<{ nodes: Node[] }>(`/fleets/${id}/nodes`), `/fleets/${id}/nodes`)
+  const events = usePoll(() => api<{ events: TimelineEvent[] }>(`/fleets/${id}/events?limit=8`), `/fleets/${id}/events?limit=8`, 8000)
   // Needed to lead with what is wrong. The placement map only knows about
   // services that got placed, so a service whose deployment failed is simply
   // absent from it — which is how four of them were down with the Overview
   // reporting nothing at all.
-  const services = usePoll(() => api<{ services: Service[] }>(`/fleets/${id}/services`), [id], 8000)
+  const services = usePoll(() => api<{ services: Service[] }>(`/fleets/${id}/services`), `/fleets/${id}/services`, 8000)
   // Polled slowly: this changes when somebody configures it, not on its own.
   const alerts = usePoll(
     () => api<{ rules: Array<{ enabled: boolean }> }>(`/fleets/${id}/alert-rules`),
-    [id],
+    `/fleets/${id}/alert-rules`,
     60_000
   )
   const navigate = useNavigate()

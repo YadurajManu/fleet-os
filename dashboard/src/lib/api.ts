@@ -4,7 +4,9 @@ export class ApiError extends Error {
   }
 }
 
-const BASE = import.meta.env.VITE_API ?? '/api'
+// `?.` so the module is importable outside Vite (tests): under Vite
+// `import.meta.env` is always defined and this is a no-op.
+const BASE = import.meta.env?.VITE_API ?? '/api'
 const STORE = 'fleet-os.session'
 
 export type Session = { accessToken: string; refreshToken: string; email?: string }

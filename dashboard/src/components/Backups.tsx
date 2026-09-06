@@ -52,7 +52,7 @@ export default function Backups({
 }) {
   const { data, error, loading, refetch } = usePoll(
     () => api<{ backups: Backup[] }>(`/fleets/${fleetId}/services/${serviceId}/backups`),
-    [fleetId, serviceId]
+    `/fleets/${fleetId}/services/${serviceId}/backups`
   )
   const [busy, setBusy] = useState(false)
   const [restoring, setRestoring] = useState<Backup | null>(null)

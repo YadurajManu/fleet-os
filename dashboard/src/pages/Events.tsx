@@ -19,7 +19,7 @@ export default function Events() {
   const { fleet } = useAuth()
   const { data, error, loading } = usePoll(
     () => api<{ events: TimelineEvent[] }>(`/fleets/${fleet?.id}/events?limit=100`),
-    [fleet?.id],
+    `/fleets/${fleet?.id}/events?limit=100`,
     6000
   )
 

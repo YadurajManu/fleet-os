@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx --import ./tests/setup.ts tests/*.test.tsx"
   },
   "dependencies": {
     "react": "^19.2.8",
@@ -15,11 +16,14 @@
     "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^20.14.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",
+    "happy-dom": "^20.14.0",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vite": "^8.2.2"
   }

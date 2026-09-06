@@ -161,10 +161,10 @@ export default function Services() {
   const canDeploy = fleet?.role !== 'viewer'
   const canEdit = fleet?.role === 'owner' || fleet?.role === 'admin'
 
-  const { data, error, loading } = usePoll(() => api<{ services: Service[] }>(`/fleets/${id}/services`), [id])
+  const { data, error, loading } = usePoll(() => api<{ services: Service[] }>(`/fleets/${id}/services`), `/fleets/${id}/services`)
   // Asked so an empty list can say why it is empty. The cache in usePoll makes
   // this nearly free — the Nodes page has usually fetched it already.
-  const nodes = usePoll(() => api<{ nodes: Node[] }>(`/fleets/${id}/nodes`), [id])
+  const nodes = usePoll(() => api<{ nodes: Node[] }>(`/fleets/${id}/nodes`), `/fleets/${id}/nodes`)
 
   /**
    * What you are looking at lives in the address bar.

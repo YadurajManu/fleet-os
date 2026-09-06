@@ -12,7 +12,7 @@ export default function Alerts() {
 
   const { data, error, loading } = usePoll(
     () => api<{ rules: AlertRule[] }>(`/fleets/${id}/alert-rules`),
-    [id],
+    `/fleets/${id}/alert-rules`,
     15000
   )
 

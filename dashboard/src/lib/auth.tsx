@@ -166,25 +166,33 @@ const cache = new Map<string, { at: number; value: unknown }>()
  */
 const MAX_AGE_MS = 60_000
 
-export function usePoll<T>(fn: () => Promise<T>, deps: unknown[], intervalMs = 4000) {
-  // The dependency list is the key, so it must identify the request completely.
-  // A key of only the page name would show one fleet's services under
-  // another's, which is worse than any reload.
-  const key = JSON.stringify(deps)
-  const remembered = cache.get(key)
-  const fresh = remembered && Date.now() - remembered.at < MAX_AGE_MS
+export function usePoll<T>(fn: () => Promise<T>, key: string | null, intervalMs = 4000) {
+  // `key` is the request's identity: it must be the URL being fetched, not a
+  // stand-in like the fleet id. Two panels on one page fetching different
+  // endpoints share a dependency like `[serviceId]` — keying the cache on that
+  // served one endpoint's response to the other, and a component expecting
+  // `{ deployments }` got `{ lines }` and crashed on `.deployments.length`.
+  // `null` means there is nothing to fetch yet (a closed panel, an id not
+  // known): the hook stays idle and reports neither loading nor data.
+  const remembered = key !== null ? cache.get(key) : undefined
+  const fresh = !!remembered && Date.now() - remembered.at < MAX_AGE_MS
 
   const [data, setData] = useState<T | null>(fresh ? (remembered!.value as T) : null)
   const [error, setError] = useState<Error | null>(null)
-  // Not loading when there is something to show. The request still goes out;
-  // it is simply no longer the only thing on screen while it does.
-  const [loading, setLoading] = useState(!fresh)
+  // Not loading when there is something to show, or when there is nothing to
+  // fetch. The request still goes out; it is simply no longer the only thing
+  // on screen while it does.
+  const [loading, setLoading] = useState(!fresh && key !== null)
   // Bumped by refetch(). Sitting in the dependency list means asking for fresh
   // data cancels the pending timer and ticks immediately, rather than adding a
   // second request racing the scheduled one.
   const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
+    if (key === null) {
+      setLoading(false)
+      return
+    }
     let alive = true
     let timer: number
 
@@ -200,7 +208,9 @@ export function usePoll<T>(fn: () => Promise<T>, deps: unknown[], intervalMs = 4
       } finally {
         if (alive) {
           setLoading(false)
-          timer = window.setTimeout(tick, intervalMs)
+          // intervalMs <= 0 means "fetch once, don't poll" — Logs passes 0
+          // when it is paused. Rescheduling on 0 would busy-loop fetches.
+          if (intervalMs > 0) timer = window.setTimeout(tick, intervalMs)
         }
       }
     }
@@ -211,7 +221,7 @@ export function usePoll<T>(fn: () => Promise<T>, deps: unknown[], intervalMs = 4
       window.clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce])
+  }, [key, nonce, intervalMs])
 
   return { data, error, loading, refetch: () => setNonce((n) => n + 1) }
 }

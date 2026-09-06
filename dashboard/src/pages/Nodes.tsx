@@ -29,7 +29,7 @@ export default function Nodes() {
   const id = fleet?.id
   const canManage = fleet?.role === 'owner' || fleet?.role === 'admin'
 
-  const { data, error, loading } = usePoll(() => api<{ nodes: Node[] }>(`/fleets/${id}/nodes`), [id])
+  const { data, error, loading } = usePoll(() => api<{ nodes: Node[] }>(`/fleets/${id}/nodes`), `/fleets/${id}/nodes`)
   const [pairing, setPairing] = useState<{ token: string; install_command: string; expires_at: string } | null>(null)
   const [activePlatformTab, setActivePlatformTab] = useState<PlatformTab>('unix')
   const [copiedCmd, setCopiedCmd] = useState(false)

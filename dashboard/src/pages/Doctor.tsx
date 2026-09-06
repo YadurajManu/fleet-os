@@ -41,11 +41,11 @@ function deploymentChecks(services: Service[]): Check[] {
 
 export default function Doctor() {
   const { fleet } = useAuth()
-  const data = usePoll(() => api<{ nodes: Node[] }>(`/fleets/${fleet?.id}/nodes`), [fleet?.id], 5000)
+  const data = usePoll(() => api<{ nodes: Node[] }>(`/fleets/${fleet?.id}/nodes`), `/fleets/${fleet?.id}/nodes`, 5000)
   // The CLI's doctor checks deployments and reachability; this one did not, so
   // the terminal told you more about your own fleet than the dashboard did.
-  const services = usePoll(() => api<{ services: Service[] }>(`/fleets/${fleet?.id}/services`), [fleet?.id], 8000)
-  const github = usePoll(() => api<{ configured: boolean; error?: string; installations?: unknown[] }>(`/fleets/${fleet?.id}/github/status`), [fleet?.id], 15000)
+  const services = usePoll(() => api<{ services: Service[] }>(`/fleets/${fleet?.id}/services`), `/fleets/${fleet?.id}/services`, 8000)
+  const github = usePoll(() => api<{ configured: boolean; error?: string; installations?: unknown[] }>(`/fleets/${fleet?.id}/github/status`), `/fleets/${fleet?.id}/github/status`, 15000)
   const nodes = data.data?.nodes ?? []
   const checks: Check[] = [github.data?.configured
     ? { tone: 'good', title: 'GitHub App', detail: `${github.data.installations?.length ?? 0} installation(s) available for deploys.` }

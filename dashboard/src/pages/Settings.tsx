@@ -76,18 +76,17 @@ function GitHubWorkspace({ fleet }: { fleet: NonNullable<ReturnType<typeof useAu
   const [busy, setBusy] = useState(false)
   const [importNote, setImportNote] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null)
   const [actionError, setActionError] = useState<unknown>(null)
-  const [revision, setRevision] = useState(0)
 
-  const status = usePoll(() => api<GitHubStatus>(`/fleets/${fleet.id}/github/status`), [fleet.id], 30_000)
+  const status = usePoll(() => api<GitHubStatus>(`/fleets/${fleet.id}/github/status`), `/fleets/${fleet.id}/github/status`, 30_000)
   const activeInstallation = installationId ?? status.data?.installations?.[0]?.id ?? null
   const catalog = usePoll(
-    () => activeInstallation ? api<{ repos: GitHubRepo[] }>(`/fleets/${fleet.id}/github/catalog?installation=${activeInstallation}`) : Promise.resolve({ repos: [] }),
-    [fleet.id, activeInstallation],
+    () => api<{ repos: GitHubRepo[] }>(`/fleets/${fleet.id}/github/catalog?installation=${activeInstallation}`),
+    activeInstallation ? `/fleets/${fleet.id}/github/catalog?installation=${activeInstallation}` : null,
     30_000
   )
   const connected = usePoll(
     () => api<{ repositories: ConnectedRepo[] }>(`/fleets/${fleet.id}/github/repositories`),
-    [fleet.id, revision],
+    `/fleets/${fleet.id}/github/repositories`,
     10_000
   )
 
@@ -118,7 +117,7 @@ function GitHubWorkspace({ fleet }: { fleet: NonNullable<ReturnType<typeof useAu
           ? { tone: 'ok', text: `${selected.fullName} is deploying at ${result.deploying.sha.slice(0, 7)}. Follow it on the Services page.` }
           : { tone: 'warn', text: `${selected.fullName} is connected, but nothing was deployed: ${result.notDeployed ?? 'no reason given'}.` }
       )
-      setRevision((value) => value + 1)
+      connected.refetch()
       setSelected(null)
     } catch (err) { setActionError(err) } finally { setBusy(false) }
   }
@@ -141,7 +140,7 @@ function GitHubWorkspace({ fleet }: { fleet: NonNullable<ReturnType<typeof useAu
     setBusy(true); setActionError(null)
     try {
       await api(`/fleets/${fleet.id}/github/repositories/${repository.id}`, { method: 'DELETE' })
-      setRevision((value) => value + 1)
+      connected.refetch()
     } catch (err) { setActionError(err) } finally { setBusy(false) }
   }
 
@@ -358,7 +357,7 @@ function GitHubWorkspace({ fleet }: { fleet: NonNullable<ReturnType<typeof useAu
                 <Button variant="danger" onClick={() => void disconnect(repo)} disabled={busy}>Disconnect</Button>
               </div>
             ))}
-            {!connected.loading && !(connected.data?.repositories.length) && <p className="px-4 py-6 text-center text-[12px] text-[var(--color-fg-dim)]">No repositories connected to this fleet.</p>}
+            {!connected.loading && !(connected.data?.repositories ?? []).length && <p className="px-4 py-6 text-center text-[12px] text-[var(--color-fg-dim)]">No repositories connected to this fleet.</p>}
           </div>
         </div>
 
@@ -610,8 +609,8 @@ export default function Settings() {
   const isAdmin = fleet?.role === 'owner' || fleet?.role === 'admin'
 
   const audit = usePoll(
-    () => (isAdmin ? api<{ entries: AuditEntry[] }>(`/fleets/${fleet?.id}/audit?limit=40`) : Promise.resolve({ entries: [] })),
-    [fleet?.id, isAdmin],
+    () => api<{ entries: AuditEntry[] }>(`/fleets/${fleet?.id}/audit?limit=40`),
+    isAdmin ? `/fleets/${fleet?.id}/audit?limit=40` : null,
     20000
   )
 
@@ -645,7 +644,7 @@ export default function Settings() {
                   </span>
                 </div>
               ))}
-              {!audit.data?.entries.length && (
+              {!(audit.data?.entries ?? []).length && (
                 <p className="px-5 py-8 text-center font-mono text-[11px] text-[var(--color-fg-dim)]">
                   no entries yet
                 </p>

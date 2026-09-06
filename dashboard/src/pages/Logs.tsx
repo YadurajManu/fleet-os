@@ -14,7 +14,7 @@ export default function Logs() {
 
   const services = usePoll(
     () => api<{ services: Service[] }>(`/fleets/${fleet?.id}/services`),
-    [fleet?.id]
+    `/fleets/${fleet?.id}/services`
   )
 
   useEffect(() => {
@@ -33,12 +33,10 @@ export default function Logs() {
 
   const logs = usePoll(
     () =>
-      selected
-        ? api<{ node: { name: string }; lines: string[]; diagnostic: string | null }>(
-            `/services/${selected}/logs`
-          )
-        : Promise.resolve(null),
-    [selected],
+      api<{ node: { name: string }; lines: string[]; diagnostic: string | null }>(
+        `/services/${selected}/logs`
+      ),
+    selected ? `/services/${selected}/logs` : null,
     isLive ? 2000 : 0
   )
 

@@ -1,8 +1,9 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { api, type Service } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { Logo, Dot } from './ui'
 import Palette from './Palette'
+import { ErrorBoundary } from './ErrorBoundary'
 
 const NAV = [
   ['Overview', '/'],
@@ -18,13 +19,14 @@ const NAV = [
 
 export default function Shell() {
   const { email, fleets, fleet, selectFleet, signOut } = useAuth()
+  const { pathname } = useLocation()
 
   // A count in the nav, so a service going down reaches you on whatever page
   // you happen to be on. Four were down for hours and the only way to find
   // out was to open Services and look.
   const services = usePoll(
-    () => (fleet?.id ? api<{ services: Service[] }>(`/fleets/${fleet.id}/services`) : Promise.resolve({ services: [] })),
-    [fleet?.id],
+    () => api<{ services: Service[] }>(`/fleets/${fleet!.id}/services`),
+    fleet?.id ? `/fleets/${fleet.id}/services` : null,
     10_000
   )
   const brokenCount = (services.data?.services ?? []).filter(
@@ -129,7 +131,9 @@ export default function Shell() {
       <Palette />
 
       <main className="mx-auto max-w-[1400px] px-6 py-8">
-        <Outlet />
+        <ErrorBoundary resetKey={pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   )

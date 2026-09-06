@@ -47,7 +47,7 @@ export default function SinceYouLeft({ fleetId }: { fleetId: string }) {
 
   const { data } = usePoll(
     () => api<{ events: TimelineEvent[] }>(`/fleets/${fleetId}/events?limit=100`),
-    [fleetId],
+    `/fleets/${fleetId}/events?limit=100`,
     10_000
   )
 

@@ -37,14 +37,14 @@ export default function ServiceDetail() {
   const [actionError, setActionError] = useState<unknown>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const services = usePoll(() => api<{ services: Service[] }>(`/fleets/${fleet?.id}/services`), [fleet?.id])
+  const services = usePoll(() => api<{ services: Service[] }>(`/fleets/${fleet?.id}/services`), `/fleets/${fleet?.id}/services`)
   const deployments = usePoll(
     () => api<{ deployments: Deployment[] }>(`/services/${serviceId}/deployments`),
-    [serviceId],
+    `/services/${serviceId}/deployments`,
     8000
   )
-  const preview = usePoll(() => api<Preview>(`/services/${serviceId}/placement-preview`), [serviceId], 10000)
-  const logs = usePoll(() => api<{ node: { name: string }; lines: string[]; diagnostic: string | null }>(`/services/${serviceId}/logs`), [serviceId], 2000)
+  const preview = usePoll(() => api<Preview>(`/services/${serviceId}/placement-preview`), `/services/${serviceId}/placement-preview`, 10000)
+  const logs = usePoll(() => api<{ node: { name: string }; lines: string[]; diagnostic: string | null }>(`/services/${serviceId}/logs`), `/services/${serviceId}/logs`, 2000)
 
   const service = services.data?.services.find((s) => s.id === serviceId)
 
@@ -411,7 +411,7 @@ export default function ServiceDetail() {
               )}
             </div>
           ))}
-          {!deployments.data?.deployments.length && (
+          {!(deployments.data?.deployments ?? []).length && (
             <p className="px-5 py-8 text-center font-mono text-[11px] text-[var(--color-fg-dim)]">
               never deployed
             </p>

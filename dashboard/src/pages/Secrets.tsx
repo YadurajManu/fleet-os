@@ -38,12 +38,12 @@ export default function Secrets() {
   const id = fleet?.id
   const { data, error, loading, refetch } = usePoll(
     () => api<{ secrets: Secret[] }>(`/fleets/${id}/secrets`),
-    [id]
+    `/fleets/${id}/secrets`
   )
   // The secrets list names the service; the delete route takes its id. Without
   // this the scoped deletes would 404 while the fleet-wide ones worked, which
   // is the kind of half-broken that takes a while to notice.
-  const services = usePoll(() => api<{ services: Array<{ id: string; name: string }> }>(`/fleets/${id}/services`), [id])
+  const services = usePoll(() => api<{ services: Array<{ id: string; name: string }> }>(`/fleets/${id}/services`), `/fleets/${id}/services`)
   const idOf = (name: string) => services.data?.services.find((x) => x.name === name)?.id
 
   const [removing, setRemoving] = useState<Secret | null>(null)
