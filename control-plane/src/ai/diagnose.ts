@@ -1,5 +1,6 @@
 import { chat } from './provider.js'
 import { callTool, TOOLS, type Supplied, type ToolResult } from './tools.js'
+import { firstObject } from './json.js'
 import { applicability } from './edits.js'
 import type { AppContext } from '../api/context.js'
 
@@ -154,49 +155,6 @@ Include a fix only when the evidence names one exact manifest change that would 
 Answer as soon as you can support an answer. If the evidence does not settle it, say what you established and what you would look at next: an honest partial answer is useful and a confident wrong one is not.
 
 Write nothing outside the JSON.`
-
-/**
- * The first complete JSON object in a reply, by matching braces.
- *
- * Taking everything between the first `{` and the last `}` looks equivalent
- * and is not: a reply that is one object followed by a sentence, or by a
- * second object, slices into something that parses as neither. That ended a
- * real investigation one step in — "Unexpected non-whitespace character after
- * JSON at position 70" — with the usable object sitting in the first seventy
- * characters.
- *
- * Braces inside strings do not count, and neither does an escaped quote, or
- * a path in a log line closes the object early.
- */
-function firstObject(raw: string): string | null {
-  const start = raw.indexOf('{')
-  if (start < 0) return null
-
-  let depth = 0
-  let inString = false
-  let escaped = false
-
-  for (let i = start; i < raw.length; i++) {
-    const ch = raw[i]!
-    if (escaped) {
-      escaped = false
-      continue
-    }
-    if (ch === '\\' && inString) {
-      escaped = true
-      continue
-    }
-    if (ch === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    if (ch === '{') depth++
-    else if (ch === '}' && --depth === 0) return raw.slice(start, i + 1)
-  }
-
-  return null
-}
 
 /**
  * The shape of one step, for providers that can constrain their output.

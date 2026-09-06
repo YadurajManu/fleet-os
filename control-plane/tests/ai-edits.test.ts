@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { applyEdits } from '../src/ai/edits.js'
+import { applyEdits, parseEdits } from '../src/ai/edits.js'
 
 const DRAFT = `fleet: homelab
 
@@ -140,3 +140,34 @@ databases:
   })
 })
 
+
+describe('reading a reply that is not only JSON', () => {
+  // The failure this exists for, seen on a free Nemotron reviewing a
+  // four-service draft: every service came back "Unexpected non-whitespace
+  // character after JSON at position 36", the review kept the draft, and the
+  // whole usable answer was sitting in the first 36 characters.
+  test('takes the first object when the model returns two', () => {
+    const reply = '{"edits": []}\n{"questions": []}'
+    assert.deepEqual(parseEdits(reply).edits, [])
+  })
+
+  test('takes the object when prose follows it', () => {
+    const reply =
+      '{"edits": [{"service": "api", "field": "container_port", "value": 8080, "why": "EXPOSE 8080"}]}\n\n' +
+      'I changed the port because the Dockerfile says so.'
+    const { edits } = parseEdits(reply)
+    assert.equal(edits.length, 1)
+    assert.equal(edits[0]!.value, 8080)
+  })
+
+  test('a brace inside a string does not end the object early', () => {
+    const reply = '{"edits": [{"service": "api", "field": "command", "value": "sh -c \'echo {}\'", "why": "the Dockerfile CMD"}]}'
+    const { edits } = parseEdits(reply)
+    assert.equal(edits.length, 1)
+    assert.equal(edits[0]!.value, "sh -c 'echo {}'")
+  })
+
+  test('still refuses a reply with no object at all', () => {
+    assert.throws(() => parseEdits('I could not review this service.'), /did not return JSON/)
+  })
+})

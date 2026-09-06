@@ -1,4 +1,5 @@
 import { chat } from './provider.js'
+import { firstObject } from './json.js'
 import { parseManifest, ManifestError } from '../manifest/parse.js'
 import { applyEdits, parseEdits, type Edit } from './edits.js'
 import { nodes, services } from '../db/schema.js'
@@ -141,15 +142,101 @@ Rules:
 
 Write nothing outside the JSON.`
 
+/**
+ * The questions block, shared by both reviews.
+ *
+ * Constrained so an option cannot arrive as a bare string. A model that writes
+ * `"options": ["web", "api"]` has produced something the dashboard renders as
+ * two empty buttons, and the filter in `parseReply` drops the whole question
+ * rather than guessing at a label.
+ */
+const QUESTIONS = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      ask: { type: 'string' },
+      why: { type: 'string' },
+      options: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { value: { type: 'string' }, label: { type: 'string' } },
+          required: ['value', 'label'],
+        },
+      },
+    },
+    required: ['id', 'ask', 'why', 'options'],
+  },
+}
+
+type Schema = { name: string; schema: Record<string, unknown> }
+
+/**
+ * What a per-service review may return.
+ *
+ * The prompt has ended with "Write nothing outside the JSON" since this was
+ * written, and a free Nemotron answered with two objects in a row anyway —
+ * every service in the draft failed to parse, and the review kept the draft
+ * without a single edit. `provider.ts` records the same lesson from the
+ * investigation loop: a prompt asks, a schema decides. This is the review
+ * catching up.
+ *
+ * `value` is deliberately absent, as it is in the loop's schema: it is any
+ * scalar or null, which not every validator expresses, and `parseEdits` checks
+ * the type regardless. Nothing here sets `additionalProperties: false`, so
+ * leaving it out permits it rather than forbidding it.
+ */
+const EDITS_SCHEMA: Schema = {
+  name: 'service_review',
+  schema: {
+    type: 'object',
+    properties: {
+      edits: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            service: { type: 'string' },
+            field: { type: 'string' },
+            why: { type: 'string' },
+          },
+          required: ['service', 'field', 'why'],
+        },
+      },
+      questions: QUESTIONS,
+    },
+    required: ['edits'],
+  },
+}
+
+/** What a whole-manifest review may return. */
+const REVIEW_SCHEMA: Schema = {
+  name: 'manifest_review',
+  schema: {
+    type: 'object',
+    properties: {
+      manifest: { type: 'string' },
+      notes: { type: 'array', items: { type: 'string' } },
+      questions: QUESTIONS,
+    },
+    required: ['manifest'],
+  },
+}
+
 /** Pull the object out of a reply that may be fenced or padded with prose. */
 function parseReply(content: string): { manifest: string; notes: string[]; questions: Question[] } {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/)
   const raw = (fenced?.[1] ?? content).trim()
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new Error('the model did not return JSON')
+  // Brace-matched, not first-`{`-to-last-`}`. A free model answered this review
+  // with two objects in a row, and the naive span swallowed both into something
+  // that parsed as neither — "Unexpected non-whitespace character after JSON at
+  // position 36", with the whole usable answer sitting in the first 36.
+  const object = firstObject(raw)
+  if (!object) throw new Error('the model did not return JSON')
 
-  const parsed = JSON.parse(raw.slice(start, end + 1)) as {
+  const parsed = JSON.parse(object) as {
     manifest?: unknown
     notes?: unknown
     questions?: unknown
@@ -322,7 +409,7 @@ export async function assistManifest(
                 .join('\n\n'),
             },
           ],
-          { maxTokens: 1200 },
+          { maxTokens: 1200, schema: EDITS_SCHEMA },
           fetchImpl
         )
         const out = parseEdits(content)
@@ -430,7 +517,7 @@ export async function assistManifest(
       ],
       // Larger than the explainer's: the answer contains a whole manifest, and
       // a reasoning model spends part of this budget before writing any of it.
-      { maxTokens: 3000 },
+      { maxTokens: 3000, schema: REVIEW_SCHEMA },
       fetchImpl
     )
 

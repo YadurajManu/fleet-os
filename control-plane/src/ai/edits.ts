@@ -1,4 +1,5 @@
 import { parseDocument, isMap } from 'yaml'
+import { firstObject } from './json.js'
 
 /**
  * A review expressed as edits rather than as a rewritten manifest.
@@ -228,11 +229,15 @@ export function applyEdits(
 export function parseEdits(content: string): { edits: Edit[]; questions: unknown[] } {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/)
   const raw = (fenced?.[1] ?? content).trim()
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new Error('the model did not return JSON')
+  // Brace-matched, not first-`{`-to-last-`}`. Reviewing a four-service draft on
+  // a free Nemotron, every service failed with "Unexpected non-whitespace
+  // character after JSON at position 36": the reply was two objects in a row
+  // and the naive span joined them into something that parsed as neither, with
+  // the whole usable answer sitting in the first 36 characters.
+  const object = firstObject(raw)
+  if (!object) throw new Error('the model did not return JSON')
 
-  const parsed = JSON.parse(raw.slice(start, end + 1)) as { edits?: unknown; questions?: unknown }
+  const parsed = JSON.parse(object) as { edits?: unknown; questions?: unknown }
 
   // A malformed edit is dropped rather than failing the pass: the others are
   // still good, and one bad entry should not cost a whole service's review.
