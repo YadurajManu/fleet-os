@@ -170,13 +170,17 @@ export default function NodeTelemetry({ node, fleetId }: { node: Node; fleetId?:
       </div>
 
       {projection && (
-        <p
-          className="px-4 pb-3 font-mono text-[10.5px]"
-          style={{ color: projection.days < 14 ? 'var(--color-warn)' : 'var(--color-fg-dim)' }}
-        >
-          at this rate, disk is full in{' '}
-          {projection.days < 1 ? 'under a day' : `${Math.round(projection.days)} days`}
-        </p>
+        <div className="mx-3.5 mb-3.5 flex items-center gap-2.5 rounded-[4px] border border-[color-mix(in_oklab,var(--color-warn)_24%,transparent)] bg-[color-mix(in_oklab,var(--color-warn)_8%,transparent)] px-3 py-2">
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_oklab,var(--color-warn)_25%,transparent)] text-[10px] text-[var(--color-warn)]">
+            !
+          </span>
+          <div className="flex-1 font-mono text-[11px] leading-snug text-[var(--color-warn)]">
+            <span className="font-semibold tracking-wide">Disk Pressure:</span> capacity reached in{' '}
+            <span className="font-bold underline decoration-[var(--color-warn)] underline-offset-2">
+              {projection.days < 1 ? 'under a day' : `${Math.round(projection.days)} days`}
+            </span>
+          </div>
+        </div>
       )}
 
       {beats.length > 0 && (
