@@ -60,6 +60,8 @@ export default function TimeSeriesChart({
   onZoom,
   onExpand,
   expandLabel = 'Expand this chart',
+  isLive = false,
+  timeRange,
 }: {
   series: ChartSeries[]
   height?: number
@@ -76,6 +78,10 @@ export default function TimeSeriesChart({
   onZoom?: (from: number, to: number) => void
   onExpand?: () => void
   expandLabel?: string
+  /** Whether the chart is currently streaming in real-time mode */
+  isLive?: boolean
+  /** Explicit horizontal time horizon [from, to] in ms */
+  timeRange?: { from: number; to: number }
 }) {
   const id = useId()
   const svgRef = useRef<SVGSVGElement>(null)
@@ -92,11 +98,11 @@ export default function TimeSeriesChart({
   const model = useMemo(() => {
     const pts = series.flatMap((s) => s.avg)
     const withValue = pts.filter((p) => p.v != null)
-    if (withValue.length < 2) return null
+    if (withValue.length < 2 && !timeRange) return null
 
     const ts = pts.map((p) => p.t)
-    const t0 = Math.min(...ts)
-    const t1 = Math.max(...ts)
+    const t0 = timeRange ? timeRange.from : ts.length ? Math.min(...ts) : Date.now() - 300_000
+    const t1 = timeRange ? timeRange.to : ts.length ? Math.max(...ts) : Date.now()
 
     const all = series.flatMap((s) => [
       ...s.avg.map((p) => p.v),
@@ -105,7 +111,7 @@ export default function TimeSeriesChart({
     const peak = ceiling ?? Math.max(...all.filter((v): v is number => v != null), 1)
 
     return { t0, t1: t1 === t0 ? t0 + 1 : t1, peak: peak || 1 }
-  }, [series, ceiling])
+  }, [series, ceiling, timeRange])
 
   if (!model) {
     return (
@@ -232,6 +238,9 @@ export default function TimeSeriesChart({
         onMouseUp={endDrag}
       >
         <defs>
+          <clipPath id={`clip-${id}`}>
+            <rect x={PAD.l} y={PAD.t} width={innerW} height={innerH} />
+          </clipPath>
           {series.map((s, i) => (
             <linearGradient key={i} id={`g-${id}-${i}`} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={s.colour} stopOpacity="0.26" />
@@ -274,16 +283,56 @@ export default function TimeSeriesChart({
           )
         })}
 
-        {series.map((s, i) => {
-          const b = band(s)
-          return (
-            <g key={i}>
-              {b && <path d={b} fill={s.colour} fillOpacity="0.15" />}
-              <path d={line(s.avg)} fill="none" stroke={s.colour} strokeWidth="1.8"
-                    strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-            </g>
-          )
-        })}
+        <g clipPath={`url(#clip-${id})`}>
+          {series.map((s, i) => {
+            const b = band(s)
+            return (
+              <g key={i}>
+                {b && <path d={b} fill={s.colour} fillOpacity="0.15" />}
+                <path
+                  d={line(s.avg)}
+                  fill="none"
+                  stroke={s.colour}
+                  strokeWidth="1.8"
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              </g>
+            )
+          })}
+
+          {/* Leading edge live pulse dots on each active curve */}
+          {isLive &&
+            series.map((s, idx) => {
+              const latest = [...s.avg].reverse().find((p) => p.v != null)
+              if (!latest || latest.v == null) return null
+              const cx = x(latest.t)
+              const cy = y(latest.v)
+              if (cx < PAD.l || cx > W - PAD.r) return null
+              return (
+                <g key={`live-head-${s.label}-${idx}`} className="pointer-events-none">
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={8}
+                    fill={s.colour}
+                    opacity={0.35}
+                    className="animate-ping origin-center"
+                  />
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={3.5}
+                    fill="#ffffff"
+                    stroke={s.colour}
+                    strokeWidth={2}
+                    style={{ filter: `drop-shadow(0 0 6px ${s.colour})` }}
+                  />
+                </g>
+              )
+            })}
+        </g>
 
         {/* the window being selected, drawn with a glowing border and range badge */}
         {dragging && (

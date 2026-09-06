@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api, type Node } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
@@ -27,6 +27,9 @@ const RANGES = [
   { key: '7d', label: '7d', minutes: 10080 },
   { key: '30d', label: '30d', minutes: 43200 },
 ] as const
+
+const LIVE_POLL_MS = 2_000
+const LIVE_WINDOW_MINUTES = 5
 
 type Peaks = {
   cpuMax: number | null; cpuAvg: number | null
@@ -219,6 +222,13 @@ export default function NodeDetail() {
   const [zoom, setZoom] = useState<{ from: number; to: number } | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [showTerminal, setShowTerminal] = useState(false)
+
+  /* ─── Live Mode State ─── */
+  const [isLive, setIsLive] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
+  /** Whether the user's mouse is currently hovering any chart — auto-pauses live streaming. */
+  const isChartHoveredRef = useRef(false)
+  const liveTickRef = useRef(0)
   const [copiedId, setCopiedId] = useState(false)
 
   // Reset zoom on range change
@@ -231,11 +241,26 @@ export default function NodeDetail() {
   )
   const node = nodes.data?.nodes.find((n) => n.id === nodeId)
 
+  // In live mode: poll every 2s for the short window; normal mode: 60s for the full range
+  const liveActive = isLive && !isPaused
+  const liveSinceMinutes = LIVE_WINDOW_MINUTES
+  const histSince = liveActive ? liveSinceMinutes : range.minutes
+  const histInterval = liveActive ? LIVE_POLL_MS : 60_000
+
   const hist = usePoll(
-    () => api<SamplesResponse>(`/fleets/${fleet!.id}/nodes/${nodeId}/samples?since=${range.minutes}`),
-    fleet?.id && nodeId ? `/fleets/${fleet.id}/nodes/${nodeId}/samples?since=${range.minutes}` : null,
-    60_000
+    () => api<SamplesResponse>(`/fleets/${fleet!.id}/nodes/${nodeId}/samples?since=${histSince}`),
+    fleet?.id && nodeId ? `/fleets/${fleet.id}/nodes/${nodeId}/samples?since=${histSince}` : null,
+    histInterval
   )
+
+  // Sliding time window for live mode: a rolling 5-minute window pinned to "now"
+  const liveTimeRange = useMemo(() => {
+    if (!liveActive) return undefined
+    const now = Date.now()
+    return { from: now - liveSinceMinutes * 60_000, to: now }
+    // Re-derive on every tick of incoming data
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveActive, liveSinceMinutes, hist.data])
 
   const evts = usePoll(
     () => api<{ events: NodeEvent[] }>(`/fleets/${fleet!.id}/nodes/${nodeId}/events?since=${range.minutes}`),
@@ -491,13 +516,28 @@ export default function NodeDetail() {
     )
   }
 
-  const staleWarning = !zoom && peaks && peaks.coverage != null && peaks.coverage < 0.5 && peaks.samples > 0
+  const staleWarning = !zoom && !isLive && peaks && peaks.coverage != null && peaks.coverage < 0.5 && peaks.samples > 0
 
   const shared = {
     hoverT,
-    onHoverT: setHoverT,
-    onZoom: (from: number, to: number) => setZoom({ from, to }),
+    onHoverT: (t: number | null) => {
+      setHoverT(t)
+      // Auto-pause on hover: when chart is hovered, pause live streaming
+      if (isLive && t != null && !isPaused) {
+        isChartHoveredRef.current = true
+      }
+      if (t == null) {
+        isChartHoveredRef.current = false
+      }
+    },
+    onZoom: (from: number, to: number) => {
+      // Zooming exits live mode — you can't zoom into a moving window
+      if (isLive) setIsLive(false)
+      setZoom({ from, to })
+    },
     markers,
+    isLive: liveActive,
+    timeRange: liveTimeRange,
   }
 
   const windowLabel = zoom
@@ -635,16 +675,19 @@ export default function NodeDetail() {
         </div>
       </div>
 
-      {/* ─── Range Selector ─── */}
+      {/* ─── Range Selector & Live Mode Controls ─── */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="mono-label text-[9px] text-[var(--color-fg-dim)]">RANGE</span>
         {RANGES.map((r) => (
           <button
             key={r.key}
-            onClick={() => setParams({ range: r.key }, { replace: true })}
-            aria-pressed={r.key === range.key}
+            onClick={() => {
+              if (isLive) setIsLive(false)
+              setParams({ range: r.key }, { replace: true })
+            }}
+            aria-pressed={r.key === range.key && !isLive}
             className={`px-2.5 py-1 font-mono text-[11px] rounded transition-colors duration-200 ${
-              r.key === range.key
+              r.key === range.key && !isLive
                 ? 'bg-[var(--color-signal)] text-[#04140c] font-semibold'
                 : 'border border-[var(--color-line-2)] text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]'
             }`}
@@ -652,6 +695,47 @@ export default function NodeDetail() {
             {r.label}
           </button>
         ))}
+
+        {/* 🔴 LIVE Mode Toggle */}
+        <button
+          onClick={() => {
+            const next = !isLive
+            setIsLive(next)
+            if (next) {
+              setZoom(null)
+              setIsPaused(false)
+            }
+          }}
+          className={`flex items-center gap-1.5 px-3 py-1 font-mono text-[11px] font-bold rounded transition-all duration-300 ${
+            isLive
+              ? 'bg-red-500/20 text-red-400 border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.25)]'
+              : 'border border-[var(--color-line-2)] text-[var(--color-fg-dim)] hover:text-red-400 hover:border-red-500/40'
+          }`}
+          title={isLive ? 'Exit live streaming mode' : 'Enter real-time streaming mode (2s refresh)'}
+        >
+          <span className={`w-2 h-2 rounded-full ${
+            isLive
+              ? (isPaused ? 'bg-amber-400' : 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]')
+              : 'bg-white/30'
+          }`} />
+          {isLive ? (isPaused ? '⏸ PAUSED' : '● LIVE') : '● LIVE'}
+        </button>
+
+        {/* Pause / Resume when live */}
+        {isLive && (
+          <button
+            onClick={() => setIsPaused(!isPaused)}
+            className={`px-2.5 py-1 font-mono text-[11px] rounded border transition-all duration-200 ${
+              isPaused
+                ? 'border-[#3fe08b]/40 text-[#3fe08b] hover:bg-[#3fe08b]/10'
+                : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
+            }`}
+            title={isPaused ? 'Resume live streaming' : 'Pause live streaming'}
+          >
+            {isPaused ? '▶ Resume' : '⏸ Pause'}
+          </button>
+        )}
+
         {zoom && (
           <button
             onClick={() => setZoom(null)}
@@ -660,12 +744,26 @@ export default function NodeDetail() {
             ✕ zoomed {windowLabel} · back to {range.label}
           </button>
         )}
-        {hist.data && (
-          <span className="ml-auto font-mono text-[10px] text-[var(--color-fg-dim)]">
-            {hist.data.grain} grain · {samples.length} points
-            {charts.length > 0 && <span className="ml-2 opacity-70">drag to zoom</span>}
-          </span>
-        )}
+
+        {/* Status indicator */}
+        <span className="ml-auto font-mono text-[10px] text-[var(--color-fg-dim)] flex items-center gap-2">
+          {isLive && (
+            <span className={`flex items-center gap-1 ${
+              isPaused ? 'text-amber-400' : 'text-red-400'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                isPaused ? 'bg-amber-400' : 'bg-red-500 animate-pulse'
+              }`} />
+              {isPaused ? 'paused' : `streaming @ ${LIVE_POLL_MS / 1000}s`}
+            </span>
+          )}
+          {hist.data && (
+            <span>
+              {hist.data.grain} grain · {samples.length} pts
+              {!isLive && charts.length > 0 && <span className="ml-2 opacity-70">drag to zoom</span>}
+            </span>
+          )}
+        </span>
       </div>
 
       {/* ─── Change Events Timeline ─── */}
@@ -824,6 +922,8 @@ export default function NodeDetail() {
                 emptyHint={c.emptyHint}
                 onExpand={() => setExpanded(c.key)}
                 expandLabel={`Expand ${c.title}`}
+                isLive={liveActive}
+                timeRange={liveTimeRange}
               />
             </div>
           </Panel>
