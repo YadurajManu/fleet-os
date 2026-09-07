@@ -1,4 +1,5 @@
 import { and, eq, isNull, gt, inArray, ne, or } from 'drizzle-orm'
+import { recordDeployStage } from './deploy-progress.js'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
 import { nodes, fleets, pairingTokens, deployments, services } from '../db/schema.js'
@@ -50,6 +51,30 @@ const heartbeat = z.object({
   mesh_connected: z.boolean().default(false),
   agent_version: z.string().max(32).optional(),
   advertise_addr: z.string().max(255).optional(),
+  /*
+   * Where each in-flight deploy has got to on this node.
+   *
+   * The agent runs pull -> create -> start -> wait for health, and every one of
+   * those was reported to the operator as the single line "waiting for the
+   * container". A four-hundred-second pull and a failing health check looked
+   * identical, so nobody could tell a slow uplink from a broken image.
+   */
+  deploys: z
+    .array(
+      z.object({
+        deployment_id: z.string().max(64),
+        service: z.string().max(128),
+        stage: z.enum(['pulling', 'creating', 'starting', 'waiting_health']),
+        layers: z.number().int().nonnegative().optional(),
+        done: z.number().int().nonnegative().optional(),
+        cached: z.number().int().nonnegative().optional(),
+        current: z.number().nonnegative().optional(),
+        total: z.number().nonnegative().optional(),
+        pull_ms: z.number().int().nonnegative().optional(),
+      })
+    )
+    .max(50)
+    .default([]),
   containers: z
     .array(
       z.object({
@@ -479,6 +504,11 @@ export async function agentRoutes(app: FastifyInstance) {
     // through Redis so a container restarting between two beats does not fire
     // an alert on every heartbeat.
     if (hb.containers.length) {
+      // Straight through to the progress line the CLI polls. Not persisted:
+      // this is where a deploy is *now*, and the durable record is the
+      // deployment row's status.
+      for (const stage of hb.deploys) recordDeployStage(app.ctx, stage)
+
       const drifted = await detectDrift(app.ctx, nodeId, fleetId, hb.containers, {
         onEvent: async (e) => {
           const key = `drift:${nodeId}:${e.subject}`

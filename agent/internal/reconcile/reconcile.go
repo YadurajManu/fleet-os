@@ -33,6 +33,10 @@ type Engine struct {
 	// out. Optional, like Health: nil simply reports no candidates.
 	Discover *health.Discoverer
 
+	// What each in-flight deploy is doing, drained by the heartbeat.
+	stagesMu sync.Mutex
+	stages   map[string]client.DeployStage
+
 	// Last known memory per container, and when it was taken.
 	//
 	// Sampled on its own cadence rather than per heartbeat. Docker's stats
@@ -323,12 +327,26 @@ func (e *Engine) start(ctx context.Context, svc client.DesiredService, registryA
 	pullCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
+	started := time.Now()
+	e.stage(svc, client.DeployStage{Stage: "pulling"})
+
 	// The credential is passed through, never logged. A registry the fleet
 	// reaches from outside the LAN requires one, and an empty string is the
 	// correct value for a local registry that does not.
-	if err := e.Docker.Pull(pullCtx, svc.Image, registryAuth); err != nil {
+	err := e.Docker.Pull(pullCtx, svc.Image, registryAuth, func(p docker.PullProgress) {
+		e.stage(svc, client.DeployStage{
+			Stage:   "pulling",
+			Layers:  p.Layers,
+			Done:    p.Done,
+			Cached:  p.Cached,
+			Current: p.Current,
+			Total:   p.Total,
+		})
+	})
+	if err != nil {
 		return fmt.Errorf("pull: %w", err)
 	}
+	pulledMs := int(time.Since(started).Milliseconds())
 
 	containerPort := svc.ContainerPort
 	if containerPort == 0 {
@@ -383,13 +401,58 @@ func (e *Engine) start(ctx context.Context, svc client.DesiredService, registryA
 		}
 	}
 
+	e.stage(svc, client.DeployStage{Stage: "creating", PullMs: pulledMs})
 	if _, err := e.Docker.Create(ctx, spec); err != nil {
 		return fmt.Errorf("create: %w", err)
 	}
+	e.stage(svc, client.DeployStage{Stage: "starting", PullMs: pulledMs})
 	if err := e.Docker.Start(ctx, docker.ContainerName(svc.Name, svc.DeploymentID)); err != nil {
 		return fmt.Errorf("start: %w", err)
 	}
+	// Started is not running: a service with a health check is not up until it
+	// passes one, and that wait was the other half of the opaque span.
+	e.stage(svc, client.DeployStage{Stage: "waiting_health", PullMs: pulledMs})
 	return nil
+}
+
+/*
+ * Where a deploy has got to on this node.
+ *
+ * Held on the engine and drained by the heartbeat rather than posted on its
+ * own: a pull emits progress continuously and a request per update would be a
+ * write amplifier against the control plane, for a line that is only read
+ * while somebody is watching.
+ */
+func (e *Engine) stage(svc client.DesiredService, s client.DeployStage) {
+	if svc.DeploymentID == "" {
+		return
+	}
+	s.DeploymentID = svc.DeploymentID
+	s.Service = svc.Name
+	e.stagesMu.Lock()
+	if e.stages == nil {
+		e.stages = map[string]client.DeployStage{}
+	}
+	e.stages[svc.DeploymentID] = s
+	e.stagesMu.Unlock()
+}
+
+// Stages drains what the deploys on this node are doing, for one heartbeat.
+//
+// Terminal stages are removed as they are read: the control plane only needs
+// to be told once that a container started, and leaving them would grow the
+// map for the life of the process.
+func (e *Engine) Stages() []client.DeployStage {
+	e.stagesMu.Lock()
+	defer e.stagesMu.Unlock()
+	out := make([]client.DeployStage, 0, len(e.stages))
+	for id, s := range e.stages {
+		out = append(out, s)
+		if s.Stage == "waiting_health" {
+			delete(e.stages, id)
+		}
+	}
+	return out
 }
 
 func isUp(state string) bool {

@@ -82,6 +82,26 @@ type HealthCandidate struct {
 	Bytes  int `json:"bytes"`
 }
 
+// DeployStage is one deploy's position in the sequence the agent runs:
+// pulling -> creating -> starting -> waiting_health.
+//
+// The whole point is that "waiting for the container" was one span covering
+// all four, so a slow pull and a failing health check looked identical.
+type DeployStage struct {
+	DeploymentID string `json:"deployment_id"`
+	Service      string `json:"service"`
+	Stage        string `json:"stage"`
+	// Pull progress, aggregated across layers. Zero outside "pulling".
+	Layers  int   `json:"layers,omitempty"`
+	Done    int   `json:"done,omitempty"`
+	Cached  int   `json:"cached,omitempty"`
+	Current int64 `json:"current,omitempty"`
+	Total   int64 `json:"total,omitempty"`
+	// How long the pull took, carried once it is over so the later stages can
+	// still report what the slow part was.
+	PullMs int `json:"pull_ms,omitempty"`
+}
+
 type Heartbeat struct {
 	CPUPct     float64 `json:"cpu_pct"`
 	RAMUsedMb  int     `json:"ram_used_mb"`
@@ -103,6 +123,8 @@ type Heartbeat struct {
 	AgentVersion  string      `json:"agent_version,omitempty"`
 	AdvertiseAddr string      `json:"advertise_addr,omitempty"`
 	Containers    []Container `json:"containers"`
+	// What in-flight deploys are doing. Empty on an idle node.
+	Deploys []DeployStage `json:"deploys,omitempty"`
 	Runtime       Runtime     `json:"runtime"`
 	Logs          []LogTail   `json:"logs"`
 }

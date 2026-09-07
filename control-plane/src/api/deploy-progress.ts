@@ -35,7 +35,7 @@ export type DeployPhase = 'queued' | 'building' | 'pushing' | 'scheduling' | 'de
 const ORDER: DeployPhase[] = ['queued', 'building', 'pushing', 'scheduling', 'deploying']
 
 /** Phases during which the volatile Redis line is meaningful. */
-const BUILD_PHASES = new Set<string>(['queued', 'building', 'pushing'])
+const BUILD_PHASES = new Set<string>(['queued', 'building', 'pushing', 'deploying'])
 
 const lineKey = (deploymentId: string) => `deploy:progress:${deploymentId}`
 
@@ -167,6 +167,67 @@ export function phaseWriter(ctx: AppContext, deploymentId: string): PhaseWriter 
     },
   }
 }
+
+/**
+ * What the agent says a deploy is doing, into the line the CLI already polls.
+ *
+ * Deliberately the same Redis key as the build progress rather than a second
+ * channel. From the operator's side this is one continuous sequence — build,
+ * push, pull, start, health — and splitting it across two stores would mean two
+ * readers, two TTLs and two ways for the line to go stale.
+ *
+ * Fire-and-forget, like the build line: this is called from the heartbeat
+ * handler, and a Redis blip must not fail the heartbeat that carries a node's
+ * liveness.
+ */
+export function recordDeployStage(
+  ctx: AppContext,
+  stage: {
+    deployment_id: string
+    service: string
+    stage: string
+    layers?: number
+    done?: number
+    cached?: number
+    current?: number
+    total?: number
+    pull_ms?: number
+  }
+): void {
+  const detail = describeStage(stage)
+  void ctx.redis
+    .set(
+      lineKey(stage.deployment_id),
+      JSON.stringify({ phase: stage.stage, detail, ...stage, at: new Date().toISOString() }),
+      'EX',
+      LINE_TTL_SEC
+    )
+    .catch(() => {})
+}
+
+/** One line a person can read, from the numbers Docker gives. */
+function describeStage(s: {
+  stage: string
+  layers?: number
+  done?: number
+  cached?: number
+  current?: number
+  total?: number
+}): string {
+  if (s.stage !== 'pulling') {
+    return { creating: 'creating the container', starting: 'starting the container', waiting_health: 'waiting for the health check' }[s.stage] ?? s.stage
+  }
+  // Every layer already on the node: nothing is being downloaded, and saying
+  // "pulling" for a cache hit is how a two-second deploy looks stuck.
+  if (s.layers && s.cached === s.layers) return `image already on the node · ${s.layers} layers cached`
+  const parts = [`pulling ${s.done ?? 0}/${s.layers ?? 0} layers`]
+  if (s.total) parts.push(`${mb(s.current ?? 0)} / ${mb(s.total)}`)
+  if (s.cached) parts.push(`${s.cached} cached`)
+  return parts.join(' · ')
+}
+
+const mb = (bytes: number): string =>
+  bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.round(bytes / 1024 / 1024)} MB`
 
 /** What the CLI polls for while it draws the ladder. */
 export type DeployProgress = {

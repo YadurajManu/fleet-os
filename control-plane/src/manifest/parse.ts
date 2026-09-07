@@ -390,6 +390,9 @@ export class ManifestError extends Error {
  * Grouped by where the value is actually written, and the services that
  * inherited it are named as consequences rather than as separate faults.
  */
+/** What `init` writes when it genuinely could not choose. */
+const PLACEHOLDER_NODE = /^(CHANGE_ME|TODO|REPLACE_ME|<node>)$/i
+
 export function unresolvedNodes(
   services: Array<{ name: string; node?: string; nodePath?: string }>,
   known: Set<string>
@@ -409,15 +412,34 @@ export function unresolvedNodes(
   return [...bySource.entries()].map(([path, { node, inherited }]) => {
     const owner = path.split('.')[1]
     const others = inherited.filter((n) => n !== owner)
+    const consequence = others.length
+      ? `. ${others.join(', ')} ${others.length === 1 ? 'takes its' : 'take their'} node from here too, ` +
+        `because a service reaches a database by name only on the same machine.`
+      : ''
+
+    // The placeholder is not a wrong name, it is an unanswered question, and
+    // saying "no node named CHANGE_ME" invites the reader to look for a node
+    // by that name. `init` writes it only when the fleet had no nodes to
+    // choose from, so the fix is usually to pair one, not to correct a typo.
+    if (PLACEHOLDER_NODE.test(node)) {
+      return {
+        path,
+        message:
+          `has not been chosen yet — a database is pinned to the machine that holds its data, ` +
+          `so this needs the name of a real node` +
+          (known.size
+            ? `. Nodes in this fleet: ${[...known].join(', ')}`
+            : `. This fleet has no nodes yet; pair one with \`fleet nodes pair\` and re-run \`fleet init\``) +
+          consequence,
+      }
+    }
+
     return {
       path,
       message:
         `no node named "${node}" in this fleet` +
         (known.size ? ` — this fleet has: ${[...known].join(', ')}` : ' — this fleet has no nodes yet') +
-        (others.length
-          ? `. ${others.join(', ')} ${others.length === 1 ? 'takes its' : 'take their'} node from here too, ` +
-            `because a service reaches a database by name only on the same machine.`
-          : ''),
+        consequence,
     }
   })
 }

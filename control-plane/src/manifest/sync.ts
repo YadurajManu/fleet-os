@@ -142,6 +142,22 @@ export async function syncManifest(
       }
 
       const prior = existingByName.get(svc.name)
+      // Names are unique per fleet, not per project, and this map is built
+      // across the whole fleet. Without this check an apply from one project
+      // silently updates a same-named service belonging to another — taking
+      // its volume, its deployments and its hostname with it. Two projects
+      // both calling something "backend" is not rare; losing one of them to
+      // the other's `fleet up` is data loss that reports success.
+      if (prior && prior.project !== project) {
+        throw new ApiError(
+          409,
+          'service_name_taken',
+          `"${svc.name}" already exists in this fleet under the project "${prior.project}". ` +
+            `Service names are unique per fleet, so applying it as part of "${project}" would ` +
+            `take over that service rather than create a new one. Rename it here, or apply ` +
+            `this manifest to a different fleet.`
+        )
+      }
       if (prior) {
         await tx.update(services).set(values).where(eq(services.id, prior.id))
         updated.push(svc.name)

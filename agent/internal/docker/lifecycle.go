@@ -77,12 +77,39 @@ func ContainerName(service, deploymentID string) string {
 }
 
 type pullStatus struct {
-	Error string `json:"error"`
+	ID             string `json:"id"`
+	Status         string `json:"status"`
+	Error          string `json:"error"`
+	ProgressDetail struct {
+		Current int64 `json:"current"`
+		Total   int64 `json:"total"`
+	} `json:"progressDetail"`
 }
 
-// Pull fetches an image, streaming progress to /dev/null but surfacing any
-// error the daemon reports mid-stream — a pull can fail after a 200.
-func (c *Client) Pull(ctx context.Context, image string, auth string) error {
+// PullProgress is how far a pull has got, aggregated across layers.
+//
+// Docker reports per layer and never reports a total for the image, so the
+// totals here are the sum of the layers seen SO FAR — the denominator grows as
+// the daemon discovers more layers. That is honest but slightly odd to watch,
+// and it is still far better than the alternative this replaces, which was a
+// single spinner for four hundred and seventy-seven seconds.
+type PullProgress struct {
+	// Layers already present on this node, and so not downloaded at all.
+	Cached int
+	// Layers the daemon has finished pulling.
+	Done int
+	// Layers it knows about.
+	Layers  int
+	Current int64
+	Total   int64
+}
+
+// Pull fetches an image, reporting progress and surfacing any error the daemon
+// reports mid-stream — a pull can fail after a 200.
+//
+// onProgress may be nil, and is called from the decode loop, so it must return
+// promptly: a slow callback stalls the pull it is describing.
+func (c *Client) Pull(ctx context.Context, image string, auth string, onProgress func(PullProgress)) error {
 	ref, tag := splitTag(image)
 	path := fmt.Sprintf("/%s/images/create?fromImage=%s&tag=%s", c.api(ctx), url.QueryEscape(ref), url.QueryEscape(tag))
 
@@ -108,10 +135,45 @@ func (c *Client) Pull(ctx context.Context, image string, auth string) error {
 	// The daemon returns 200 then streams JSON lines; a failure partway
 	// through appears only in the stream.
 	decoder := json.NewDecoder(resp.Body)
+
+	// Per layer, because the daemon interleaves lines from all of them and the
+	// last figure for a layer is the only one that counts.
+	type layer struct {
+		current, total int64
+		done, cached   bool
+	}
+	layers := map[string]*layer{}
+	// Throttled: a large pull emits thousands of these and every one of them
+	// would otherwise become a heartbeat field and a Redis write.
+	var lastReport time.Time
+
+	report := func(force bool) {
+		if onProgress == nil {
+			return
+		}
+		if !force && time.Since(lastReport) < time.Second {
+			return
+		}
+		lastReport = time.Now()
+		p := PullProgress{Layers: len(layers)}
+		for _, l := range layers {
+			p.Current += l.current
+			p.Total += l.total
+			if l.cached {
+				p.Cached++
+			}
+			if l.done {
+				p.Done++
+			}
+		}
+		onProgress(p)
+	}
+
 	for {
 		var line pullStatus
 		if err := decoder.Decode(&line); err != nil {
 			if err == io.EOF {
+				report(true)
 				return nil
 			}
 			return fmt.Errorf("pull %s: reading progress: %w", image, err)
@@ -119,6 +181,31 @@ func (c *Client) Pull(ctx context.Context, image string, auth string) error {
 		if line.Error != "" {
 			return fmt.Errorf("pull %s: %s", image, line.Error)
 		}
+		if line.ID == "" {
+			continue
+		}
+
+		l := layers[line.ID]
+		if l == nil {
+			l = &layer{}
+			layers[line.ID] = l
+		}
+		if line.ProgressDetail.Total > 0 {
+			l.total = line.ProgressDetail.Total
+			l.current = line.ProgressDetail.Current
+		}
+		switch line.Status {
+		case "Already exists":
+			// Layer caching, observable. This is the number that answers
+			// "did the node reuse anything" without guessing.
+			l.cached, l.done = true, true
+		case "Pull complete", "Download complete":
+			l.done = true
+			if l.total > 0 {
+				l.current = l.total
+			}
+		}
+		report(false)
 	}
 }
 

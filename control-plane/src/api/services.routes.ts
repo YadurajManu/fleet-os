@@ -507,6 +507,41 @@ export async function serviceRoutes(app: FastifyInstance) {
             .array(z.object({ service: z.string().max(64), map: z.string().min(1).max(32_000) }))
             .max(24)
             .optional(),
+          /**
+           * What deterministic discovery already established, as facts.
+           *
+           * The draft carries the same information encoded as YAML, and the
+           * model was re-deriving it by reading that file — which is how a
+           * reviewer ends up disagreeing with a decision that was never its
+           * to make. Sent as structure so the prompt can state plainly which
+           * lines are settled and which are open.
+           *
+           * Deliberately not trusted as input to anything but the prompt: the
+           * manifest that comes back is still parsed, still checked against
+           * the fleet's real nodes, and still discarded if it invents one.
+           */
+          plan: z
+            .object({
+              project: z.string().max(128),
+              entries: z
+                .array(
+                  z.object({
+                    name: z.string().max(64),
+                    kind: z.enum(['service', 'database']),
+                    what: z.string().max(64),
+                    ramMb: z.number().int().positive(),
+                    placement: z.enum(['flexible', 'pinned']),
+                    node: z.string().max(128).optional(),
+                    dependsOn: z.array(z.string().max(64)).max(24),
+                    persistent: z.boolean(),
+                  })
+                )
+                .max(48),
+              // Names only. A value must never reach this endpoint, and the
+              // schema is where that is enforced rather than hoped for.
+              secrets: z.array(z.string().max(128)).max(64),
+            })
+            .optional(),
         })
         .parse(req.body ?? {})
 
@@ -518,6 +553,7 @@ export async function serviceRoutes(app: FastifyInstance) {
         repoMap: body.repoMap,
         answers: body.answers,
         parts: body.parts,
+        plan: body.plan,
       })
       return reply.send(out)
     }
@@ -569,6 +605,8 @@ export async function serviceRoutes(app: FastifyInstance) {
           image: z.string().max(512).optional(),
           /** An upload from POST /services/:id/build-context. */
           contextId: z.string().max(64).optional(),
+          /** Deploy onto this node specifically. A name or an id. */
+          node: z.string().max(128).optional(),
         })
         .parse(req.body ?? {})
       if (body.contextId) assertValidContextId(body.contextId)
@@ -583,6 +621,45 @@ export async function serviceRoutes(app: FastifyInstance) {
           rejected: decision.rejected,
           warnings: decision.warnings,
         })
+      }
+
+      /*
+       * An explicitly requested node is a constraint, not a hint.
+       *
+       * `--node` was accepted by the CLI's flag list and read by nothing, so a
+       * deploy asking for one machine happily landed on another and said so in
+       * a line nobody reads as a contradiction. Silently ignoring it is the
+       * worst of the three options: honour it, or say why it cannot be
+       * honoured, but never quietly do something else.
+       *
+       * The scheduler still runs first, so the service's own constraints are
+       * evaluated exactly as before; this only refuses to accept a winner the
+       * operator did not ask for.
+       */
+      if (body.node) {
+        const wanted = snapshot.find((n) => n.name === body.node || n.id === body.node)
+        if (!wanted) {
+          throw new ApiError(
+            422,
+            'unknown_node',
+            `No node called "${body.node}" in this fleet. Known: ${snapshot.map((n) => n.name).join(', ') || 'none'}.`
+          )
+        }
+        if (wanted.id !== decision.nodeId) {
+          const why = decision.rejected.find((r) => r.nodeId === wanted.id)?.detail
+          if (why) {
+            throw new ApiError(
+              422,
+              'node_not_eligible',
+              `"${service.name}" cannot deploy onto "${wanted.name}": ${why}`,
+              { rejected: decision.rejected }
+            )
+          }
+          // Eligible, just not the highest scoring. That is exactly the case
+          // the flag exists for.
+          decision.nodeId = wanted.id
+          decision.nodeName = wanted.name
+        }
       }
 
       // Checked before anything is built or written. A service whose secrets

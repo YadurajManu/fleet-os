@@ -21,6 +21,8 @@ import type { Flags } from '../args.js'
 /** The live build line the control plane already publishes. */
 type DeployProgress = {
   status: string
+  /** The agent's stage — pulling, creating, starting, waiting_health. */
+  phase?: string
   detail?: string
   step?: number
   ofSteps?: number
@@ -157,6 +159,7 @@ export const upCommand = {
         gitSha,
         buildContext: buildContexts.get(service.name),
         wait: !flags['no-wait'],
+        ...(typeof flags.node === 'string' ? { node: flags.node } : {}),
         rootDir: typeof flags.file === 'string' ? dirname(flags.file) : rootDir,
       })
       deployed.push({ service, url })
@@ -185,7 +188,15 @@ export const upCommand = {
  */
 async function deployOne(
   service: Service,
-  opts: { fleetId: string; gitSha?: string; buildContext?: string; wait: boolean; rootDir: string }
+  opts: {
+    fleetId: string
+    gitSha?: string
+    buildContext?: string
+    wait: boolean
+    rootDir: string
+    /** `--node`: deploy every service here, or say why one cannot go. */
+    node?: string
+  }
 ): Promise<string | null> {
   let contextId: string | undefined
   if (opts.buildContext) {
@@ -213,7 +224,7 @@ async function deployOne(
             url: string | null
             warnings: string[]
           }>('POST', `/services/${service.id}/deploy`, {
-            body: { gitSha: opts.gitSha, contextId },
+            body: { gitSha: opts.gitSha, contextId, ...(opts.node ? { node: opts.node } : {}) },
           })
         ).body
         // Deliberately not walker.finish().
@@ -271,8 +282,12 @@ async function deployOne(
           const line = await request<DeployProgress>('GET', `/services/${service.id}/progress`)
             .then((r) => r.body)
             .catch(() => null)
-          if (line && ['queued', 'building', 'pushing'].includes(line.status)) {
-            const parts = [line.status]
+          if (line && ['queued', 'building', 'pushing', 'deploying'].includes(line.status)) {
+            // The agent's own stage once the image leaves the control plane.
+            // Before this, everything from "pull" to "health check passed" was
+            // one line reading "waiting for the container", which is why a
+            // 477-second deploy was indistinguishable from a hang.
+            const parts = [line.phase ?? line.status]
             if (line.step && line.ofSteps) parts.push(`${line.step}/${line.ofSteps}`)
             if (line.platform) parts.push(line.platform)
             if (line.emulated) parts.push('emulated')

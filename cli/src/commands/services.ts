@@ -10,6 +10,7 @@ import {
   follow,
   phaseWalker,
 } from '../progress.js'
+import { planFromDiscovery, renderPlan, toAssistPlan, type AssistPlan } from '../deployment-plan.js'
 import { planFromManifest, projectNameFor } from '../plan.js'
 import { uploadContext, humanBytes } from '../archive.js'
 import { localSource } from '../source.js'
@@ -387,7 +388,16 @@ export const deployCommand = {
               score: number
               url: string | null
               warnings: string[]
-            }>('POST', `/services/${service.id}/deploy`, { body: { gitSha, contextId } })
+            }>('POST', `/services/${service.id}/deploy`, {
+              body: {
+                gitSha,
+                contextId,
+                // Was in KNOWN_FLAGS and read by nothing, so `--node` was
+                // accepted and ignored and the scheduler picked whatever
+                // scored highest.
+                ...(typeof flags.node === 'string' ? { node: flags.node } : {}),
+              },
+            })
           ).body
           walker.finish(`scheduled onto ${result.placedOn.name}`)
           return result
@@ -607,22 +617,110 @@ export const logsCommand = {
  * a fleet with several nodes all fall back to the placeholder rather than
  * turning a local command into one that requires the network.
  */
-async function theOnlyNode(flags: Flags): Promise<string | undefined> {
+type FleetNode = {
+  name: string
+  status: string
+  live?: boolean
+  arch?: string
+  /** FREE disk, which is what the scheduler places against. */
+  diskMb?: number
+  ramMb?: number
+  telemetry?: { diskUsedMb?: number; diskTotalMb?: number | null; ramUsedMb?: number } | null
+}
+
+/**
+ * The fleet's nodes, fetched once per process.
+ *
+ * `init` asks for a node for every database it found, and a repository with
+ * Postgres and Redis asked twice for a list that cannot change between the two
+ * questions.
+ */
+let nodeCache: FleetNode[] | null = null
+async function fleetNodes(flags: Flags): Promise<FleetNode[]> {
+  if (nodeCache) return nodeCache
+  const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
+  const { body } = await request<{ nodes: FleetNode[] }>('GET', `/fleets/${fleetId}/nodes`)
+  nodeCache = body.nodes
+  return nodeCache
+}
+
+/** Free disk in MB, from whichever pair of numbers the agent reported. */
+function freeDiskMb(n: FleetNode): number | undefined {
+  const used = n.telemetry?.diskUsedMb
+  const total = n.telemetry?.diskTotalMb
+  if (typeof used === 'number' && typeof total === 'number' && total > 0) return total - used
+  // node.diskMb is free space already. Falling back to it rather than
+  // inventing a capacity: an unavailable metric stays unavailable.
+  return typeof n.diskMb === 'number' ? n.diskMb : undefined
+}
+
+/**
+ * Which node should hold a database's data.
+ *
+ * This replaces a function that answered only when the fleet had exactly one
+ * node and gave up otherwise — writing `node: CHANGE_ME` into a file whose very
+ * next command then failed on it. A fleet with two nodes is the common case,
+ * not the exceptional one, so "I cannot choose" was the usual answer.
+ *
+ * Ranked on what a database actually needs from a machine: it must be able to
+ * hold the data, so free disk decides, and free RAM breaks ties. Metrics the
+ * agent did not report are left out of the comparison rather than defaulted —
+ * a node that reports no disk is not thereby a node with no disk.
+ *
+ * Returns undefined only when the fleet has no nodes at all, which is the one
+ * case no amount of scoring can fix.
+ */
+export async function pickNodeForData(
+  flags: Flags,
+  what: string
+): Promise<{ node: string; why: string } | undefined> {
+  let nodes: FleetNode[]
   try {
-    const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
-    const { body } = await request<{ nodes: Array<{ name: string; status: string }> }>(
-      'GET',
-      `/fleets/${fleetId}/nodes`
-    )
-    // Offline is fine: a node that is down still holds its disk, and that is
-    // what pinning is about. Only an empty fleet has nothing to choose.
-    if (body.nodes.length !== 1) return undefined
-    const only = body.nodes[0]!.name
-    console.log(c.dim(`  · pinned the database to ${only}, the only node in this fleet`))
-    return only
+    nodes = await fleetNodes(flags)
   } catch {
     return undefined
   }
+  if (!nodes.length) return undefined
+
+  // An explicit --node is the operator's decision and outranks any scoring.
+  // It is still checked, because a typo silently ignored is how the wrong
+  // machine ends up holding the data.
+  const explicit = typeof flags.node === 'string' ? flags.node : undefined
+  if (explicit) {
+    const match = nodes.find((n) => n.name === explicit)
+    if (!match) {
+      throw new CliError(
+        `No node called "${explicit}" in this fleet. Known: ${nodes.map((n) => n.name).join(', ')}.`,
+        EXIT.usage
+      )
+    }
+    return { node: match.name, why: 'you named it with --node' }
+  }
+
+  if (nodes.length === 1) {
+    return { node: nodes[0]!.name, why: 'the only node in this fleet' }
+  }
+
+  // Offline is not disqualifying: a node that is down still holds its disk,
+  // and pinning is about where the data lives. It is a tie-breaker, not a gate.
+  const ranked = [...nodes].sort((a, b) => {
+    const live = Number(b.live ?? false) - Number(a.live ?? false)
+    if (live) return live
+    const disk = (freeDiskMb(b) ?? -1) - (freeDiskMb(a) ?? -1)
+    if (disk) return disk
+    return (b.ramMb ?? 0) - (a.ramMb ?? 0)
+  })
+
+  const best = ranked[0]!
+  const disk = freeDiskMb(best)
+  const reasons = [
+    disk !== undefined ? `${Math.round(disk / 1024)}GB free` : 'free disk not reported',
+    best.live ? 'reporting' : 'not reporting',
+  ]
+  console.log(
+    c.dim(`  · ${what} pinned to ${best.name} — ${reasons.join(', ')}; change it before applying if that is wrong`)
+  )
+  return { node: best.name, why: reasons.join(', ') }
 }
 
 /**
@@ -640,7 +738,16 @@ async function theOnlyNode(flags: Flags): Promise<string | undefined> {
 async function reviewed(
   draft: string,
   flags: Flags,
-  services: Array<{ name: string; dir: string }>
+  services: Array<{ name: string; dir: string }>,
+  /**
+   * What discovery already settled.
+   *
+   * Sent so the model is told the facts rather than left to read them back out
+   * of the draft it is being asked to correct — a reviewer shown only YAML
+   * treats every line as a proposal, including the ones deterministic code
+   * already decided and will re-check afterwards regardless.
+   */
+  plan?: AssistPlan
 ): Promise<string> {
   const { repoMap } = await import('../repomap.js')
   const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
@@ -678,6 +785,7 @@ async function reviewed(
           body: {
             draft: base,
             repoMap: map,
+            ...(plan ? { plan } : {}),
             ...(answers ? { answers } : {}),
             ...(parts ? { parts } : {}),
           },
@@ -899,18 +1007,50 @@ export const initCommand = {
     const found = await discover()
 
     if (found.services.length > 1 || found.databases.length) {
+      // Resolved before the plan is built, so the plan can state where the
+      // data is going instead of describing a decision still to be made.
+      const chosen = found.databases.length
+        ? await pickNodeForData(flags, found.databases.map((d) => d.name).join(' and '))
+        : undefined
+
       const drafted = manifestFromDiscovery(found, {
         fleet: typeof flags.fleet === 'string' ? flags.fleet : undefined,
-        node:
-          (typeof flags.node === 'string' ? flags.node : undefined) ??
-          (found.databases.length ? await theOnlyNode(flags) : undefined),
+        // Resolved here, not deferred into the file. A database needs a node
+        // and `pickNodeForData` answers for any fleet that has one, so the
+        // placeholder is reachable only when the fleet has no nodes at all.
+        node: chosen?.node,
       })
+      // Said before the file appears, not after. Everything here is a
+      // projection of what discovery already established — nothing is
+      // re-detected, and nothing the discovery could not settle is filled in.
+      const plan = planFromDiscovery(found, {
+        project: projectNameFor(process.cwd()),
+        ...(chosen ? { node: chosen.node, nodeWhy: chosen.why } : {}),
+      })
+      for (const line of renderPlan(plan)) {
+        console.log(line ? c.dim(line) : '')
+      }
+      console.log('')
+
+      // Asked before anything is written, because writing is the side effect.
+      // `confirm` returns its `ifNoTerminal` answer when there is no tty, so a
+      // scripted `fleet init` keeps working exactly as it did.
+      if (
+        !flags.yes &&
+        !flags.y &&
+        !(await confirm('Write this manifest?', { default: true, ifNoTerminal: true }))
+      ) {
+        console.log(c.dim('Nothing was written.'))
+        return
+      }
+
       const questions = drafted.questions
       const manifest = flags.ai
         ? await reviewed(
             drafted.manifest,
             flags,
-            found.services.map((s) => ({ name: s.name, dir: s.dir }))
+            found.services.map((s) => ({ name: s.name, dir: s.dir })),
+            toAssistPlan(plan)
           )
         : drafted.manifest
       await writeFile(path, manifest)
@@ -1068,8 +1208,7 @@ export const importCommand = {
         // a manifest that must name a node, and on a one-node fleet there is
         // nothing to choose. Without this, import wrote a placeholder and the
         // very next command failed on it.
-        node:
-          (typeof flags.node === 'string' ? flags.node : undefined) ?? (await theOnlyNode(flags)),
+        node: (await pickNodeForData(flags, 'the database'))?.node,
       })
     } catch (err) {
       throw new CliError((err as Error).message, EXIT.usage)

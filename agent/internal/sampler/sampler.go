@@ -26,6 +26,9 @@ type Host struct {
 	Version     string
 	Containers  ContainerLister
 	Diagnostics Diagnostics
+	// Where in-flight deploys have got to. Optional: nil on a node whose
+	// lister is not the reconcile engine.
+	Deploys     func() []client.DeployStage
 	totalRAMMb  int
 
 	prevNet netMark
@@ -41,12 +44,19 @@ type netMark struct {
 }
 
 func New(version string, containers ContainerLister, diagnostics Diagnostics) *Host {
-	return &Host{
+	h := &Host{
 		Version:     version,
 		Containers:  containers,
 		Diagnostics: diagnostics,
 		totalRAMMb:  capability.Detect(version).RAMMb,
 	}
+	// The reconcile engine is already the container lister, and it is also
+	// what knows where each deploy has got to. Taken through an interface so
+	// the sampler's tests keep passing a plain lister.
+	if d, ok := containers.(interface{ Stages() []client.DeployStage }); ok {
+		h.Deploys = d.Stages
+	}
+	return h
 }
 
 func (h *Host) Sample(ctx context.Context) (client.Heartbeat, error) {
@@ -62,6 +72,9 @@ func (h *Host) Sample(ctx context.Context) (client.Heartbeat, error) {
 		AgentVersion:  h.Version,
 		AdvertiseAddr: capability.AdvertiseAddr(),
 		Containers:    []client.Container{},
+	}
+	if h.Deploys != nil {
+		hb.Deploys = h.Deploys()
 	}
 	hb.NetRxKbps, hb.NetTxKbps = h.sampleNet()
 	if h.Diagnostics != nil {

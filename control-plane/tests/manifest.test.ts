@@ -365,6 +365,63 @@ databases:
     assert.match(issues.find((i) => i.path === 'databases.cache.node')!.message, /vote/)
   })
 
+  test('the placeholder is reported as unanswered, not as a wrong name', () => {
+    // "no node named CHANGE_ME" sends the reader looking for a node by that
+    // name. It is an unanswered question, and the message has to say so.
+    const m = parseManifest(`
+fleet: homelab
+services:
+  api: { build: ./api, uses: [db] }
+databases:
+  db: { engine: postgres, node: CHANGE_ME }
+`)
+    const [issue] = unresolvedNodes(m.services, new Set(['desktop-tc4vu9e', 'archlinux']))
+    assert.equal(issue!.path, 'databases.db.node')
+    assert.match(issue!.message, /has not been chosen yet/)
+    assert.doesNotMatch(issue!.message, /no node named/)
+    assert.match(issue!.message, /desktop-tc4vu9e, archlinux/, 'the reader is told what they may choose')
+  })
+
+  test('the placeholder on an empty fleet says to pair a node', () => {
+    const m = parseManifest(`
+fleet: homelab
+services:
+  api: { build: ./api, uses: [db] }
+databases:
+  db: { engine: postgres, node: CHANGE_ME }
+`)
+    const [issue] = unresolvedNodes(m.services, new Set())
+    assert.match(issue!.message, /no nodes yet/)
+    assert.match(issue!.message, /fleet nodes pair/)
+  })
+
+  test('other placeholder spellings are treated the same', () => {
+    for (const value of ['TODO', 'REPLACE_ME', 'change_me']) {
+      const m = parseManifest(`
+fleet: homelab
+services:
+  api: { build: ./api, uses: [db] }
+databases:
+  db: { engine: postgres, node: ${value} }
+`)
+      const [issue] = unresolvedNodes(m.services, new Set(['n1']))
+      assert.match(issue!.message, /has not been chosen yet/, `${value} should read as unset`)
+    }
+  })
+
+  test('a genuinely wrong node name is still reported as wrong', () => {
+    // The placeholder branch must not swallow a typo.
+    const m = parseManifest(`
+fleet: homelab
+services:
+  api: { build: ./api, uses: [db] }
+databases:
+  db: { engine: postgres, node: desktop-typo }
+`)
+    const [issue] = unresolvedNodes(m.services, new Set(['desktop-tc4vu9e']))
+    assert.match(issue!.message, /no node named "desktop-typo"/)
+  })
+
   test('a service that names its own bad node is still reported against itself', () => {
     const m = parseManifest(`
 fleet: homelab

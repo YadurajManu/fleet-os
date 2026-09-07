@@ -95,12 +95,17 @@ describe('health declarations', () => {
     assert.equal(svc.health.timeout, 2)
   })
 
-  test('the documented defaults apply when omitted', () => {
+  test('omitting the block disables the check rather than guessing a path', () => {
+    // This asserted `disabled: false` and a path of "/" until the schema was
+    // changed to prefault `disabled: true`, and the change was the point: a
+    // guessed "/" against an API behind a global prefix fails every probe for
+    // ever, and the deploy sits at "deploying" while the service serves
+    // traffic correctly. With no check, container state decides and it comes
+    // up. The timings stay, because they apply once a path is written.
     const svc = parse('    placement: flexible\n').services[0]!
-    assert.equal(svc.health.path, '/')
+    assert.equal(svc.health.disabled, true)
     assert.equal(svc.health.interval, 15)
     assert.equal(svc.health.timeout, 5)
-    assert.equal(svc.health.disabled, false)
   })
 
   test('an image with no shell can opt out', () => {

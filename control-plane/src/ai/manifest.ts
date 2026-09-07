@@ -170,6 +170,38 @@ function usesOf(draft: string, service: string): string[] {
 }
 
 /**
+ * The discovered plan, as lines for the prompt.
+ *
+ * Stated as settled facts rather than as a manifest to interpret. The
+ * distinction matters: a model shown YAML treats every line as a proposal it
+ * may improve, and the fields listed here are ones deterministic code already
+ * decided and will re-check afterwards regardless of what comes back.
+ *
+ * Secret NAMES are included because knowing a service needs DATABASE_URL is
+ * evidence about its shape. No value is ever sent — the CLI never reads one,
+ * and the endpoint's schema refuses anything but names.
+ */
+function planFacts(plan: NonNullable<Parameters<typeof assistManifest>[1]['plan']>): string {
+  const lines = [`Project: ${plan.project}`, '', 'Already established by deterministic discovery:']
+  for (const e of plan.entries) {
+    const bits = [`${e.name} — ${e.kind}, ${e.what}, ${e.ramMb}Mi, ${e.placement}`]
+    if (e.node) bits.push(`pinned to node "${e.node}" (chosen by the CLI; do not change it)`)
+    if (e.dependsOn.length) bits.push(`uses ${e.dependsOn.join(', ')}`)
+    if (e.persistent) bits.push('holds data')
+    lines.push(`  - ${bits.join('; ')}`)
+  }
+  if (plan.secrets.length) {
+    lines.push('', `Secrets these services require, by name: ${plan.secrets.join(', ')}`)
+  }
+  lines.push(
+    '',
+    'These came from reading the repository, not from guessing. Correct one only where',
+    'the evidence below contradicts it, and say what contradicted it.'
+  )
+  return lines.join('\n')
+}
+
+/**
  * The questions block, shared by both reviews.
  *
  * Constrained so an option cannot arrive as a bare string. A model that writes
@@ -358,6 +390,27 @@ export async function assistManifest(
      * the whole map in one pass, which is what an older CLI sends.
      */
     parts?: Array<{ service: string; map: string }>
+    /**
+     * What deterministic discovery already settled, from the CLI.
+     *
+     * Absent from an older CLI, which is why nothing here is required: the
+     * review still works from the draft alone, it simply has to re-derive what
+     * this states outright.
+     */
+    plan?: {
+      project: string
+      entries: Array<{
+        name: string
+        kind: 'service' | 'database'
+        what: string
+        ramMb: number
+        placement: 'flexible' | 'pinned'
+        node?: string
+        dependsOn: string[]
+        persistent: boolean
+      }>
+      secrets: string[]
+    }
   },
   fetchImpl: typeof fetch = fetch
 ): Promise<AssistOutcome> {
@@ -434,6 +487,7 @@ export async function assistManifest(
             {
               role: 'user',
               content: [
+                ...(opts.plan ? [planFacts(opts.plan)] : []),
                 `The manifest:\n\n${opts.draft}`,
                 `Review the service "${part.service}". Evidence from its directory:\n\n${part.map}`,
                 // Named explicitly, because "review this service" reads as a
@@ -542,6 +596,10 @@ export async function assistManifest(
         {
           role: 'user',
           content: [
+            // Facts first, then the draft. The order is the message: what is
+            // settled, then the file that encodes it, then the evidence that
+            // may contradict either.
+            ...(opts.plan ? [planFacts(opts.plan)] : []),
             `Draft fleet.yaml:\n\n${opts.draft}`,
             `Evidence from the repository:\n\n${map}`,
             // Answered questions are settled facts, not suggestions. Asking
