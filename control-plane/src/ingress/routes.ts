@@ -202,11 +202,28 @@ export function managedHostname(
   serviceName: string,
   fleetName: string,
   fleetId: string,
-  zone: string
+  zone: string,
+  /**
+   * The project this service belongs to.
+   *
+   * Part of the name because a service is identified by (fleet, project, name)
+   * — without it two projects in one fleet both called "backend" generate the
+   * same hostname and collide on services_hostname_key, which is what stopped
+   * per-project names being possible at all.
+   *
+   * Optional so callers that genuinely have no project (and older rows) keep
+   * the shorter form. Omitted for "default", the project name a manifest gets
+   * when it does not choose one, so the common single-project fleet keeps the
+   * hostname it already had.
+   */
+  project?: string
 ): string {
   const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
   const suffix = createHash('sha256').update(fleetId).digest('hex').slice(0, 6)
-  return `${slug(serviceName)}-${slug(fleetName)}-${suffix}.${zone}`
+  const scope = project && project !== 'default' ? `${slug(project)}-` : ''
+  // Still one DNS label: the parts are joined with dashes, not dots, so a free
+  // wildcard certificate covering one level below the apex still covers it.
+  return `${slug(serviceName)}-${scope}${slug(fleetName)}-${suffix}.${zone}`
 }
 
 /**

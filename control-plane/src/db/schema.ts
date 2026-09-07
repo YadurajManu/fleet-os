@@ -415,7 +415,10 @@ export const services = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('services_fleet_name_key').on(t.fleetId, t.name),
+    // Identity is (fleet, project, name). Two projects in one fleet may both
+    // have a "backend"; before this they could not, and the second apply
+    // silently took over the first's row.
+    uniqueIndex('services_fleet_project_name_key').on(t.fleetId, t.project, t.name),
     // Two services answering the same hostname is a routing coin-flip, so
     // the database refuses it rather than the proxy guessing.
     uniqueIndex('services_hostname_key').on(t.hostname),

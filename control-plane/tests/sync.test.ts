@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
 import { loadConfig } from '../src/config.js'
 import { createContext, closeContext, type AppContext } from '../src/api/context.js'
@@ -113,4 +113,81 @@ services:
     assert.equal(after.length, before.length, 'nothing should have been written')
     assert.ok(!after.some((s) => s.name === 'cache'), 'the valid service must not have been created either')
   })
+
+  // These come last on purpose: they add services to the fleet the earlier
+  // tests count rows in, and a shared fixture is only safe to grow at the end.
+  test('two projects in one fleet may both have a service called the same thing', async () => {
+    // The failure this replaces: applying project B's manifest matched project
+    // A's "backend" by name and updated it in place, taking its volume, its
+    // deployments and its hostname, and reporting success.
+    const yaml = (proj: string) => `
+fleet: homelab
+project: ${proj}
+services:
+  backend: { image: nginx, placement: flexible }
+`
+    await apply(yaml('alpha'))
+    await apply(yaml('beta'))
+
+    const rows = await ctx.db
+      .select()
+      .from(services)
+      .where(and(eq(services.fleetId, fleetId), eq(services.name, 'backend')))
+
+    assert.equal(rows.length, 2, 'both projects keep their own service')
+    assert.deepEqual(rows.map((r) => r.project).sort(), ['alpha', 'beta'])
+    // services_hostname_key is global, and the project is in the name exactly
+    // so two same-named services do not collide on it.
+    assert.notEqual(rows[0]!.hostname, rows[1]!.hostname)
+    // The project sits between the service and the fleet, which is what stops
+    // the two colliding. The fleet here is named sync-<timestamp> by the fixture.
+    for (const r of rows) assert.match(r.hostname!, /^backend-(alpha|beta)-sync-/)
+  })
+
+  test('re-applying a project updates its own service, not the other one', async () => {
+    const yaml = (proj: string, port: number) => `
+fleet: homelab
+project: ${proj}
+services:
+  api: { image: nginx, placement: flexible, container_port: ${port} }
+`
+    await apply(yaml('one', 3000))
+    await apply(yaml('two', 3000))
+    await apply(yaml('one', 4000))
+
+    const rows = await ctx.db
+      .select()
+      .from(services)
+      .where(and(eq(services.fleetId, fleetId), eq(services.name, 'api')))
+    assert.equal(rows.length, 2, 'no row was created or destroyed')
+    assert.equal(rows.find((r) => r.project === 'one')!.containerPort, 4000)
+    assert.equal(rows.find((r) => r.project === 'two')!.containerPort, 3000, 'the other project was left alone')
+  })
+
+  test('an existing service keeps the hostname it was deployed with', async () => {
+    // The hostname scheme changed to carry the project. Rewriting a live row's
+    // hostname would break a URL somebody has bookmarked, so an update keeps
+    // whatever is already there.
+    const yaml = `
+fleet: homelab
+project: keepers
+services:
+  keeper: { image: nginx, placement: flexible }
+`
+    await apply(yaml)
+    const [first] = await ctx.db
+      .select()
+      .from(services)
+      .where(and(eq(services.fleetId, fleetId), eq(services.name, 'keeper')))
+
+    await ctx.db
+      .update(services)
+      .set({ hostname: 'keeper-homelab-oldform.example.test' })
+      .where(eq(services.id, first!.id))
+
+    await apply(yaml)
+    const [again] = await ctx.db.select().from(services).where(eq(services.id, first!.id))
+    assert.equal(again!.hostname, 'keeper-homelab-oldform.example.test')
+  })
+
 })

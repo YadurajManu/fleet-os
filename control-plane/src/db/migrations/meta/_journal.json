@@ -155,6 +155,13 @@
       "when": 1788590772165,
       "tag": "0021_build_context_listing",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788795443779,
+      "tag": "0022_service_identity_per_project",
+      "breakpoints": true
     }
   ]
 }

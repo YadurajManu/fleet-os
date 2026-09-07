@@ -92,7 +92,12 @@ export async function syncManifest(
   }
 
   const existing = await ctx.db.select().from(services).where(eq(services.fleetId, fleetId))
-  const existingByName = new Map(existing.map((s) => [s.name, s]))
+  // Keyed by project AND name, because that is what identifies a service. A
+  // map keyed by name alone matched another project's row and updated it in
+  // place — taking its volume, its deployments and its hostname, and reporting
+  // success.
+  const key = (project: string, name: string) => `${project}\u0000${name}`
+  const existingByName = new Map(existing.map((s) => [key(s.project, s.name), s]))
 
   const created: string[] = []
   const updated: string[] = []
@@ -137,29 +142,21 @@ export async function syncManifest(
         // its own domain, so there is always a URL to hand back after a deploy.
         // An internal service gets none: a name that resolves publicly is
         // exactly what it is asking not to have.
-        hostname: svc.internal ? null : managedHostname(svc.name, fleetName, fleetId, zone),
+        hostname: svc.internal ? null : managedHostname(svc.name, fleetName, fleetId, zone, project),
         reclaimPolicy: svc.reclaim ?? null,
       }
 
-      const prior = existingByName.get(svc.name)
-      // Names are unique per fleet, not per project, and this map is built
-      // across the whole fleet. Without this check an apply from one project
-      // silently updates a same-named service belonging to another — taking
-      // its volume, its deployments and its hostname with it. Two projects
-      // both calling something "backend" is not rare; losing one of them to
-      // the other's `fleet up` is data loss that reports success.
-      if (prior && prior.project !== project) {
-        throw new ApiError(
-          409,
-          'service_name_taken',
-          `"${svc.name}" already exists in this fleet under the project "${prior.project}". ` +
-            `Service names are unique per fleet, so applying it as part of "${project}" would ` +
-            `take over that service rather than create a new one. Rename it here, or apply ` +
-            `this manifest to a different fleet.`
-        )
-      }
+      const prior = existingByName.get(key(project, svc.name))
       if (prior) {
-        await tx.update(services).set(values).where(eq(services.id, prior.id))
+        // An existing service keeps the hostname it was deployed with. The
+        // scheme changed to carry the project, and rewriting a live row's
+        // hostname would break a URL somebody has bookmarked or that another
+        // service resolves — for tidiness. New rows get the new form; the two
+        // coexist, and the unique index on hostname keeps them honest.
+        await tx
+          .update(services)
+          .set({ ...values, hostname: prior.hostname ?? values.hostname })
+          .where(eq(services.id, prior.id))
         updated.push(svc.name)
       } else {
         await tx.insert(services).values(values)
