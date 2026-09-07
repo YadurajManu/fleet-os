@@ -30,7 +30,7 @@ function toBase64(str: string): string {
   let binary = ''
   const len = bytes.byteLength
   for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i])
+    binary += String.fromCharCode(bytes[i]!)
   }
   return btoa(binary)
 }
@@ -64,7 +64,9 @@ export default function WebTerminal({ nodeId, nodeName, fleetId, onClose, initia
 
   // Refs for resize debouncing
   const lastResizeDims = useRef<{ cols: number; rows: number }>({ cols: 0, rows: 0 })
-  const resizeTimerRef = useRef<NodeJS.Timeout | null>(null)
+  // `number`, not NodeJS.Timeout: this is the DOM's setTimeout, and the Node
+  // namespace is not in scope in a browser build.
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Debounced resize to eliminate SIGWINCH redraw thrashing on the remote shell
   const sendResize = useCallback((cols: number, rows: number) => {

@@ -862,7 +862,7 @@ export default function Nodes() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
-                              void navigator.clipboard?.writeText(n.advertiseAddr)
+                              void navigator.clipboard?.writeText(n.advertiseAddr ?? '')
                               setCopiedIp(n.id)
                               setTimeout(() => setCopiedIp(null), 1500)
                             }}

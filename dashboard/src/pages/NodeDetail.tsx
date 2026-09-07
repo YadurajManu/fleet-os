@@ -360,7 +360,11 @@ export default function NodeDetail() {
   const ramSparkData = useMemo(() => recentSlice.map((s) => s.ramUsedMb ?? 0), [recentSlice])
   const diskSparkData = useMemo(() => recentSlice.map((s) => s.diskUsedMb ?? 0), [recentSlice])
   const uptimeSparkData = useMemo(
-    () => recorded.slice(-30).map((b) => (b === 'ok' ? 100 : b === 'slow' ? 50 : 0)),
+    // A beat is 'ok' | 'missed' | 'nodata' and 'nodata' is already filtered out,
+    // so the only two outcomes are full height and none. The removed branch
+    // tested for 'slow', which the type has never had — it read as a middle
+    // state the chart could show and was dead code.
+    () => recorded.slice(-30).map((b) => (b === 'ok' ? 100 : 0)),
     [recorded]
   )
 
@@ -442,7 +446,32 @@ export default function NodeDetail() {
     }
   }
 
+  /*
+   * Whether a terminal can be opened at all.
+   *
+   * The web terminal runs over the agent's reverse tunnel, and the control
+   * plane refuses with "Node tunnel is not connected" when there is no socket
+   * for this node. The button did not ask, so an offline node opened a prompt
+   * that swallowed every keystroke — the reader is left deciding whether the
+   * terminal is broken or they are.
+   *
+   * `tunnelConnected` is the same fact the server checks, not a proxy for it:
+   * a node can be recently seen and still have no tunnel.
+   */
+  const canOpenTerminal = node?.tunnelConnected === true
+
+  // A session open when the tunnel drops is a panel that swallows keystrokes:
+  // the control plane has nowhere left to forward them. `node` is refreshed by
+  // polling, so this closes on the same signal the button is gated by.
+  useEffect(() => {
+    if (!canOpenTerminal) setShowTerminal(false)
+  }, [canOpenTerminal])
+  const whyNoTerminal = node
+    ? `${node.name} has no agent tunnel — last seen ${since(node.lastHeartbeatAt)}. A terminal needs its agent connected.`
+    : 'This node is not reporting.'
+
   const handleExecContainer = (container: ContainerItem) => {
+    if (!canOpenTerminal) return
     const cleanName = container.name.replace(/^\//, '')
     setTerminalInitialCmd(`docker exec -it ${cleanName} sh || docker exec -it ${cleanName} bash`)
     setShowTerminal(true)
@@ -654,9 +683,14 @@ export default function NodeDetail() {
           <div className="flex items-center gap-2.5 ml-auto sm:ml-0">
             {/* Direct Launch Terminal Button */}
             <button
-              onClick={() => setShowTerminal(true)}
-              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#3fe08b]/10 hover:bg-[#3fe08b]/20 border border-[#3fe08b]/30 hover:border-[#3fe08b]/60 text-[#3fe08b] font-mono text-[12px] font-semibold transition-all shadow-[0_0_20px_rgba(63,224,139,0.15)] group"
-              title="Open interactive remote web terminal"
+              onClick={() => canOpenTerminal && setShowTerminal(true)}
+              disabled={!canOpenTerminal}
+              className={
+                canOpenTerminal
+                  ? 'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#3fe08b]/10 hover:bg-[#3fe08b]/20 border border-[#3fe08b]/30 hover:border-[#3fe08b]/60 text-[#3fe08b] font-mono text-[12px] font-semibold transition-all shadow-[0_0_20px_rgba(63,224,139,0.15)] group'
+                  : 'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg border border-[var(--color-line-2)] text-[var(--color-fg-dim)] font-mono text-[12px] font-semibold cursor-not-allowed'
+              }
+              title={canOpenTerminal ? 'Open interactive remote web terminal' : whyNoTerminal}
             >
               <svg className="w-3.5 h-3.5 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="4 17 10 11 4 5" />

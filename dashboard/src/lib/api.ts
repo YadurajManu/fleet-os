@@ -145,6 +145,20 @@ export type Node = {
     diskTotalMb: number | null
     meshConnected: boolean
     ageMs: number
+    /*
+     * Optional host metrics.
+     *
+     * The agent sends these with `omitempty` and omits rather than zeroes one
+     * a platform cannot measure — a fabricated number is what made the Windows
+     * disk figure wrong for months. Optional here for the same reason, so a
+     * missing reading reads as missing rather than as zero.
+     */
+    netRxKbps?: number
+    netTxKbps?: number
+    load1?: number
+    tempC?: number
+    swapUsedMb?: number
+    uptimeSec?: number
     containers: Array<{
       name: string
       id?: string
