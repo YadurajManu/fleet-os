@@ -21,6 +21,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
       ['up [service]', 'Deploy the whole fleet.yaml, in dependency order'],
       ['init', 'Read the repository — monorepo, databases, secrets — and write a fleet.yaml'],
       ['init --ai', 'The same, then have the control plane review the draft against the repository'],
+      ['init --node <name>', 'Pin discovered databases to a specific node instead of the best-scoring one'],
       ['import [file]', 'Convert a docker-compose.yml into a fleet.yaml'],
       ['config show', 'Show the saved control plane and selected fleet'],
       ['use <fleet>', 'Select the default fleet for later commands'],
@@ -77,6 +78,9 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
 
 const OPTIONS: Array<[string, string]> = [
   ['--fleet <id>', 'Operate on a specific fleet'],
+  // Documented because it silently did nothing on `up` and `deploy` for a long
+  // time, and a flag that validates but is ignored is worse than one that errors.
+  ['--node <name>', 'Deploy onto this node, or say why the service cannot go there'],
   ['--api <url>', 'Control plane URL (default: saved profile)'],
   ['--json', 'Machine-readable output on stdout'],
   ['--plan, --dry-run', 'Show the deploy placement plan without changing anything'],

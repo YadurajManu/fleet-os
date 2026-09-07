@@ -241,6 +241,53 @@ hardcoded hostname passed exactly once and then hit
 
 ---
 
+### Node resolution, and why `CHANGE_ME` existed
+
+`fleet init` wrote `node: CHANGE_ME` for every discovered database whenever the
+fleet had **more than one** node. The helper answered only for a single-node
+fleet, while its own comment claimed "only an empty fleet has nothing to
+choose" — so the common case was the failing one, and the placeholder reached a
+file whose very next command rejected it.
+
+`pickNodeForData` (cli/src/commands/services.ts) replaces it. It ranks on what a
+database actually needs from a machine: free disk first, RAM as a tie-break, a
+reporting node ahead of both. Three rules are load-bearing and easy to undo by
+accident:
+
+- **Offline nodes stay eligible.** A node that is down still holds its disk, and
+  pinning is about where data lives, not where it is running now.
+- **Unreported metrics are left out of the comparison**, never defaulted. A node
+  that reports no disk is not a node with no disk.
+- **An explicit `--node` outranks the scoring and is validated.** A typo used to
+  be ignored silently, which is how data ends up on the wrong machine.
+
+The placeholder is now reachable only on a fleet with no nodes at all — the one
+case no scoring can fix — and the parser reports it as an unanswered question
+rather than as a wrong node name.
+
+### `--node` is a constraint, not a hint
+
+It sat in `KNOWN_FLAGS` and was read by nothing outside `init`, so
+`fleet up --node desktop-tc4vu9e` validated the flag, ignored it, and let the
+scheduler place by score. The deploy route now takes an optional node: the
+scheduler still runs first, so a service's own constraints are evaluated exactly
+as before, and then the requested node must be the winner or at least eligible.
+A service rejected for that node reports the scheduler's own reason. It is never
+silently placed somewhere else.
+
+### Deploy stages, and the 477-second span
+
+Everything from image pull to health check was reported as "waiting for the
+container", so a slow uplink and a failing probe looked identical. The agent
+already decoded Docker's pull stream and threw away everything but errors; it
+now aggregates per-layer bytes, counts `Already exists` as cached, and reports
+`pulling → creating → starting → waiting_health` on the heartbeat.
+
+Those land in **the same Redis key** the build progress uses, deliberately: from
+the operator's side this is one continuous sequence, and two stores would mean
+two readers and two ways for the line to go stale. `BUILD_PHASES` gained
+`deploying` so the line survives past scheduling.
+
 ## 5. Operating it
 
 **Deploy the control plane** — there is deliberately no deploy-on-push:
