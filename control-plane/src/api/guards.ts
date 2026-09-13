@@ -14,7 +14,16 @@ function bearer(req: FastifyRequest): string | null {
 /** Verifies a user access token. Refresh tokens are rejected here on purpose. */
 export async function requireUser(req: FastifyRequest, _reply: FastifyReply) {
   try {
-    await req.jwtVerify()
+    // Check Bearer header first, then httpOnly cookie fallback.
+    const authHeader = req.headers.authorization
+    if (authHeader?.startsWith('Bearer ')) {
+      await req.jwtVerify()
+    } else if (req.cookies?.fleet_access_token) {
+      req.headers.authorization = `Bearer ${req.cookies.fleet_access_token}`
+      await req.jwtVerify()
+    } else {
+      throw ApiError.unauthorized('Access token required')
+    }
     const claims = req.user
     if (claims.typ !== 'access') throw ApiError.unauthorized('Access token required')
     req.userId = claims.sub

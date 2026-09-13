@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
+import cookie from '@fastify/cookie'
 import { ApiError } from './api/errors.js'
 import { authRoutes } from './api/auth.routes.js'
 import { agentRoutes } from './api/agent.routes.js'
@@ -50,6 +51,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
     origin: ctx.config.PUBLIC_DASHBOARD_URL ?? 'http://localhost:5173',
     credentials: true,
   })
+  await app.register(cookie)
   await app.register(jwt, { secret: ctx.config.JWT_SECRET })
 
   app.setErrorHandler((err, req, reply) => {

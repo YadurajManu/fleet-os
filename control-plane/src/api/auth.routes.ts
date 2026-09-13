@@ -37,6 +37,29 @@ const credentials = z.object({
   password: z.string().min(12, 'Password must be at least 12 characters').max(1024),
 })
 
+function setTokenCookies(reply: { setCookie: (name: string, value: string, opts: Record<string, unknown>) => void }, tokens: { accessToken: string; refreshToken: string }) {
+  const isProd = process.env.NODE_ENV === 'production'
+  reply.setCookie('fleet_access_token', tokens.accessToken, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'strict',
+    path: '/',
+    maxAge: 15 * 60, // 15 minutes
+  })
+  reply.setCookie('fleet_refresh_token', tokens.refreshToken, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'strict',
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60, // 7 days
+  })
+}
+
+function clearTokenCookies(reply: { setCookie: (name: string, value: string, opts: Record<string, unknown>) => void }) {
+  reply.setCookie('fleet_access_token', '', { httpOnly: true, path: '/', maxAge: 0 })
+  reply.setCookie('fleet_refresh_token', '', { httpOnly: true, path: '/', maxAge: 0 })
+}
+
 export async function authRoutes(app: FastifyInstance) {
   const { db, redis } = app.ctx
 
@@ -82,6 +105,7 @@ export async function authRoutes(app: FastifyInstance) {
     await sendVerification(created.user.id, created.user.email)
 
     const tokens = await issueTokens(app, redis, created.user.id)
+    setTokenCookies(reply, tokens)
     return reply.code(201).send({
       ...tokens,
       user: { id: created.user.id, email: created.user.email },
@@ -90,7 +114,7 @@ export async function authRoutes(app: FastifyInstance) {
     })
   })
 
-  app.post('/auth/login', async (req) => {
+  app.post('/auth/login', async (req, reply) => {
     const parsed = credentials.safeParse(req.body)
     // Deliberately vague: a validation error here must not reveal whether the
     // email exists or only the password was wrong.
@@ -154,16 +178,19 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     const tokens = await issueTokens(app, redis, user.id)
+    setTokenCookies(reply, tokens)
     return { ...tokens, user: { id: user.id, email: user.email } }
   })
 
-  app.post('/auth/refresh', async (req) => {
-    const body = z.object({ refreshToken: z.string().min(1) }).safeParse(req.body)
-    if (!body.success) throw ApiError.badRequest('missing_refresh_token', 'refreshToken is required')
+  app.post('/auth/refresh', async (req, reply) => {
+    // Accept refresh token from body (CLI) or cookie (dashboard).
+    const refreshToken = (req.body as Record<string, unknown>)?.refreshToken as string | undefined
+      ?? req.cookies?.fleet_refresh_token
+    if (!refreshToken) throw ApiError.badRequest('missing_refresh_token', 'refreshToken is required')
 
     let claims: { sub: string; typ: string; jti?: string }
     try {
-      claims = app.jwt.verify(body.data.refreshToken)
+      claims = app.jwt.verify(refreshToken)
     } catch {
       throw ApiError.unauthorized('Invalid or expired refresh token')
     }
@@ -177,7 +204,14 @@ export async function authRoutes(app: FastifyInstance) {
       throw ApiError.unauthorized('Refresh token has already been used or revoked')
     }
 
-    return issueTokens(app, redis, userId)
+    const tokens = await issueTokens(app, redis, userId)
+    setTokenCookies(reply, tokens)
+    return tokens
+  })
+
+  app.post('/auth/logout', async (_req, reply) => {
+    clearTokenCookies(reply)
+    return { ok: true }
   })
 
   app.get('/auth/me', { preHandler: requireUser }, async (req) => {

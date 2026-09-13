@@ -25,6 +25,9 @@ export const session = {
   },
   clear() {
     localStorage.removeItem(STORE)
+    // Also clear httpOnly cookies by sending a request to the server.
+    // The server clears them on logout, but for a belt-and-suspenders
+    // approach, the dashboard can call the server's logout endpoint.
   },
 }
 
@@ -44,6 +47,7 @@ async function refreshAccessToken(): Promise<string | null> {
     try {
       const res = await fetch(`${BASE}/auth/refresh`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: current.refreshToken }),
       })
@@ -68,6 +72,7 @@ export async function api<T = unknown>(
   const send = async (token?: string) =>
     fetch(BASE + path, {
       method: opts.method ?? 'GET',
+      credentials: 'include',
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...(opts.body ? { 'content-type': 'application/json' } : {}),

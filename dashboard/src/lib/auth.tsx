@@ -109,7 +109,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       selectFleet: setFleetId,
       signIn: (e, p) => enter('/auth/login', e, p),
       signUp: (e, p) => enter('/auth/signup', e, p),
-      signOut: () => {
+      signOut: async () => {
+        try { await fetch(`${import.meta.env?.VITE_API ?? '/api'}/auth/logout`, { method: 'POST', credentials: 'include' }) } catch {}
         session.clear()
         setEmail(null)
         setVerified(null)

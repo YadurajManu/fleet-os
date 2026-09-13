@@ -16,6 +16,7 @@
     "pretest": "dotenv -e .env.test -- tsx src/db/migrate.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^11.3.0",
     "@fastify/jwt": "^10.2.2",
     "argon2": "^0.45.1",
