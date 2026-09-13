@@ -14,6 +14,7 @@ import { c } from '../render.js'
 import { task, glyph } from '../ui.js'
 import { withLadder } from '../ladder.js'
 import { DEPLOY_STEPS, follow, phaseWalker } from '../progress.js'
+import { requireRunning } from '../deploy-wait.js'
 import { planFromManifest, deployOrder, projectNameFor } from '../plan.js'
 import { uploadContext, humanBytes } from '../archive.js'
 import type { Flags } from '../args.js'
@@ -271,48 +272,28 @@ async function deployOne(
         // building afterwards, so this is the window in which a multi-arch
         // build has to finish - and an arm64 build emulated on an amd64 host
         // is measured in tens of minutes, not minutes.
-        const deadline = Date.now() + 45 * 60_000
-        while (Date.now() < deadline) {
-          // What the builder is doing, rather than a hint about what it might
-          // be doing. Every field here has been reaching /progress since the
-          // phase writer was added and nothing asked for it, so this loop sat
-          // cycling generic advice past a reader who could have been told the
-          // step number. Failures are swallowed: this is a label, and losing it
-          // must not end a deploy that is going fine.
-          const line = await request<DeployProgress>('GET', `/services/${service.id}/progress`)
-            .then((r) => r.body)
-            .catch(() => null)
-          if (line && ['queued', 'building', 'pushing', 'deploying'].includes(line.status)) {
-            // The agent's own stage once the image leaves the control plane.
-            // Before this, everything from "pull" to "health check passed" was
-            // one line reading "waiting for the container", which is why a
-            // 477-second deploy was indistinguishable from a hang.
+        // The same waiter `fleet deploy` uses, on the same deadline. Two
+        // commands watching the same thing in two loops is how one of them
+        // ended up giving up at three minutes.
+        await requireRunning(opts.fleetId, service.id, service.name, {
+          onPoll: async () => {
+            // What the builder is doing, rather than a hint about what it
+            // might be doing. Every field here has been reaching /progress
+            // since the phase writer was added and nothing asked for it.
+            // Failures are swallowed: this is a label, and losing it must not
+            // end a deploy that is going fine.
+            const line = await request<DeployProgress>('GET', `/services/${service.id}/progress`)
+              .then((r) => r.body)
+              .catch(() => null)
+            if (!line || !['queued', 'building', 'pushing', 'deploying'].includes(line.status)) return
             const parts = [line.phase ?? line.status]
             if (line.step && line.ofSteps) parts.push(`${line.step}/${line.ofSteps}`)
             if (line.platform) parts.push(line.platform)
             if (line.emulated) parts.push('emulated')
             s.update(`${c.bold(service.name)} · ${parts.join(' · ')}`)
             if (line.detail) s.hints([line.detail])
-          }
-
-          const { body } = await request<{ services: Service[] }>(
-            'GET',
-            `/fleets/${opts.fleetId}/services`
-          )
-          const current = body.services.find((s) => s.id === service.id)?.current
-          if (current?.status === 'running') return
-          if (current?.status === 'failed') {
-            throw new CliError(
-              `"${service.name}" did not start. \`fleet deployments ${service.name}\` has the reason.`,
-              EXIT.healthCheckFailed
-            )
-          }
-          await sleep(2000)
-        }
-        throw new CliError(
-          `"${service.name}" was scheduled but has not reported running.`,
-          EXIT.healthCheckFailed
-        )
+          },
+        })
       },
       { done: () => `${c.bold(service.name)} is running` }
     )

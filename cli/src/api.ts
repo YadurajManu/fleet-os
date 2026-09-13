@@ -163,3 +163,130 @@ export async function requireFleet(explicit?: string): Promise<string> {
     EXIT.usage
   )
 }
+
+/**
+ * Stream an SSE response from the control plane with real-time progress callbacks.
+ * Falls back gracefully to standard JSON if the control plane does not support SSE.
+ */
+export async function streamRequest<TProgress = any, TResult = any>(
+  method: string,
+  path: string,
+  opts: {
+    body?: unknown
+    onProgress?: (progress: TProgress) => void
+    profile?: Profile
+  } = {}
+): Promise<TResult> {
+  const profile = opts.profile ?? (await loadProfile())
+  if (!profile.api) {
+    throw new CliError(
+      'No control plane URL is configured. Run `fleet auth login --api https://your-api-host` or set FLEET_API.',
+      EXIT.usage
+    )
+  }
+  if (!profile.accessToken) {
+    throw new CliError('Not signed in. Run `fleet auth login` first.', EXIT.usage)
+  }
+
+  const payload = opts.body ? JSON.stringify(opts.body) : undefined
+  const send = async (token?: string) =>
+    fetch(profile.api.replace(/\/+$/, '') + path, {
+      method,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(payload !== undefined ? { 'content-type': 'application/json' } : {}),
+        accept: 'text/event-stream, application/json',
+      },
+      body: payload,
+      signal: AbortSignal.timeout(20 * 60_000),
+    })
+
+  let res: Response
+  try {
+    res = await send(profile.accessToken)
+  } catch (err) {
+    throw new CliError(
+      `Could not reach ${profile.api}. Is the control plane running?\n  ${String(err)}`,
+      EXIT.failure
+    )
+  }
+
+  if (res.status === 401 && profile.refreshToken) {
+    try {
+      const refreshed = await fetch(profile.api.replace(/\/+$/, '') + '/auth/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: profile.refreshToken }),
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (refreshed.ok) {
+        const tokens = (await refreshed.json()) as { accessToken: string; refreshToken: string }
+        await saveProfile({ ...profile, ...tokens })
+        res = await send(tokens.accessToken)
+      }
+    } catch {}
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    try {
+      const json = JSON.parse(text)
+      throw new CliError(json.message ?? `HTTP ${res.status}`, EXIT.failure)
+    } catch {
+      throw new CliError(`HTTP ${res.status}: ${text}`, EXIT.failure)
+    }
+  }
+
+  const contentType = res.headers.get('content-type') ?? ''
+  if (!contentType.includes('text/event-stream') || !res.body) {
+    return (await res.json()) as TResult
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finalResult: TResult | undefined
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+
+      for (const part of parts) {
+        if (!part.trim()) continue
+        const lines = part.split('\n')
+        let event = 'message'
+        let data = ''
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) event = line.slice(6).trim()
+          else if (line.startsWith('data:')) data = line.slice(5).trim()
+        }
+
+        if (!data) continue
+
+        try {
+          const parsed = JSON.parse(data)
+          if (event === 'progress') {
+            opts.onProgress?.(parsed)
+          } else if (event === 'result') {
+            finalResult = parsed
+          } else if (event === 'error') {
+            throw new CliError(parsed.error ?? 'Error during diagnosis', EXIT.failure)
+          }
+        } catch (err) {
+          if (err instanceof CliError) throw err
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  if (finalResult !== undefined) return finalResult
+  throw new CliError('Stream closed before an answer was received', EXIT.failure)
+}

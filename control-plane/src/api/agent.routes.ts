@@ -15,6 +15,7 @@ import { dispatchEvent } from '../alerting/dispatch.js'
 import { recordSamples } from '../heartbeat/samples.js'
 import { buildEnv } from '../secrets/store.js'
 import { invalidateRoutesForService } from '../ingress/routes.js'
+import { recordCanaryHealthy, evaluateCanaryHealth } from '../heartbeat/watchdog.js'
 
 /** The capability report an agent sends at registration (tech doc §7). */
 const capability = z.object({
@@ -535,6 +536,38 @@ export async function agentRoutes(app: FastifyInstance) {
           .update(deployments)
           .set({ failureReason: 'drift' })
           .where(inArray(deployments.id, drifted.map((d) => d.deploymentId)))
+      }
+
+      // Canary health monitoring for running containers:
+      // Track consecutive healthy/unhealthy verdicts during the post-rollout window.
+      for (const c of hb.containers) {
+        if (c.deployment_id) {
+          if (c.health === 'healthy') {
+            await recordCanaryHealthy(app.ctx, c.deployment_id)
+          } else if (c.health === 'unhealthy') {
+            const [dep] = await db
+              .select({ serviceId: deployments.serviceId })
+              .from(deployments)
+              .where(eq(deployments.id, c.deployment_id))
+            if (dep) {
+              await evaluateCanaryHealth(
+                app.ctx,
+                {
+                  serviceId: dep.serviceId,
+                  deploymentId: c.deployment_id,
+                  nodeId,
+                  trigger: 'unhealthy',
+                },
+                {
+                  onEvent: async (e) => {
+                    await dispatchEvent(app.ctx, e, { log: req.log, email: app.ctx.email })
+                  },
+                  log: req.log,
+                }
+              ).catch(() => {})
+            }
+          }
+        }
       }
     }
 

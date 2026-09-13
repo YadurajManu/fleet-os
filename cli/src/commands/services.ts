@@ -1,6 +1,6 @@
 import { readFile, writeFile, access } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
-import { request, requireFleet, CliError, EXIT } from '../api.js'
+import { request, streamRequest, requireFleet, CliError, EXIT } from '../api.js'
 import { c, table, statusColour, keyValues, relativeTime, mb } from '../render.js'
 import { task, glyph } from '../ui.js'
 import { withLadder } from '../ladder.js'
@@ -11,6 +11,7 @@ import {
   phaseWalker,
 } from '../progress.js'
 import { planFromDiscovery, renderPlan, toAssistPlan, type AssistPlan } from '../deployment-plan.js'
+import { requireRunning } from '../deploy-wait.js'
 import { planFromManifest, projectNameFor } from '../plan.js'
 import { uploadContext, humanBytes } from '../archive.js'
 import { localSource } from '../source.js'
@@ -212,16 +213,63 @@ export const servicesCommand = {
   },
 }
 
-async function findService(fleetId: string, name: string): Promise<Service> {
+/**
+ * The service a name refers to, in a fleet where a name is no longer unique.
+ *
+ * Services are identified by (fleet, project, name), so two projects may both
+ * have a "backend". This used to take the first match, which meant a command
+ * could act on another project's service without saying so — the same class of
+ * mistake as the apply that silently took one over.
+ *
+ * Resolved in the order the operator's intent is clearest:
+ *
+ *   --project        an explicit answer, and an error if it does not match
+ *   the directory    the project a manifest here would apply as, which is how
+ *                    the service got its project in the first place
+ *   otherwise        refuse, and list the projects to choose between
+ *
+ * An id always wins: it identifies a row on its own and needs no project.
+ */
+/** `--project`, when the operator gave one. */
+const projectFlag = (flags: Flags): string | undefined =>
+  typeof flags.project === 'string' ? flags.project : undefined
+
+async function findService(fleetId: string, name: string, project?: string): Promise<Service> {
   const { body } = await request<{ services: Service[] }>('GET', `/fleets/${fleetId}/services`)
-  const match = body.services.find((s) => s.name === name || s.id === name)
-  if (!match) {
+
+  const byId = body.services.find((s) => s.id === name)
+  if (byId) return byId
+
+  const matches = body.services.filter((s) => s.name === name)
+  if (!matches.length) {
     throw new CliError(
       `No service called "${name}". Known: ${body.services.map((s) => s.name).join(', ') || 'none'}`,
       EXIT.usage
     )
   }
-  return match
+  if (matches.length === 1) return matches[0]!
+
+  if (project) {
+    const scoped = matches.find((s) => s.project === project)
+    if (scoped) return scoped
+    throw new CliError(
+      `No service called "${name}" in project "${project}". ` +
+        `It exists in: ${matches.map((s) => s.project).join(', ')}.`,
+      EXIT.usage
+    )
+  }
+
+  // The project this directory would apply as. Not a guess: it is the same
+  // value `fleet apply` uses, so it names the service this directory owns.
+  const here = projectNameFor(process.cwd())
+  const local = matches.find((s) => s.project === here)
+  if (local) return local
+
+  throw new CliError(
+    `"${name}" exists in more than one project: ${matches.map((s) => s.project).join(', ')}. ` +
+      `Say which with --project <name>.`,
+    EXIT.usage
+  )
 }
 
 async function deployPlan(fleetId: string, service: Service): Promise<PlacementPreview> {
@@ -270,36 +318,27 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * follows it to conclusion rather than reporting "scheduled" and leaving the
  * operator to guess.
  */
-async function waitUntilRunning(fleetId: string, name: string, timeoutMs = 180_000) {
+async function waitUntilRunning(fleetId: string, name: string, project?: string) {
+  const service = await findService(fleetId, name, project)
   await task(
     `waiting for ${c.bold(name)} to come up`,
     async (s) => {
       s.hints([
         'the agent picks up desired state on its next poll',
-        'a cold image pull takes as long as the node\'s uplink does',
+        "a cold image pull takes as long as the node's uplink does",
         'this clears once the agent reports the container running',
       ])
-      const deadline = Date.now() + timeoutMs
-      while (Date.now() < deadline) {
-        const current = await findService(fleetId, name)
-          .then((svc) => svc.current)
-          .catch(() => null)
-
-        if (current?.status === 'running') return
-        if (current?.status === 'failed') {
-          throw new CliError(
-            `"${name}" did not start. \`fleet deployments ${name}\` has the reason.`,
-            EXIT.healthCheckFailed
-          )
-        }
-        await sleep(2000)
-      }
-      throw new CliError(
-        `"${name}" was scheduled but has not reported running. \`fleet deployments ${name}\` has the detail.`,
-        EXIT.healthCheckFailed
-      )
+      // The shared waiter, on the shared deadline. This used to be its own
+      // loop with its own three-minute deadline, which failed a deploy that
+      // reported running three seconds later.
+      await requireRunning(fleetId, service.id, name, {
+        onPoll: (status, elapsedMs) => {
+          if (!status) return
+          s.update(`${c.bold(name)} · ${status} · ${Math.round(elapsedMs / 1000)}s`)
+        },
+      })
     },
-    { done: () => `${c.bold(name)} is running` }
+    { done: () => 'running' }
   )
 }
 
@@ -333,7 +372,7 @@ export const deployCommand = {
     const [name] = args
     if (!name) throw new CliError('usage: fleet deploy <service> [--sha <git-sha>] [--no-wait] [--dir <path>]', EXIT.usage)
 
-    const service = await findService(fleetId, name)
+    const service = await findService(fleetId, name, projectFlag(flags))
     const gitSha = typeof flags.sha === 'string' ? flags.sha : undefined
 
     const plan = await task('checking deployment plan', async () => deployPlan(fleetId, service))
@@ -417,7 +456,7 @@ export const deployCommand = {
     for (const w of body.warnings ?? []) console.log(`${glyph.warn} ${c.yellow('warning')}  ${w}`)
     if (body.url) console.log(`${glyph.info} ${c.cyan(body.url)}`)
 
-    if (!flags['no-wait']) await waitUntilRunning(fleetId, service.name)
+    if (!flags['no-wait']) await waitUntilRunning(fleetId, service.name, service.project)
   },
 }
 
@@ -427,7 +466,7 @@ export const whereCommand = {
     const [name] = args
     if (!name) throw new CliError('usage: fleet where <service>', EXIT.usage)
 
-    const service = await findService(fleetId, name)
+    const service = await findService(fleetId, name, projectFlag(flags))
     const { body } = await request<{ decision: any }>('GET', `/services/${service.id}/placement-preview`)
     const d = body.decision
 
@@ -472,7 +511,7 @@ export const rescheduleCommand = {
     const [name] = args
     if (!name) throw new CliError('usage: fleet reschedule <service>', EXIT.usage)
 
-    const service = await findService(fleetId, name)
+    const service = await findService(fleetId, name, projectFlag(flags))
     const { body } = await request<{ movedTo: { name: string }; score: number }>(
       'POST',
       `/services/${service.id}/reschedule`
@@ -512,7 +551,7 @@ export const deploymentsCommand = {
     const [name] = args
     if (!name) throw new CliError('usage: fleet deployments <service>', EXIT.usage)
 
-    const service = await findService(fleetId, name)
+    const service = await findService(fleetId, name, projectFlag(flags))
     const { body } = await request<{
       deployments: Array<{
         id: string
@@ -556,11 +595,11 @@ export const restartCommand = {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
     const [name] = args
     if (!name) throw new CliError('usage: fleet restart <service>', EXIT.usage)
-    const service = await findService(fleetId, name)
+    const service = await findService(fleetId, name, projectFlag(flags))
     const { body } = await request<{ deployment: { id: string } }>('POST', `/services/${service.id}/restart`, { body: {} })
     if (flags.json) return console.log(JSON.stringify(body, null, 2))
     console.log(`${glyph.ok} ${c.green('restart scheduled')}  ${service.name} ${c.dim(body.deployment.id.slice(0, 8))}`)
-    if (!flags['no-wait']) await waitUntilRunning(fleetId, service.name)
+    if (!flags['no-wait']) await waitUntilRunning(fleetId, service.name, service.project)
   },
 }
 
@@ -569,12 +608,12 @@ export const rollbackCommand = {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
     const [name, deploymentId] = args
     if (!name) throw new CliError('usage: fleet rollback <service> [deployment-id]', EXIT.usage)
-    const service = await findService(fleetId, name)
+    const service = await findService(fleetId, name, projectFlag(flags))
     if (!flags.yes && !flags.y && !(await confirmDeploy())) { console.log(c.dim('Rollback cancelled.')); return }
     const { body } = await request<{ rolledBackTo: string }>('POST', `/services/${service.id}/rollback`, { body: deploymentId ? { deploymentId } : {} })
     if (flags.json) return console.log(JSON.stringify(body, null, 2))
     console.log(`${glyph.ok} ${c.green('rollback scheduled')}  ${service.name} ← ${c.dim(body.rolledBackTo.slice(0, 8))}`)
-    if (!flags['no-wait']) await waitUntilRunning(fleetId, service.name)
+    if (!flags['no-wait']) await waitUntilRunning(fleetId, service.name, service.project)
   },
 }
 
@@ -583,7 +622,7 @@ export const logsCommand = {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
     const [name] = args
     if (!name) throw new CliError('usage: fleet logs <service> [--follow] [--since 1h]', EXIT.usage)
-    const service = await findService(fleetId, name)
+    const service = await findService(fleetId, name, projectFlag(flags))
     if (flags.since) console.error(c.dim('note: agent log tails are live snapshots; --since is limited to the current retained tail.'))
     let previous = ''
     const render = async () => {
@@ -936,18 +975,27 @@ export const diagnoseCommand = {
       | { status: 'disabled'; reason: string }
       | { status: 'inconclusive'; reason: string; calls: Array<{ tool: string; args: Record<string, unknown> }> }
 
-    const { body } = await task(
-      'looking',
-      async () =>
-        request<Result>('POST', `/fleets/${fleetId}/diagnose`, {
-          // Source when there is a manifest here to read it from, and nothing
-          // when there is not. `diagnose` runs from anywhere on purpose, so
-          // this is the one lookup that is sometimes unavailable — the tool
-          // says so rather than pretending it looked.
+    type Progress = {
+      step: number
+      maxSteps: number
+      tool: string
+      args: Record<string, unknown>
+      elapsedMs: number
+    }
+
+    const body = await task(
+      'investigating',
+      async (s) =>
+        streamRequest<Progress, Result>('POST', `/fleets/${fleetId}/diagnose?stream=true`, {
           body: { question, ...(Object.keys(source).length ? { source } : {}) },
+          onProgress: (p) => {
+            const detail = Object.values(p.args)[0]
+            const argText = detail ? ` · ${String(detail)}` : ''
+            s.update(`[${p.step}/${p.maxSteps}] looking at ${c.bold(p.tool)}${argText} (${Math.round(p.elapsedMs / 1000)}s)`)
+          },
         }),
       // What it looked at, so the wait is legible rather than a spinner.
-      { done: (r) => ('calls' in r.body ? `looked at ${r.body.calls.length} thing(s)` : 'done') }
+      { done: (r) => ('calls' in r ? `looked at ${r.calls.length} thing(s)` : 'done') }
     )
 
     if (flags.json) return console.log(JSON.stringify(body, null, 2))
@@ -1121,7 +1169,7 @@ export const removeServiceCommand = {
     if (!name) throw new CliError('usage: fleet rm <service> [--yes]', EXIT.usage)
 
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
-    const service = await findService(fleetId, name)
+    const service = await findService(fleetId, name, projectFlag(flags))
     const confirmed = flags.yes === true || flags.y === true
 
     if (!confirmed) {
@@ -1247,7 +1295,7 @@ export const explainCommand = {
     if (!deploymentId) {
       const name = args[0]
       if (!name) throw new CliError('name a service, or pass --deploy <id>', EXIT.usage)
-      const service = await findService(id, name)
+      const service = await findService(id, name, projectFlag(flags))
       const { body } = await request<{ deployments: Array<{ id: string; status: string }> }>(
         'GET',
         `/services/${service.id}/deployments`

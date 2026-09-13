@@ -1,9 +1,9 @@
-import { CliError, EXIT, request, requireFleet } from '../api.js'
+import { CliError, EXIT, request, streamRequest, requireFleet } from '../api.js'
 import { editManifest, restoreManifest } from '../manifest-edit.js'
 import { localSource } from '../source.js'
 import { checkEdit, applyEdit, revertEdit, type SourceEdit } from '../source-edit.js'
 import { c } from '../render.js'
-import { glyph, rule } from '../ui.js'
+import { glyph, rule, task } from '../ui.js'
 import { confirm } from '../prompt.js'
 import { awaitRunning } from '../progress.js'
 import type { Flags } from '../args.js'
@@ -140,7 +140,6 @@ export const fixCommand = {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
 
     console.log(`\n${rule(`fix · ${service}`)}`)
-    console.log(`${glyph.pending} looking…`)
 
     // Source travels with the question. `fix` already requires a project
     // directory, so the files are right here — and the control plane, which
@@ -148,12 +147,25 @@ export const fixCommand = {
     // any of it.
     const source = await localSource(process.cwd())
 
-    const { body: found } = await request<Diagnosis>('POST', `/fleets/${fleetId}/diagnose`, {
-      body: {
-        question: `Why is the "${service}" service not working as it should?`,
-        ...(Object.keys(source).length ? { source } : {}),
-      },
-    })
+    const found = await task(
+      'investigating',
+      async (s) =>
+        streamRequest<
+          { step: number; maxSteps: number; tool: string; args: Record<string, unknown>; elapsedMs: number },
+          Diagnosis
+        >('POST', `/fleets/${fleetId}/diagnose?stream=true`, {
+          body: {
+            question: `Why is the "${service}" service not working as it should?`,
+            ...(Object.keys(source).length ? { source } : {}),
+          },
+          onProgress: (p) => {
+            const detail = Object.values(p.args)[0]
+            const argText = detail ? ` · ${String(detail)}` : ''
+            s.update(`[${p.step}/${p.maxSteps}] looking at ${c.bold(p.tool)}${argText} (${Math.round(p.elapsedMs / 1000)}s)`)
+          },
+        }),
+      { done: () => 'investigation complete' }
+    )
 
     if (found.status !== 'ok') {
       throw new CliError(
@@ -177,7 +189,30 @@ export const fixCommand = {
       return await applySourceEdit(fleetId, found.edit, flags)
     }
 
-    const fix = found.fix
+    let fix = found.fix
+    if (!fix) {
+      // Measured fact fallback: if no fix or edit was proposed, but the agent's
+      // post-rollout sweep observed the container answering 2xx, propose that
+      // verified health path directly.
+      const { body: svcRes } = await request<{
+        services: Array<{
+          name: string
+          discoveredHealth?: Array<{ path: string; status: number }>
+        }>
+      }>('GET', `/fleets/${fleetId}/services`).catch(() => ({ body: { services: [] } }))
+      const targetSvc = svcRes.services.find((s) => s.name === service)
+      const answering = targetSvc?.discoveredHealth?.find((c) => c.status >= 200 && c.status < 400)?.path
+      if (answering) {
+        fix = {
+          service,
+          field: 'health',
+          value: answering,
+          why: `Container was observed answering 2xx on ${answering} during agent sweep`,
+          applicable: true,
+        }
+      }
+    }
+
     if (!fix) {
       // Most investigations do not end in one exact manifest change, and this
       // is not a failure. Saying what was found and stopping is the answer.

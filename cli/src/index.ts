@@ -81,6 +81,10 @@ const OPTIONS: Array<[string, string]> = [
   // Documented because it silently did nothing on `up` and `deploy` for a long
   // time, and a flag that validates but is ignored is worse than one that errors.
   ['--node <name>', 'Deploy onto this node, or say why the service cannot go there'],
+  // Needed since a service became (fleet, project, name): two projects may
+  // both have a "backend", and picking the first match silently acts on
+  // somebody else's.
+  ['--project <name>', 'Disambiguate when two projects have a service of the same name'],
   ['--api <url>', 'Control plane URL (default: saved profile)'],
   ['--json', 'Machine-readable output on stdout'],
   ['--plan, --dry-run', 'Show the deploy placement plan without changing anything'],

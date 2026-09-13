@@ -21,6 +21,7 @@ const SEVERITY: Record<FleetEvent, Severity> = {
   'service.rescheduled': 'info',
   'service.pinned_unavailable': 'critical',
   'service.crash_looping': 'critical',
+  'service.auto_rolled_back': 'critical',
   'volume.flexible_warning': 'warning',
   'drift.detected': 'warning',
 }
@@ -53,6 +54,8 @@ export function headline(event: FleetEventPayload): string {
       return `${event.subject} is DOWN and was not moved — it is pinned to a node that went offline.`
     case 'service.crash_looping':
       return `${event.subject} is crash-looping.`
+    case 'service.auto_rolled_back':
+      return `${event.subject} was automatically rolled back to a previous release after failing during the canary window.`
     case 'deploy.failed':
       return `Deploy of ${event.subject} failed.`
     case 'deploy.succeeded':
@@ -85,6 +88,11 @@ export function fields(event: FleetEventPayload): Array<[string, string]> {
     case 'service.pinned_unavailable':
       add('Why', d.why)
       add('Node', d.nodeId)
+      break
+    case 'service.auto_rolled_back':
+      add('Trigger', d.trigger)
+      add('Elapsed', d.elapsedSec ? `${d.elapsedSec}s` : undefined)
+      add('Previous Release', d.targetDeploymentId)
       break
   }
   return out

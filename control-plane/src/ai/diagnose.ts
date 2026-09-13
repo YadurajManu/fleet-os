@@ -103,6 +103,14 @@ export type Diagnosis =
   | { status: 'disabled'; reason: string }
   | { status: 'inconclusive'; reason: string; calls: Array<{ tool: string; args: Record<string, unknown> }> }
 
+export type DiagnoseProgress = {
+  step: number
+  maxSteps: number
+  tool: string
+  args: Record<string, unknown>
+  elapsedMs: number
+}
+
 const SYSTEM = `You work out why a service on Fleet OS is misbehaving, by asking for information one question at a time.
 
 Do not use function calling. This conversation has no functions available: emitting one is an error and the investigation stops. Reply with a JSON object and nothing else, one of:
@@ -515,6 +523,8 @@ export async function diagnose(
      * source at all without the control plane retaining any.
      */
     supplied?: Supplied
+    /** Progress callback invoked on each tool lookup step. */
+    onProgress?: (progress: DiagnoseProgress) => void | Promise<void>
   },
   fetchImpl: typeof fetch = fetch
 ): Promise<Diagnosis> {
@@ -679,6 +689,14 @@ export async function diagnose(
 
     const call = step_.call!
     calls.push(call)
+
+    await opts.onProgress?.({
+      step: calls.length,
+      maxSteps: MAX_CALLS,
+      tool: call.tool,
+      args: call.args ?? {},
+      elapsedMs: Date.now() - startedAt,
+    })
 
     const key = `${call.tool}(${JSON.stringify(call.args ?? {})})`
     const repeat = seen.get(key)

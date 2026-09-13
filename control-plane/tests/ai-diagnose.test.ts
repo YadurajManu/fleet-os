@@ -203,6 +203,35 @@ describe('the diagnosis loop', () => {
     assert.equal(out.status, 'disabled')
   })
 
+  test('onProgress reports each lookup step as it occurs', async () => {
+    const provider = scripted([
+      '{"lookup":{"name":"services","args":{}}}',
+      '{"lookup":{"name":"deployments","args":{"service":"web"}}}',
+      '{"answer":{"summary":"web is down","findings":[],"next":[]}}',
+    ])
+    const progressEvents: any[] = []
+    const out = await diagnose(
+      ctx,
+      {
+        fleetId,
+        question: 'why is web down?',
+        onProgress: (p) => {
+          progressEvents.push(p)
+        },
+      },
+      provider.impl
+    )
+
+    assert.equal(out.status, 'ok')
+    assert.equal(progressEvents.length, 2)
+    assert.equal(progressEvents[0].step, 1)
+    assert.equal(progressEvents[0].tool, 'services')
+    assert.equal(progressEvents[1].step, 2)
+    assert.equal(progressEvents[1].tool, 'deployments')
+    assert.deepEqual(progressEvents[1].args, { service: 'web' })
+    assert.ok(progressEvents[1].elapsedMs >= 0)
+  })
+
   test('a reply that is one object followed by prose is still read', async () => {
     // "Unexpected non-whitespace character after JSON at position 70" ended a
     // real investigation one step in. Everything between the first brace and

@@ -2,7 +2,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseArgs, KNOWN_FLAGS, nearestFlag } from '../src/args.js'
 import { etaLine, progressLine } from '../src/progress.js'
-import { alertCheck, healthPathCheck, diskUse } from '../src/commands/doctor.js'
+import { alertCheck, healthPathCheck, answeringHealthPaths, diskUse } from '../src/commands/doctor.js'
 import { tuneRam, tuneHealth, asQuantity, type Observed } from '../src/tune.js'
 import { editManifest } from '../src/manifest-edit.js'
 import { sourceFor, localSource } from '../src/source.js'
@@ -272,6 +272,16 @@ describe('the health paths a service actually answers on', () => {
     assert.equal(check.state, 'warn')
     assert.match(check.detail, /backend → \/healthz/)
     assert.match(check.remedy!, /health: \{ path: \/healthz \}/)
+    assert.match(check.remedy!, /fleet doctor --fix/)
+
+    const toFix = answeringHealthPaths([
+      svc('backend', [
+        { path: '/health', status: 404, bytes: 0 },
+        { path: '/healthz', status: 200, bytes: 2 },
+        { path: '/', status: 404, bytes: 0 },
+      ]),
+    ])
+    assert.deepEqual(toFix, [{ name: 'backend', path: '/healthz' }])
   })
 
   test('prefers a dedicated endpoint over root when both answer', () => {

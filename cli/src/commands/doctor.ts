@@ -2,6 +2,8 @@ import { CliError, EXIT, request, requireFleet } from '../api.js'
 import { loadProfile } from '../config.js'
 import { c, relativeTime } from '../render.js'
 import { glyph, rule, task } from '../ui.js'
+import { editManifest, type ManifestEdit } from '../manifest-edit.js'
+import { confirm } from '../prompt.js'
 import type { Flags } from '../args.js'
 
 type CheckState = 'ok' | 'warn' | 'fail'
@@ -81,14 +83,9 @@ export function diskUse(
  * plane -- and the one that matters is the suggestion, which a fleet whose
  * services all declare health checks never produces.
  */
-export function healthPathCheck(services: Service[]): {
-  state: 'ok' | 'warn'
-  label: string
-  detail: string
-  remedy?: string
-} {
+export function answeringHealthPaths(services: Service[]): Array<{ name: string; path: string }> {
   const swept = services.filter((s) => s.discoveredHealth)
-  const answering = swept
+  return swept
     .map((s) => ({
       name: s.name,
       // The first 2xx-3xx, which is the order the node tried them in: a
@@ -97,6 +94,16 @@ export function healthPathCheck(services: Service[]): {
       path: s.discoveredHealth!.find((c) => c.status >= 200 && c.status < 400)?.path,
     }))
     .filter((s): s is { name: string; path: string } => Boolean(s.path))
+}
+
+export function healthPathCheck(services: Service[]): {
+  state: 'ok' | 'warn'
+  label: string
+  detail: string
+  remedy?: string
+} {
+  const swept = services.filter((s) => s.discoveredHealth)
+  const answering = answeringHealthPaths(services)
 
   if (!answering.length) {
     return {
@@ -113,7 +120,7 @@ export function healthPathCheck(services: Service[]): {
     state: 'warn',
     label: 'health paths',
     detail: `${named}. These answer 2xx but declare no health check, so a deploy is confirmed on container state alone.`,
-    remedy: `Add \`health: { path: ${answering[0]!.path} }\` to ${answering[0]!.name} in fleet.yaml. Without one, a container that starts and then fails every request still counts as a successful deploy.`,
+    remedy: `Add \`health: { path: ${answering[0]!.path} }\` to ${answering[0]!.name} in fleet.yaml. Run \`fleet doctor --fix\` to write this automatically.`,
   }
 }
 
@@ -354,6 +361,43 @@ export const doctorCommand = {
     const failing = checks.filter((check) => check.state === 'fail').length
     const warnings = checks.filter((check) => check.state === 'warn').length
     console.log(`\n${failing ? c.red(`${failing} failed`) : c.green('no blocking failures')}${warnings ? c.dim(` · ${warnings} needs attention`) : ''}`)
+
+    if (flags.fix) {
+      const toFix = answeringHealthPaths(result.services)
+      if (!toFix.length) {
+        console.log(`\n${glyph.ok} ${c.dim('No health path fixes needed.')}\n`)
+      } else {
+        console.log(`\n${rule('auto-fix · health paths')}`)
+        for (const item of toFix) {
+          console.log(`  ${c.bold(item.name)}.health → ${JSON.stringify({ path: item.path })}`)
+        }
+        const confirmed =
+          flags.yes === true ||
+          flags.y === true ||
+          (await confirm(`\nWrite ${toFix.length} health check(s) to fleet.yaml?`))
+
+        if (!confirmed) {
+          console.log(`  ${c.dim('left alone')}\n`)
+        } else {
+          const edits: ManifestEdit[] = toFix.map((item) => ({
+            service: item.name,
+            field: 'health',
+            value: { path: item.path },
+            why: `Observed answering ${item.path} during agent sweep`,
+          }))
+          const { applied, refused } = await editManifest('fleet.yaml', edits)
+          for (const r of refused) {
+            console.log(`${glyph.warn} ${r.edit.service}.${r.edit.field} — ${r.reason}`)
+          }
+          if (applied.length) {
+            console.log(`${glyph.ok} ${c.green('fleet.yaml updated')} — ${applied.length} change(s)`)
+            console.log(`  ${c.dim('review the change:')} git diff`)
+            console.log(`  ${c.dim('deploy with:')} fleet up\n`)
+          }
+        }
+      }
+    }
+
     if (failing) process.exitCode = EXIT.failure
   },
 }

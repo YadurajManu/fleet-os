@@ -1,10 +1,12 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { deployments, services } from '../db/schema.js'
+import { evaluateCanaryHealth } from './watchdog.js'
 import type { AppContext } from '../api/context.js'
 import type { FleetEventPayload } from '../lib/events.js'
 
 export type Drift = {
   service: string
+  serviceId: string
   expected: 'running'
   actual: string
   deploymentId: string
@@ -30,27 +32,40 @@ export async function detectDrift(
   opts: { onEvent?: (e: FleetEventPayload) => void | Promise<void> } = {}
 ): Promise<Drift[]> {
   const expected = await ctx.db
-    .select({ id: deployments.id, service: services.name })
+    .select({ id: deployments.id, serviceId: deployments.serviceId, service: services.name })
     .from(deployments)
     .innerJoin(services, eq(services.id, deployments.serviceId))
     .where(and(eq(deployments.nodeId, nodeId), eq(deployments.status, 'running')))
 
   if (!expected.length) return []
 
-  const actual = new Map(reported.map((c) => [c.name, c.state]))
+  const actual = new Map(reported.map((c) => [c.name, c]))
   const drifted: Drift[] = []
 
   for (const row of expected) {
-    const state = actual.get(row.service)
+    const container = actual.get(row.service)
+    const state = container?.state
     // Absent is not necessarily drift: the agent may not have polled yet, or
     // Docker may be unreachable — in which case it reports nothing at all.
     if (state === undefined) {
       if (reported.length === 0) continue
-      drifted.push({ service: row.service, expected: 'running', actual: 'missing', deploymentId: row.id })
+      drifted.push({
+        service: row.service,
+        serviceId: row.serviceId,
+        expected: 'running',
+        actual: 'missing',
+        deploymentId: row.id,
+      })
       continue
     }
     if (state !== 'running') {
-      drifted.push({ service: row.service, expected: 'running', actual: state, deploymentId: row.id })
+      drifted.push({
+        service: row.service,
+        serviceId: row.serviceId,
+        expected: 'running',
+        actual: state,
+        deploymentId: row.id,
+      })
     }
   }
 
@@ -65,6 +80,21 @@ export async function detectDrift(
       subject: d.service,
       detail: { nodeId, expected: d.expected, actual: d.actual },
     })
+
+    // Proactive canary watchdog: if a newly rolled out deployment is crash looping,
+    // restore the previous healthy release automatically.
+    if (d.actual === 'restarting') {
+      await evaluateCanaryHealth(
+        ctx,
+        {
+          serviceId: d.serviceId,
+          deploymentId: d.deploymentId,
+          nodeId,
+          trigger: 'crash_loop',
+        },
+        { onEvent: opts.onEvent }
+      ).catch(() => {})
+    }
   }
 
   return drifted

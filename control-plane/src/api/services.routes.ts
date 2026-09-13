@@ -586,6 +586,41 @@ export async function serviceRoutes(app: FastifyInstance) {
         .parse(req.body ?? {})
 
       const { diagnose } = await import('../ai/diagnose.js')
+      const wantsStream =
+        (req.query as Record<string, string> | undefined)?.stream === 'true' ||
+        req.headers.accept?.includes('text/event-stream')
+
+      if (wantsStream) {
+        reply.raw.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        })
+
+        const onProgress = (p: import('../ai/diagnose.js').DiagnoseProgress) => {
+          reply.raw.write(`event: progress\ndata: ${JSON.stringify(p)}\n\n`)
+          ;(reply.raw as any).flush?.()
+        }
+
+        try {
+          const out = await diagnose(app.ctx, {
+            fleetId,
+            question: body.question,
+            supplied: body.source ? { source: body.source } : undefined,
+            onProgress,
+          })
+          reply.raw.write(`event: result\ndata: ${JSON.stringify(out)}\n\n`)
+          ;(reply.raw as any).flush?.()
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Internal error during diagnosis'
+          reply.raw.write(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`)
+        } finally {
+          reply.raw.end()
+        }
+        return
+      }
+
       const out = await diagnose(app.ctx, {
         fleetId,
         question: body.question,
