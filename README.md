@@ -18,6 +18,7 @@
   [![Node Version](https://img.shields.io/badge/Node.js-24+-339933.svg?style=for-the-badge&logo=nodedotjs)](https://nodejs.org/)
   [![Docker Engine](https://img.shields.io/badge/Docker-v29+-2496ED.svg?style=for-the-badge&logo=docker)](https://www.docker.com/)
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+  [![AWS](https://img.shields.io/badge/AWS-Serverless-FF9900?style=for-the-badge&logo=amazon-aws)](https://aws.amazon.com/)
   [![Author](https://img.shields.io/badge/Author-Yaduraj%20Singh-7928CA?style=for-the-badge)](https://github.com/YadurajManu)
 
   <br />
@@ -32,6 +33,16 @@
   </p>
 
 </div>
+
+---
+
+## 🎯 What's New
+
+- **🔴 Real-Time Log Streaming** — Live tail of container logs via SSE (`fleet logs <svc> --follow`). The agent publishes each log line on every heartbeat; the dashboard subscribes and streams instantly.
+- **🕸️ Collapsible Mesh Topology** — The cluster mesh is now collapsible (320px default → expand to full view). Node cards show service count, containers, tunnel status, and CPU/RAM bars for small fleets. Labels are bigger and service badges are always visible.
+- **🔒 Security Hardening** — CORS restricted to `PUBLIC_DASHBOARD_URL`, shell injection patched in all command execution, webhook bypass fixed, httpOnly/SameSite=strict cookie tokens, JWT_SECRET minimum raised to 32 chars, Redis-based login brute-force protection (10 attempts / 15 min), atomic token refresh to prevent replay race conditions.
+- **⏪ One-Click Rollback** — `fleet rollback <service>` restores the previous healthy deployment instantly. A new deployment row records the recovery action, preserving a truthful history.
+- **📊 Activity Feed Empty State** — Clean empty state design for the activity feed when nothing has happened yet.
 
 ---
 
@@ -58,11 +69,30 @@ Monitor diverse platforms simultaneously with real-time CPU, RAM, and Disk telem
 <br />
 
 ### 🐳 Per-Container Process Explorer & Live Oscilloscope
-Track container-level resource consumption, live streaming 2-second oscilloscope metrics, and trigger instant root web terminals or 1-click rolling restarts:
+Track container-level resource consumption, live streaming 2-second oscilloscope metrics, and trigger instant root web terminals or 1-click rolling restarts.
 
 <div align="center">
   <img src="docs/assets/dashboard-node-detail.png" alt="Node Detail & Container Explorer" width="94%" />
 </div>
+
+<br />
+
+### 🕸️ Collapsible Cluster Mesh Topology
+Expandable mesh view with node cards showing service count, containers, tunnel status, and CPU/RAM bars. Bigger labels, always-visible service badges for small fleets:
+
+<div align="center">
+  <img src="docs/assets/dashboard-nodes.png" alt="Fleet Cluster Mesh" width="94%" />
+</div>
+
+### 🔴 Real-Time Log Streaming
+Live SSE-powered log tail directly in the dashboard and CLI:
+
+```bash
+# Follow logs in real-time:
+fleet logs <service> --follow
+```
+
+The agent publishes each log line on every heartbeat to a Redis channel. The dashboard subscribes via SSE and streams instantly — no polling required.
 
 ---
 
@@ -73,8 +103,12 @@ Track container-level resource consumption, live streaming 2-second oscilloscope
 | **⚡ Predictive Web Terminal** | In-browser PTY with 0ms perceived latency local echo, debounced window resize, and 1-click root container shell execution (`docker exec`). |
 | **📈 Streaming Oscilloscope** | `● LIVE` 2-second telemetry streaming mode with synchronized cross-chart scrubber HUD, drag-to-zoom, and real-time network speedometers. |
 | **🐳 Container Explorer** | Full process table reporting container memory MB, host RAM %, CPU load, Docker health check verdicts, and slide-over live log streaming. |
+| **🔴 Real-Time Log Streaming** | SSE-powered live log tail (`fleet logs <svc> --follow`). Agent publishes each line on every heartbeat; dashboard subscribes and streams instantly with no polling. |
 | **🧠 Multi-Arch Build Engine** | Intelligent Docker Buildx runner that targets the exact CPU architecture of the scheduled node (`arm64` or `amd64`), avoiding brittle QEMU emulation. |
+| **⏪ One-Click Rollback** | `fleet rollback <service>` restores the previous healthy deployment. A new deployment row records the recovery, preserving truthful history. |
+| **🕸️ Collapsible Mesh Topology** | Expandable cluster mesh view — 320px default, expand to full 560px. Node cards show service count, containers, tunnel status, and CPU/RAM bars. Bigger labels, always-visible service badges. |
 | **🔒 Envelope-Encrypted Secrets** | Sensitive environment variables are encrypted at rest using per-secret random DEKs (Data Encryption Keys) wrapped by an organization Master Key. |
+| **🔒 Security Hardening** | httpOnly/SameSite=strict cookie tokens, JWT_SECRET ≥32 chars, Redis login brute-force protection (10 attempts / 15 min), atomic token refresh preventing replay, CORS restricted to `PUBLIC_DASHBOARD_URL`, shell injection patched in all command execution. |
 | **💾 Volume Snapshots & Databases** | Pin databases (Postgres, Mongo, Redis, MySQL) to dedicated physical disks with scheduled automated backup snapshots and 1-click restore. |
 | **🤖 AI Root-Cause Diagnostics** | Integrated AI engine (`fleet diagnose`, `fleet fix`) that analyzes agent telemetry, system events, and container crash logs to prescribe manifest fixes. |
 | **🌐 Dynamic Ingress & TLS** | Public HTTPS routing terminating at Caddy / Cloudflare Tunnels, routing seamlessly through reverse tunnels to wherever a container is scheduled. |
@@ -99,11 +133,14 @@ flowchart TB
         REG["Private Docker Registry (v2)"]
         DB[("PostgreSQL 16 (Drizzle ORM)")]
         REDIS[("Redis 7 (Pub/Sub & Heartbeats)")]
+        LOGS["SSE Log Stream\n(fleet logs --follow)"]
         
         API --- DB
         API --- REDIS
         API --- BUILD
+        API --- LOGS
         INGRESS --- API
+        REDIS -. "Log pub/sub" .-> LOGS
     end
 
     subgraph Nodes["Your Hardware (Heterogeneous Clusters)"]
@@ -142,6 +179,24 @@ flowchart TB
 ```
 
 > **Zero Inbound Ports**: Every arrow from a physical node points **outward**. The control plane never initiates raw connections to your hardware—it holds persistent reverse WebSocket tunnels, allowing machines behind NAT or dynamic IPs to serve global traffic securely.
+
+---
+
+## 🚀 Deploy Script
+
+One command builds and deploys the control plane and dashboard:
+
+```bash
+./deploy.sh
+```
+
+This runs `docker compose build control-plane dashboard && docker compose up -d --remove-orphans control-plane dashboard`.
+
+To deploy on a remote server:
+
+```bash
+cd /opt/fleet-os && git pull origin main && cd deploy && docker compose build control-plane dashboard && docker compose up -d --remove-orphans control-plane dashboard
+```
 
 ---
 
@@ -248,44 +303,52 @@ getting started
   deploy <service>               Build, schedule, and roll out a single service
 
 looking around
-  status                         One-screen overview of nodes, resources & services
-  nodes                          List all cluster nodes, specs, architecture, status
-  services                       List running services, public HTTPS URLs, and nodes
-  where <service>                Explain where a service will be placed and why
-  tune                           Compare allocated RAM vs actual memory consumed
-  logs <service> --follow        Live follow stdout/stderr of container
-  events                         Unified cluster event timeline (deploys, restarts)
-  open <service>                 Open public service endpoint in default browser
+   status                         One-screen overview of nodes, resources & services
+   nodes                          List all cluster nodes, specs, architecture, status
+   services                       List running services, public HTTPS URLs, and nodes
+   where <service>                Explain where a service will be placed and why
+   tune                           Compare allocated RAM vs actual memory consumed
+   logs <service> --follow        Live SSE stream of container logs
+   logs <service>                 Read the current log tail
+   events                         Unified cluster event timeline (deploys, restarts)
+   open <service>                 Open public service endpoint in default browser
 
 operating
-  restart <service>              Rolling zero-downtime container replacement
-  reschedule <service>           Force scheduler to evaluate and migrate service
-  rollback <service>             Instantly restore previous healthy deployment
-  down <service>                 Stop and tear down container workload
-  rm <service>                   Permanently delete service declaration
-  nodes cordon <name>            Stop scheduling new work onto node
-  nodes uncordon <name>          Re-enable scheduling on node
-  nodes rm <name> --force        Revoke credentials and remove node from fleet
-  unpair                         Safely teardown agent and credentials on local host
+   restart <service>              Rolling zero-downtime container replacement
+   reschedule <service>           Force scheduler to evaluate and migrate service
+   rollback <service>             Instantly restore previous healthy deployment
+   down <service>                 Stop and tear down container workload
+   rm <service>                   Permanently delete service declaration
+   nodes cordon <name>            Stop scheduling new work onto node
+   nodes uncordon <name>          Re-enable scheduling on node
+   nodes rm <name> --force        Revoke credentials and remove node from fleet
+   unpair                         Safely teardown agent and credentials on local host
 
-state & secrets
-  secrets                        List configured secret keys
-  secrets set <KEY>              Securely store credential (never echoed in history)
-  secrets import [.env]          Import secrets declared in fleet.yaml from .env
-  backup <service>               Create on-demand persistent volume snapshot
-  backups <service>              List volume backups with timestamp and sizes
-  restore <service> [id]         Restore volume snapshot back to container disk
+security
+   secrets                        List configured secret keys
+   secrets set <KEY>              Securely store credential (never echoed in history)
+   secrets import [.env]          Import secrets declared in fleet.yaml from .env
+   auth login                     Sign in and save secure session
+   auth logout                    Sign out and clear session cookies
+
+backup & ops
+   backup <service>               Create on-demand persistent volume snapshot
+   backups <service>              List volume backups with timestamp and sizes
+   restore <service> [id]         Restore volume snapshot back to container disk
+   diagnose <question>            AI-powered root-cause analysis
+   doctor                         Diagnostic health check across cluster
 ```
 
 ---
 
 ## 🛠️ Technology Stack
 
-- **Node Agent**: Written in Go (`agent/`). Cross-compiled static binaries for Linux, macOS Darwin, and Windows (`amd64`, `arm64`, `armv7`). Native Docker Engine API client & named pipes.
-- **Control Plane**: TypeScript (`control-plane/`). Built on Fastify, Drizzle ORM, PostgreSQL 16, Redis 7, and Docker Buildx.
-- **CLI**: TypeScript (`cli/`). Zero-dependency core published as `@yadurajfleetos/cli` on npm.
-- **Dashboard**: React 19 + TypeScript + Vite + Tailwind CSS (`dashboard/`). High-performance WebSockets, SVG gauges, and canvas sparklines.
+- **Node Agent**: Written in Go (`agent/`). Cross-compiled static binaries for Linux, macOS Darwin, and Windows (`amd64`, `arm64`, `armv7`). Native Docker Engine API client & named pipes. Publishes log lines via outbound WebSocket on every heartbeat.
+- **Control Plane**: TypeScript (`control-plane/`). Built on Fastify, Drizzle ORM, PostgreSQL 16, Redis 7 (pub/sub for real-time log streaming), and Docker Buildx. SSE endpoints for live log streaming and cluster mesh visualization.
+- **CLI**: TypeScript (`cli/`). Zero-dependency core published as `@yadurajfleetos/cli` on npm. Supports `fleet logs --follow` for SSE streaming.
+- **Dashboard**: React 19 + TypeScript + Vite + Tailwind CSS (`dashboard/`). Collapsible cluster mesh SVG with node cards, real-time SSE log streaming, skeleton loading states, httpOnly cookie auth.
 - **Edge Ingress**: Caddy 2 reverse proxy with dynamic TLS and Cloudflare Tunnel integration.
+- **Security**: httpOnly/SameSite=strict cookie tokens, JWT_SECRET ≥32 chars, Redis-based login brute-force protection, atomic token refresh, CORS restricted to `PUBLIC_DASHBOARD_URL`.
 
 ---
 
