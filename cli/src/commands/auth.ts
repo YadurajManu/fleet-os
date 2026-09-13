@@ -1,8 +1,7 @@
 import { createInterface } from 'node:readline/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { exec } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
 import { request, CliError, EXIT } from '../api.js'
 import { loadProfile, saveProfile, configLocation, type Profile } from '../config.js'
 import { c, keyValues } from '../render.js'
@@ -10,16 +9,12 @@ import { banner } from '../mark.js'
 import { glyph, rule, task, spinner } from '../ui.js'
 import type { Flags } from '../args.js'
 
-const execAsync = promisify(exec)
-
 async function openBrowserUrl(url: string): Promise<void> {
   const platform = process.platform
-  let cmd = ''
-  if (platform === 'darwin') cmd = `open "${url}"`
-  else if (platform === 'win32') cmd = `start "" "${url}"`
-  else cmd = `xdg-open "${url}"`
   try {
-    await execAsync(cmd)
+    if (platform === 'darwin') spawn('open', [url], { stdio: 'ignore' })
+    else if (platform === 'win32') spawn('cmd', ['/c', 'start', '""', url], { stdio: 'ignore' })
+    else spawn('xdg-open', [url], { stdio: 'ignore' })
   } catch {
     // Ignore browser opener errors; URL is printed on screen
   }

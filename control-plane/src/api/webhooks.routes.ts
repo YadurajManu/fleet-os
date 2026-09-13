@@ -98,10 +98,10 @@ export async function webhookRoutes(app: FastifyInstance) {
     }
   )
 
-  /** Shared by both webhook endpoints; unset secret means verification is off. */
+  /** Shared by both webhook endpoints; unset secret means webhooks are disabled. */
   const verified = (req: FastifyRequest): boolean => {
     const secret = app.ctx.config.WEBHOOK_SECRET
-    if (!secret) return true
+    if (!secret) return false
     const signature = req.headers['x-hub-signature-256']
     if (typeof signature !== 'string') return false
     return verifyGithubSignature((req as { rawBody?: string }).rawBody ?? '', secret, signature)

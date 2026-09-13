@@ -46,7 +46,10 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
     done(null, body)
   )
 
-  await app.register(cors, { origin: true, credentials: true })
+  await app.register(cors, {
+    origin: ctx.config.PUBLIC_DASHBOARD_URL ?? 'http://localhost:5173',
+    credentials: true,
+  })
   await app.register(jwt, { secret: ctx.config.JWT_SECRET })
 
   app.setErrorHandler((err, req, reply) => {

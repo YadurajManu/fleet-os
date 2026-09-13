@@ -4,14 +4,11 @@
  * Discovers the public HTTPS URL for the service and launches it via the
  * platform's native opener (open on macOS, xdg-open on Linux, start on Windows).
  */
-import { exec } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
 import { request, requireFleet, CliError, EXIT } from '../api.js'
 import { c } from '../render.js'
 import { glyph } from '../ui.js'
 import type { Flags } from '../args.js'
-
-const execAsync = promisify(exec)
 
 type Service = {
   id: string
@@ -22,20 +19,19 @@ type Service = {
 
 async function openUrl(url: string): Promise<void> {
   const platform = process.platform
-  let cmd = ''
+  let child
   if (platform === 'darwin') {
-    cmd = `open "${url}"`
+    child = spawn('open', [url], { stdio: 'ignore' })
   } else if (platform === 'win32') {
-    cmd = `start "" "${url}"`
+    child = spawn('cmd', ['/c', 'start', '""', url], { stdio: 'ignore' })
   } else {
-    cmd = `xdg-open "${url}"`
+    child = spawn('xdg-open', [url], { stdio: 'ignore' })
   }
 
-  try {
-    await execAsync(cmd)
-  } catch (err) {
-    throw new CliError(`Could not open browser automatically: ${String(err)}`, EXIT.failure)
-  }
+  return new Promise((resolve, reject) => {
+    child.on('error', (err) => reject(new CliError(`Could not open browser automatically: ${err.message}`, EXIT.failure)))
+    child.on('close', () => resolve())
+  })
 }
 
 export const openCommand = {
