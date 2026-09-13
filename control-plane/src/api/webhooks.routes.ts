@@ -167,6 +167,7 @@ export async function webhookRoutes(app: FastifyInstance) {
     })
 
     setImmediate(() => {
+      const deployLog = req.log.child({ deployment: gitSha.slice(0, 12) })
       for (const repo of onBranch) {
         void deployRepository(
           app,
@@ -180,7 +181,7 @@ export async function webhookRoutes(app: FastifyInstance) {
             ref: push.ref,
             subject: repo.fullName,
           },
-          req.log
+          deployLog
         )
       }
     })
@@ -332,6 +333,7 @@ export async function webhookRoutes(app: FastifyInstance) {
     if (!sourceUrl) return reply
 
     setImmediate(() => {
+      const deployLog = req.log.child({ deployment: gitSha.slice(0, 12) })
       void deployRepository(
         app,
         {
@@ -344,7 +346,7 @@ export async function webhookRoutes(app: FastifyInstance) {
           ref: push.ref,
           subject: source?.name ?? connected?.fullName ?? 'repository',
         },
-        req.log
+        deployLog
       )
     })
 

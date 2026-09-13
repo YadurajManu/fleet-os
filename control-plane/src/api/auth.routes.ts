@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
 import { users, orgs, orgMembers, fleets } from '../db/schema.js'
 import { hashPassword, verifyPassword } from '../auth/passwords.js'
-import { issueTokens, consumeRefresh, revokeAllRefresh } from '../auth/tokens.js'
+import { issueTokens, consumeRefresh, revokeAllRefresh, REFRESH_TTL_SEC } from '../auth/tokens.js'
 import {
   issueEmailToken,
   consumeEmailToken,
@@ -51,7 +51,7 @@ function setTokenCookies(reply: { setCookie: (name: string, value: string, opts:
     secure: isProd,
     sameSite: 'strict',
     path: '/',
-    maxAge: 7 * 24 * 60 * 60, // 7 days
+    maxAge: REFRESH_TTL_SEC, // aligned with JWT/Redis TTL
   })
 }
 

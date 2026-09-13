@@ -31,9 +31,10 @@ export async function loadProfile(): Promise<Profile> {
       api: fromEnv.api || stored.api || '',
     } as Profile
   } catch {
-    // The public control plane is the useful default for a first-time install.
-    // Self-hosters and CI can always override it with FLEET_API or --api.
-    return { ...fromEnv, api: fromEnv.api || 'https://fleetapi.plastikworld.xyz' } as Profile
+    // No config file — use env var or empty string. The caller will
+    // produce a clear error telling the user to run `fleet auth login`
+    // or set FLEET_API.
+    return { ...fromEnv, api: fromEnv.api || '' } as Profile
   }
 }
 

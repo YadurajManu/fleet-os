@@ -31,10 +31,10 @@ export async function issueTokens(app: FastifyInstance, redis: Redis, userId: st
 /** Single-use: consuming a refresh token immediately invalidates it. */
 export async function consumeRefresh(redis: Redis, jti: string): Promise<string | null> {
   const key = refreshKey(jti)
-  const userId = await redis.get(key)
-  if (!userId) return null
-  await redis.del(key)
-  return userId
+  // getdel is atomic — prevents two concurrent requests from both consuming
+  // the same token (race condition that allowed token replay).
+  const userId = await redis.getdel(key)
+  return userId || null
 }
 
 export async function revokeAllRefresh(redis: Redis, userId: string): Promise<number> {
