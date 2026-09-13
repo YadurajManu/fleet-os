@@ -97,3 +97,133 @@ export function LinesSkeleton({ lines = 6 }: { lines?: number }) {
     </div>
   )
 }
+
+/** Overview page skeleton — summary cards, mesh, placement map, activity feed. */
+export function OverviewSkeleton() {
+  return (
+    <div role="status" aria-label="Loading" className="space-y-6">
+      {/* summary cards */}
+      <div className="grid gap-px bg-[var(--color-line)] sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className="bg-[var(--color-ink-950)] px-5 py-4">
+            <Bar className="h-2 w-1/2" />
+            <Bar className="mt-3 h-5 w-1/3" />
+          </div>
+        ))}
+      </div>
+      {/* mesh placeholder */}
+      <div className="rounded border border-[var(--color-line)] p-5">
+        <Bar className="h-4 w-24" />
+        <div className="mt-4 flex items-center gap-6">
+          <Bar className="h-20 w-20 rounded-full" />
+          <div className="flex-1 space-y-2">
+            <Bar className="h-3 w-3/4" />
+            <Bar className="h-3 w-1/2" />
+          </div>
+        </div>
+      </div>
+      {/* placement map + activity */}
+      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+        <div className="rounded border border-[var(--color-line)] p-5">
+          <Bar className="h-4 w-28" />
+          <div className="mt-4 grid gap-px bg-[var(--color-line)] sm:grid-cols-2">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="bg-[var(--color-ink-950)] p-5 space-y-3">
+                <Bar className="h-3 w-1/2" />
+                <Bar className="h-2 w-1/3" />
+                <Bar className="h-1.5 w-full" />
+                <Bar className="h-1.5 w-full" />
+                <div className="flex gap-1.5">
+                  <Bar className="h-5 w-14" />
+                  <Bar className="h-5 w-12" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded border border-[var(--color-line)] p-5">
+          <Bar className="h-4 w-28" />
+          <div className="mt-4 space-y-0 divide-y divide-[var(--color-line)]">
+            {Array.from({ length: 5 }, (_, i) => (
+              <div key={i} className="px-0 py-3 space-y-1.5">
+                <div className="flex justify-between">
+                  <Bar className="h-3 w-1/3" />
+                  <Bar className="h-3 w-12" />
+                </div>
+                <Bar className="h-2 w-2/3" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Node detail page skeleton — header, gauges, charts. */
+export function NodeDetailSkeleton() {
+  return (
+    <div role="status" aria-label="Loading" className="space-y-6">
+      <Bar className="h-3 w-16" />
+      <div className="flex flex-wrap items-center gap-3">
+        <Bar className="h-7 w-40" />
+        <Bar className="h-5 w-16 rounded-full" />
+        <Bar className="h-3 w-48" />
+      </div>
+      {/* gauge cards */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className="rounded border border-[var(--color-line)] p-4 space-y-2">
+            <Bar className="h-2 w-12" />
+            <Bar className="h-8 w-20" />
+            <Bar className="h-1.5 w-full" />
+          </div>
+        ))}
+      </div>
+      {/* chart */}
+      <div className="rounded border border-[var(--color-line)] p-5">
+        <div className="flex justify-between">
+          <Bar className="h-4 w-24" />
+          <Bar className="h-3 w-32" />
+        </div>
+        <div className="mt-4 flex items-end gap-px h-32">
+          {Array.from({ length: 40 }, (_, i) => (
+            <div key={i} className="flex-1 flex flex-col justify-end">
+              <Bar className="rounded-t" {...{ style: { height: `${20 + Math.sin(i * 0.3) * 15 + Math.random() * 10}%` } }} />
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* services list */}
+      <div className="rounded border border-[var(--color-line)]">
+        <div className="px-4 py-3 border-b border-[var(--color-line)]">
+          <Bar className="h-4 w-28" />
+        </div>
+        <TableSkeleton rows={3} columns={[30, 20, 20, 15, 15]} />
+      </div>
+    </div>
+  )
+}
+
+/** Doctor page skeleton — health checks. */
+export function DoctorSkeleton() {
+  return (
+    <div role="status" aria-label="Loading" className="space-y-6">
+      <div>
+        <Bar className="h-6 w-28" />
+        <Bar className="mt-2 h-3 w-80" />
+      </div>
+      <div className="rounded border border-[var(--color-line)] divide-y divide-[var(--color-line)]">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="px-5 py-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Bar className="h-3 w-3 rounded-full" />
+              <Bar className="h-3 w-1/3" />
+            </div>
+            <Bar className="h-2.5 w-2/3" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}

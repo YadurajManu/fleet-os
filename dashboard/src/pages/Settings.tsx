@@ -287,7 +287,14 @@ function GitHubWorkspace({ fleet }: { fleet: NonNullable<ReturnType<typeof useAu
 
             <div className="mt-4 max-h-[22rem] divide-y divide-[var(--color-line)] overflow-y-auto border border-[var(--color-line)]">
               {catalog.loading ? (
-                <p className="p-4 font-mono text-[11px] text-[var(--color-fg-dim)]">loading repositories…</p>
+                <div className="p-4 space-y-2">
+                  {Array.from({ length: 3 }, (_, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <div className="shimmer h-3 w-3 rounded-[3px] bg-[var(--color-line)]/40" />
+                      <div className="shimmer h-3 rounded-[3px] bg-[var(--color-line)]/40" style={{ width: `${50 + i * 10}%` }} />
+                    </div>
+                  ))}
+                </div>
               ) : visibleRepos.map((repo) => {
                 const alreadyConnected = connected.data?.repositories.some((entry) => entry.fullName === repo.fullName)
                 return (

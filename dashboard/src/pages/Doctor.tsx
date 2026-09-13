@@ -1,6 +1,7 @@
 import { api, type Node, type Service } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { Copyable, Panel } from '../components/ui'
+import { DoctorSkeleton } from '../components/Skeleton'
 
 type Check = { tone: 'good' | 'warn' | 'bad'; title: string; detail: string; repair?: string }
 
@@ -47,6 +48,9 @@ export default function Doctor() {
   const services = usePoll(() => api<{ services: Service[] }>(`/fleets/${fleet?.id}/services`), `/fleets/${fleet?.id}/services`, 8000)
   const github = usePoll(() => api<{ configured: boolean; error?: string; installations?: unknown[] }>(`/fleets/${fleet?.id}/github/status`), `/fleets/${fleet?.id}/github/status`, 15000)
   const nodes = data.data?.nodes ?? []
+
+  if (data.loading && !data.data) return <DoctorSkeleton />
+
   const checks: Check[] = [github.data?.configured
     ? { tone: 'good', title: 'GitHub App', detail: `${github.data.installations?.length ?? 0} installation(s) available for deploys.` }
     : { tone: 'warn', title: 'GitHub App', detail: github.data?.error ?? 'Not configured; public repositories still work.', repair: 'Configure GITHUB_APP_ID and its private key, then reconnect your repository.' }, ...nodes.flatMap((n) => {

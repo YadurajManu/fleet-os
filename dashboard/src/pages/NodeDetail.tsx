@@ -10,6 +10,7 @@ import { beatsFrom, dockerBeatsFrom, type NodeSample } from '../lib/useSamples'
 import WebTerminal from '../components/WebTerminal'
 import ContainerExplorer, { type ContainerItem } from '../components/ContainerExplorer'
 import ContainerLogDrawer from '../components/ContainerLogDrawer'
+import { NodeDetailSkeleton } from '../components/Skeleton'
 
 /**
  * Everything known about one machine.
@@ -611,9 +612,11 @@ export default function NodeDetail() {
         <Link to="/nodes" className="font-mono text-[11.5px] text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]">
           ← nodes
         </Link>
-        <p className="font-mono text-[12px] text-[var(--color-fg-dim)]">
-          {nodes.data ? 'That node is not in this fleet.' : 'Loading…'}
-        </p>
+        {nodes.data ? (
+          <p className="font-mono text-[12px] text-[var(--color-fg-dim)]">That node is not in this fleet.</p>
+        ) : (
+          <NodeDetailSkeleton />
+        )}
       </div>
     )
   }

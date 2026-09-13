@@ -8,6 +8,7 @@ import ExplainFailure from '../components/ExplainFailure'
 import { helpFor } from '../lib/failureReasons'
 import { useState } from 'react'
 import { Reservation, HealthPath } from '../components/Measured'
+import { Bar, LinesSkeleton } from '../components/Skeleton'
 import Diagnose from '../components/Diagnose'
 import Backups from '../components/Backups'
 
@@ -117,7 +118,7 @@ export default function ServiceDetail() {
     }
   }
 
-  if (!service) return <p className="font-mono text-[12px] text-[var(--color-fg-dim)]">loading…</p>
+  if (!service) return <div className="space-y-3"><Bar className="h-3 w-20" /><Bar className="h-7 w-48" /><Bar className="h-3 w-64" /></div>
   const decision = preview.data?.decision
 
   return (
@@ -298,7 +299,7 @@ export default function ServiceDetail() {
         {/* Why here, and where it would go next — the scheduler, made legible. */}
         <Panel title="placement decision">
           {!decision ? (
-            <p className="px-5 py-6 font-mono text-[11px] text-[var(--color-fg-dim)]">computing…</p>
+            <div className="px-5 py-6"><LinesSkeleton lines={3} /></div>
           ) : decision.outcome === 'no_eligible_node' ? (
             <div className="p-5">
               <p className="text-[13.5px] text-[var(--color-down)]">No eligible node</p>

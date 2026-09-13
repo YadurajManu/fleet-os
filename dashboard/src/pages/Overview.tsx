@@ -6,6 +6,7 @@ import { Dot, Empty, ErrorNote, GridFiller, Meter, Panel, StatusPill, Button } f
 import ClusterMeshVisualizer from '../components/ClusterMeshVisualizer'
 import FirstRun from '../components/FirstRun'
 import SinceYouLeft from '../components/SinceYouLeft'
+import { OverviewSkeleton } from '../components/Skeleton'
 
 export default function Overview() {
   const { fleet } = useAuth()
@@ -32,6 +33,7 @@ export default function Overview() {
 
   if (!id) return <Empty title="No fleet selected" />
   if (map.error) return <ErrorNote error={map.error} />
+  if (map.loading && !map.data) return <OverviewSkeleton />
 
   const mapNodes = map.data?.nodes ?? []
   const all = nodes.data?.nodes ?? []
