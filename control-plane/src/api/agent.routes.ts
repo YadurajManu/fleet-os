@@ -1,5 +1,6 @@
 import { and, eq, isNull, gt, inArray, ne, or } from 'drizzle-orm'
 import { recordDeployStage } from './deploy-progress.js'
+import { publishLog } from './log-stream.js'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
 import { nodes, fleets, pairingTokens, deployments, services } from '../db/schema.js'
@@ -289,6 +290,17 @@ export async function agentRoutes(app: FastifyInstance) {
       },
       logs: hb.logs,
     })
+
+    // Publish each log line to the service's Redis channel for
+    // real-time streaming. Fire-and-forget: a Redis blip must not
+    // fail the heartbeat that carries the node's liveness.
+    for (const entry of hb.logs) {
+      void publishLog(app.ctx.redis, entry.service, {
+        service: entry.service,
+        text: entry.text,
+        nodeId,
+      }).catch(() => {})
+    }
 
     // Keep the stored version honest.
     //
