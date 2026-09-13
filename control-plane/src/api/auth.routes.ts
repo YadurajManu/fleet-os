@@ -96,6 +96,16 @@ export async function authRoutes(app: FastifyInstance) {
     // email exists or only the password was wrong.
     if (!parsed.success) throw ApiError.unauthorized('Invalid email or password')
 
+    // Brute-force protection: lock the account after 10 failed attempts
+    // within 15 minutes. Keyed by email so a single IP cannot rotate
+    // through addresses to guess one.
+    const loginKey = `login_fail:${parsed.data.email}`
+    const failures = parseInt((await redis.get(loginKey)) ?? '0', 10)
+    if (failures >= 10) {
+      req.log.warn({ email: parsed.data.email }, 'login blocked: too many failures')
+      throw ApiError.tooManyRequests('rate_limited', 'Too many failed attempts. Try again in 15 minutes.')
+    }
+
     const rows = await db
       .select({ id: users.id, email: users.email, passwordHash: users.passwordHash })
       .from(users)
@@ -109,7 +119,15 @@ export async function authRoutes(app: FastifyInstance) {
       ? await verifyPassword(user.passwordHash, parsed.data.password)
       : await verifyPassword('$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', parsed.data.password)
 
-    if (!user || !ok) throw ApiError.unauthorized('Invalid email or password')
+    if (!user || !ok) {
+      // Track failed attempts. Key expires in 15 minutes so a burst of
+      // failures does not permanently lock the account.
+      await redis.multi().incr(loginKey).expire(loginKey, 900).exec()
+      throw ApiError.unauthorized('Invalid email or password')
+    }
+
+    // Clear failure counter on successful login.
+    await redis.del(loginKey)
 
     // Remember the device and tell the owner if this sign-in is unfamiliar.
     // Never let this fail a login: a mail outage must not lock anyone out.

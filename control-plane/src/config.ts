@@ -8,7 +8,7 @@ import { z } from 'zod'
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1),
-  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters — generate with: openssl rand -base64 32'),
   SECRETS_MASTER_KEY: z
     .string()
     .min(1)
