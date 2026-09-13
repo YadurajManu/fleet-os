@@ -294,9 +294,17 @@ export default function Overview() {
               ))}
             </ul>
           ) : (
-            <p className="px-4 py-8 text-center font-mono text-[11px] text-[var(--color-fg-dim)]">
-              nothing has happened yet
-            </p>
+            <div className="px-4 py-8 text-center">
+              <div className="mx-auto mb-3 h-8 w-8 rounded-full bg-[var(--color-ink-900)] flex items-center justify-center">
+                <span className="text-[var(--color-fg-dim)] text-[14px]">—</span>
+              </div>
+              <p className="font-mono text-[11px] text-[var(--color-fg-dim)]">
+                no recent activity
+              </p>
+              <p className="mt-1 text-[10px] text-[var(--color-fg-dim)]">
+                deploy, failover, and scale events will appear here
+              </p>
+            </div>
           )}
         </Panel>
       </div>

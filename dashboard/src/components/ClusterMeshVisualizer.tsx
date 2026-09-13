@@ -8,36 +8,21 @@ export interface ClusterMeshVisualizerProps {
   nodes: Node[]
   fleetName?: string
   className?: string
-  /** Clicking a node. Without these the graph is a picture, not a control. */
   onSelectNode?: (nodeId: string) => void
-  /** Clicking one of a node's services. */
   onSelectService?: (serviceName: string) => void
 }
 
 /* ── Geometry helpers ────────────────────────────────────────── */
 
-/**
- * Places worker nodes around the control plane.
- *
- * One ellipse for every fleet size put two nodes directly above and below the
- * centre — the tallest arrangement possible on a canvas that is wider than it
- * is tall, leaving two thirds of it empty and pushing the top node's labels
- * into the header. Small fleets are the common case and deserve a layout that
- * fits them; the ellipse only earns its keep once there are enough nodes to
- * need a full circle.
- */
 function layoutNodes(count: number, cx: number, cy: number, rx: number, ry: number) {
   if (count === 0) return []
-  // A single node sits beside the control plane, not orbiting it.
   if (count === 1) return [{ x: cx + rx * 0.85, y: cy }]
-  // Two go left and right, along the axis there is actually room on.
   if (count === 2) {
     return [
       { x: cx - rx, y: cy },
       { x: cx + rx, y: cy },
     ]
   }
-  // Three or four fan across the horizontal, still avoiding dead centre-top.
   if (count <= 4) {
     return Array.from({ length: count }, (_, i) => {
       const spread = Math.PI * 0.82
@@ -45,25 +30,16 @@ function layoutNodes(count: number, cx: number, cy: number, rx: number, ry: numb
       return { x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) * 0.75 }
     })
   }
-  // Enough nodes for the circle to read as a circle. Start at the left so the
-  // first node never lands under the panel header.
   return Array.from({ length: count }, (_, i) => {
     const angle = Math.PI + (2 * Math.PI * i) / count
     return { x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) }
   })
 }
 
-/**
- * Where a node's services sit relative to it.
- *
- * Fanned on the side facing away from the control plane, so a service never
- * lands on top of the edge connecting its node to the centre.
- */
 function layoutServices(count: number, nx: number, ny: number, cx: number, cy: number) {
   if (count === 0) return []
   const away = Math.atan2(ny - cy, nx - cx)
   const ring = 40
-  // A single service sits straight out; several fan across a quarter turn.
   const spread = Math.min(Math.PI * 0.62, 0.34 * count)
   return Array.from({ length: count }, (_, i) => {
     const angle = count === 1 ? away : away - spread / 2 + (spread * i) / (count - 1)
@@ -71,7 +47,6 @@ function layoutServices(count: number, nx: number, ny: number, cx: number, cy: n
   })
 }
 
-/** SVG bezier curve between two points, bowed outward slightly. */
 function curvedPath(x1: number, y1: number, x2: number, y2: number): string {
   const mx = (x1 + x2) / 2
   const my = (y1 + y2) / 2
@@ -103,13 +78,6 @@ function Tooltip({ children, x, y, visible }: { children: ReactNode; x: number; 
   )
 }
 
-/**
- * A key to what is on screen, and nothing else.
- *
- * The legend was a fixed list of six states. A fleet showing one of them got
- * five lines describing colours that were not there, which is how a reader
- * learns to stop looking at the legend at all.
- */
 function Legend({ enriched }: { enriched: Array<{ status: string; tunnelConnected: boolean; services: Array<{ status: string }> }> }) {
   const items: Array<{ swatch: string; label: string }> = []
   const add = (swatch: string, label: string) => {
@@ -144,6 +112,67 @@ function Legend({ enriched }: { enriched: Array<{ status: string; tunnelConnecte
   )
 }
 
+/* ── Node Card (shown below mesh for small fleets) ────────────── */
+
+function NodeCard({
+  node,
+  onClick,
+}: {
+  node: { name: string; arch: string; status: string; services: Array<{ name: string; status: string }>; telemetry?: { cpuPct: number; ramUsedMb: number; containers?: unknown[] } | null; ramMb: number; tunnelConnected: boolean }
+  onClick?: () => void
+}) {
+  const tone = toneOf(node.status)
+  const svcCount = node.services.length
+  const containerCount = node.telemetry?.containers?.length ?? svcCount
+
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-start gap-3 rounded border border-[var(--color-line)] bg-[var(--color-ink-950)] px-4 py-3 text-left transition-colors hover:border-[var(--color-line-2)] hover:bg-[var(--color-ink-900)]"
+    >
+      <Dot tone={tone as 'ok' | 'warn' | 'down'} size={7} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate font-mono text-[12px] font-semibold text-[var(--color-fg)]">{node.name}</span>
+          <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--color-fg-dim)]">{node.arch}</span>
+        </div>
+        <div className="mt-1.5 flex items-center gap-3 font-mono text-[10px] text-[var(--color-fg-muted)]">
+          <span>{svcCount} service{svcCount === 1 ? '' : 's'}</span>
+          <span>·</span>
+          <span>{containerCount} container{containerCount === 1 ? '' : 's'}</span>
+          <span>·</span>
+          <span className={node.tunnelConnected ? 'text-[var(--color-signal)]' : 'text-[var(--color-fg-dim)]'}>
+            {node.tunnelConnected ? 'tunnel ok' : 'no tunnel'}
+          </span>
+        </div>
+        {node.telemetry && (
+          <div className="mt-2 space-y-1">
+            <Meter value={node.telemetry.cpuPct} max={1} label={`CPU ${pct(node.telemetry.cpuPct)}`} warnAt={0.8} />
+            <Meter value={node.telemetry.ramUsedMb} max={node.ramMb} label={`RAM ${mb(node.telemetry.ramUsedMb)} / ${mb(node.ramMb)}`} warnAt={0.85} />
+          </div>
+        )}
+        {svcCount > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {node.services.map((s) => (
+              <span
+                key={s.name}
+                className={`inline-flex items-center gap-1 rounded-[2px] border px-1.5 py-0.5 font-mono text-[9px] ${
+                  s.status === 'pinned_unavailable'
+                    ? 'border-[var(--color-warn)] bg-[color-mix(in_oklab,var(--color-warn)_8%,transparent)] text-[var(--color-warn)]'
+                    : 'border-[var(--color-line)] bg-[var(--color-ink-900)] text-[var(--color-fg-muted)]'
+                }`}
+              >
+                <Dot tone={toneOf(s.status)} size={3} />
+                {s.name}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </button>
+  )
+}
+
 /* ── Main Component ──────────────────────────────────────────── */
 
 export default function ClusterMeshVisualizer({
@@ -157,22 +186,26 @@ export default function ClusterMeshVisualizer({
   const containerRef = useRef<HTMLDivElement>(null)
   const [hovered, setHovered] = useState<string | null>(null)
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 })
-  const [dims, setDims] = useState({ w: 800, h: 480 })
+  const [expanded, setExpanded] = useState(false)
 
-  // Resize observer to keep the SVG responsive
+  const COLLAPSED_H = 320
+  const EXPANDED_H = 560
+  const targetH = expanded ? EXPANDED_H : COLLAPSED_H
+
+  const [dims, setDims] = useState({ w: 800, h: COLLAPSED_H })
+
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
     const ro = new ResizeObserver(([entry]) => {
       if (!entry) return
       const { width } = entry.contentRect
-      setDims({ w: width, h: Math.max(400, Math.min(560, width * 0.56)) })
+      setDims({ w: width, h: targetH })
     })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [targetH])
 
-  // Merge placement map info with live telemetry from the full Node list
   const enriched = useMemo(() => {
     return mapNodes.map((mn) => {
       const liveNode = nodes.find((n) => n.id === mn.id)
@@ -183,27 +216,21 @@ export default function ClusterMeshVisualizer({
         arch: mn.arch,
         agentVersion: liveNode?.agentVersion ?? null,
         live: liveNode?.live ?? false,
-        // The tunnel the control plane is actually holding, not the WireGuard
-        // mesh flag the agent never sets — which is why every node used to
-        // read "No Tunnel" while its tunnel was up and serving ingress.
         tunnelConnected: liveNode?.tunnelConnected ?? false,
         meshConnected: liveNode?.telemetry?.meshConnected ?? false,
       }
     })
   }, [mapNodes, nodes])
 
-  // Layout geometry
   const cx = dims.w / 2
   const cy = dims.h / 2
   const rx = Math.min(dims.w * 0.36, 300)
   const ry = Math.min(dims.h * 0.36, 200)
   const positions = layoutNodes(enriched.length, cx, cy, rx, ry)
 
-  /** Keyboard focus, which is separate from the mouse's idea of "hovered". */
   const [focused, setFocused] = useState<string | null>(null)
   const active = hovered ?? focused
 
-  // Handle hover on a node
   const handleNodeHover = useCallback(
     (nodeId: string | null, e?: React.MouseEvent) => {
       setHovered(nodeId)
@@ -216,13 +243,12 @@ export default function ClusterMeshVisualizer({
   )
 
   const hoveredNode = enriched.find((n) => n.id === hovered)
-
-  // Count totals for the control-plane badge
   const onlineCount = enriched.filter((n) => n.status === 'online').length
   const totalContainers = enriched.reduce(
     (sum, n) => sum + (n.telemetry?.containers?.length ?? n.services.length),
     0
   )
+  const showCards = enriched.length <= 6
 
   return (
     <div ref={containerRef} className={`relative overflow-hidden ${className}`}>
@@ -240,12 +266,18 @@ export default function ClusterMeshVisualizer({
             <Dot tone="ok" size={5} />
             {onlineCount} online
           </span>
-          <span>{totalContainers} containers</span>
+          <span>{totalContainers} container{totalContainers === 1 ? '' : 's'}</span>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="ml-2 rounded border border-[var(--color-line)] px-2 py-0.5 text-[9px] uppercase tracking-[0.1em] text-[var(--color-fg-dim)] transition-colors hover:border-[var(--color-line-2)] hover:text-[var(--color-fg-muted)]"
+          >
+            {expanded ? 'collapse' : 'expand'}
+          </button>
         </div>
       </div>
 
       {/* ── SVG Canvas ──────────────────────────────────────── */}
-      <div className="relative grid-bg" style={{ height: dims.h }}>
+      <div className="relative" style={{ height: dims.h, background: 'var(--color-ink-950)' }}>
         <svg
           width={dims.w}
           height={dims.h}
@@ -254,7 +286,6 @@ export default function ClusterMeshVisualizer({
           style={{ overflow: 'visible' }}
         >
           <defs>
-            {/* Gradient for active tunnel lines */}
             <linearGradient id="tunnel-grad" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor="var(--color-signal)" stopOpacity="0.6" />
               <stop offset="50%" stopColor="var(--color-signal)" stopOpacity="0.25" />
@@ -264,15 +295,13 @@ export default function ClusterMeshVisualizer({
               <stop offset="0%" stopColor="var(--color-down)" stopOpacity="0.3" />
               <stop offset="100%" stopColor="var(--color-down)" stopOpacity="0.1" />
             </linearGradient>
-
-            {/* Glow filter for control plane */}
             <filter id="cp-glow" x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
               <feComposite in="SourceGraphic" in2="blur" operator="over" />
             </filter>
           </defs>
 
-          {/* ── Connection lines (Node → Control Plane) ────── */}
+          {/* ── Connection lines ─────────────────────────────── */}
           {positions.map((pos, i) => {
             const node = enriched[i]!
             const isOnline = node.status === 'online'
@@ -281,7 +310,6 @@ export default function ClusterMeshVisualizer({
 
             return (
               <g key={`edge-${node.id}`}>
-                {/* Base line (always drawn, subtle) */}
                 <path
                   d={pathD}
                   fill="none"
@@ -290,8 +318,6 @@ export default function ClusterMeshVisualizer({
                   strokeDasharray={isOnline ? 'none' : '4 4'}
                   opacity={isOnline ? 0.6 : 0.3}
                 />
-
-                {/* Animated tunnel overlay when mesh is connected */}
                 {isOnline && hasTunnel && (
                   <path
                     d={pathD}
@@ -302,8 +328,6 @@ export default function ClusterMeshVisualizer({
                     className="animate-dash-flow"
                   />
                 )}
-
-                {/* Offline dashed overlay */}
                 {!isOnline && (
                   <path
                     d={pathD}
@@ -319,17 +343,12 @@ export default function ClusterMeshVisualizer({
 
           {/* ── Control Plane Centre ─────────────────────────── */}
           <g>
-            {/* Outer pulse ring */}
             <circle cx={cx} cy={cy} r={32} fill="none" stroke="var(--color-signal)" strokeWidth={1} opacity={0.2}>
               <animate attributeName="r" from="28" to="42" dur="2.5s" repeatCount="indefinite" />
               <animate attributeName="opacity" from="0.25" to="0" dur="2.5s" repeatCount="indefinite" />
             </circle>
-
-            {/* Core circle */}
             <circle cx={cx} cy={cy} r={26} fill="var(--color-ink-800)" stroke="var(--color-signal)" strokeWidth={1.5} filter="url(#cp-glow)" />
             <circle cx={cx} cy={cy} r={4} fill="var(--color-signal)" />
-
-            {/* Label */}
             <text x={cx} y={cy - 36} textAnchor="middle" fill="var(--color-fg)" fontSize="10" fontFamily="var(--font-mono)" fontWeight="600" letterSpacing="0.08em">
               CONTROL PLANE
             </text>
@@ -346,6 +365,7 @@ export default function ClusterMeshVisualizer({
             const isHovered = active === node.id
             const nodeRadius = isHovered ? 22 : 18
             const servicePos = layoutServices(node.services.length, pos.x, pos.y, cx, cy)
+            const showServiceLabels = enriched.length <= 4 || isHovered
 
             const fillColor =
               tone === 'ok'
@@ -371,8 +391,6 @@ export default function ClusterMeshVisualizer({
                 onMouseEnter={(e) => handleNodeHover(node.id, e)}
                 onMouseMove={(e) => handleNodeHover(node.id, e)}
                 onMouseLeave={() => handleNodeHover(null)}
-                // The richest view in the product used to be something you
-                // could only look at. A node is a link to the node.
                 role="link"
                 tabIndex={0}
                 aria-label={`${node.name}, ${node.status}, ${node.services.length} service${node.services.length === 1 ? '' : 's'}`}
@@ -388,7 +406,6 @@ export default function ClusterMeshVisualizer({
                 className="cursor-pointer outline-none [&:focus-visible>circle:nth-of-type(1)]:stroke-[var(--color-signal)]"
                 style={{ transition: 'transform 0.2s ease' }}
               >
-                {/* Hover ring */}
                 {isHovered && (
                   <circle cx={pos.x} cy={pos.y} r={nodeRadius + 5} fill="none" stroke={strokeColor} strokeWidth={0.8} opacity={0.4}>
                     <animate attributeName="r" from={nodeRadius + 2} to={nodeRadius + 8} dur="1.5s" repeatCount="indefinite" />
@@ -396,7 +413,6 @@ export default function ClusterMeshVisualizer({
                   </circle>
                 )}
 
-                {/* Node circle */}
                 <circle
                   cx={pos.x}
                   cy={pos.y}
@@ -407,7 +423,6 @@ export default function ClusterMeshVisualizer({
                   style={{ transition: 'r 0.2s ease, stroke-width 0.2s ease' }}
                 />
 
-                {/* Inner status dot */}
                 <circle cx={pos.x} cy={pos.y} r={3} fill={
                   tone === 'ok' ? 'var(--color-signal)' :
                   tone === 'warn' ? 'var(--color-warn)' :
@@ -415,30 +430,30 @@ export default function ClusterMeshVisualizer({
                   'var(--color-fg-dim)'
                 } />
 
-                {/* Hostname label */}
+                {/* Hostname label — bigger for readability */}
                 <text
                   x={pos.x}
-                  y={pos.y + nodeRadius + 14}
+                  y={pos.y + nodeRadius + 16}
                   textAnchor="middle"
                   fill={isHovered ? 'var(--color-fg)' : 'var(--color-fg-muted)'}
-                  fontSize="10"
+                  fontSize="12"
                   fontFamily="var(--font-mono)"
-                  fontWeight={isHovered ? '600' : '400'}
+                  fontWeight={isHovered ? '600' : '500'}
                   style={{ transition: 'fill 0.15s ease' }}
                 >
                   {node.name}
                 </text>
 
-                {/* Architecture badge */}
+                {/* Architecture + service count */}
                 <text
                   x={pos.x}
-                  y={pos.y + nodeRadius + 25}
+                  y={pos.y + nodeRadius + 28}
                   textAnchor="middle"
                   fill="var(--color-fg-dim)"
-                  fontSize="8"
+                  fontSize="9"
                   fontFamily="var(--font-mono)"
                 >
-                  {node.arch}{node.reliabilityTier !== 'standard' ? ` · ${node.reliabilityTier}` : ''}
+                  {node.arch} · {node.services.length} svc{node.services.length === 1 ? '' : 's'}
                 </text>
 
                 {/* Tunnel badge */}
@@ -463,15 +478,12 @@ export default function ClusterMeshVisualizer({
                       fontFamily="var(--font-mono)"
                       letterSpacing="0.04em"
                     >
-                      {node.tunnelConnected ? '🟢 Tunnel Active' : '○ No Tunnel'}
+                      {node.tunnelConnected ? '● Tunnel Active' : '○ No Tunnel'}
                     </text>
                   </g>
                 )}
 
-                {/* ── Services, as satellites of the node they run on ──
-                    A topology view that draws only the boxes is a list with
-                    extra steps. What runs where is the question the picture
-                    exists to answer. */}
+                {/* ── Services ──────────────────────────────── */}
                 {servicePos.map((sp, si) => {
                   const svc = node.services[si]!
                   const svcTone = toneOf(svc.status)
@@ -502,7 +514,6 @@ export default function ClusterMeshVisualizer({
                       }}
                       className="cursor-pointer outline-none"
                     >
-                      {/* Tether, so it reads as belonging to this node. */}
                       <line
                         x1={pos.x}
                         y1={pos.y}
@@ -522,14 +533,11 @@ export default function ClusterMeshVisualizer({
                         strokeWidth={1}
                         style={{ transition: 'r 0.2s ease' }}
                       >
-                        {/* Only a service still coming up should move. */}
                         {svc.status === 'deploying' && (
                           <animate attributeName="opacity" values="1;0.35;1" dur="1.6s" repeatCount="indefinite" />
                         )}
                       </circle>
-                      {/* Names only once the node is under attention, or a
-                          busy fleet becomes unreadable. */}
-                      {isHovered && (
+                      {showServiceLabels && (
                         <text
                           x={sp.x}
                           y={sp.y - 9}
@@ -549,7 +557,7 @@ export default function ClusterMeshVisualizer({
           })}
         </svg>
 
-        {/* ── Tooltip overlay (HTML positioned over SVG) ────── */}
+        {/* ── Tooltip ────────────────────────────────────────── */}
         <Tooltip x={tooltipPos.x} y={tooltipPos.y} visible={!!hoveredNode}>
           {hoveredNode && (
             <div className="space-y-2.5">
@@ -572,7 +580,6 @@ export default function ClusterMeshVisualizer({
                 )}
               </div>
 
-              {/* Telemetry Meters */}
               {hoveredNode.telemetry && (
                 <div className="space-y-1.5 pt-1">
                   <Meter
@@ -590,7 +597,6 @@ export default function ClusterMeshVisualizer({
                 </div>
               )}
 
-              {/* Services on this node */}
               {hoveredNode.services.length > 0 && (
                 <div className="pt-1 border-t border-[var(--color-line)]">
                   <div className="text-[8.5px] uppercase tracking-[0.12em] text-[var(--color-fg-dim)] mb-1.5">
@@ -614,10 +620,6 @@ export default function ClusterMeshVisualizer({
                 </div>
               )}
 
-              {/* Two different subsystems, and they were sharing one label:
-                  the tunnel is the socket the control plane holds right now,
-                  the mesh is WireGuard between nodes. Reporting the mesh flag
-                  as "Reverse Tunnel" is how a working tunnel read as down. */}
               <div className="pt-1 border-t border-[var(--color-line)] flex items-center gap-2">
                 <span className={`h-1.5 w-1.5 rounded-full ${hoveredNode.tunnelConnected ? 'bg-[var(--color-signal)]' : 'bg-[var(--color-fg-dim)]'}`} />
                 <span className="text-[9px] text-[var(--color-fg-muted)]">
@@ -632,15 +634,26 @@ export default function ClusterMeshVisualizer({
         </Tooltip>
       </div>
 
-      {/* ── Legend ───────────────────────────────────────────────
-          Only what is actually on screen. A fixed list of six states on a
-          fleet showing one of them is a key to a map of somewhere else, and
-          it teaches the reader to ignore the legend entirely. */}
       <Legend enriched={enriched} />
 
       <p className="border-t border-[var(--color-line)] px-5 py-2 font-mono text-[9.5px] text-[var(--color-fg-dim)]">
         Tab to move between nodes and services · Enter to open
       </p>
+
+      {/* ── Node Cards (shown for small fleets) ─────────────── */}
+      {showCards && enriched.length > 0 && (
+        <div className="border-t border-[var(--color-line)] px-5 py-4">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {enriched.map((node) => (
+              <NodeCard
+                key={node.id}
+                node={node}
+                onClick={() => onSelectNode?.(node.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
