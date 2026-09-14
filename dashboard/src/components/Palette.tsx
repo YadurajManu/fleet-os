@@ -61,8 +61,13 @@ export default function Palette() {
       }
       if (e.key === 'Escape') setOpen(false)
     }
+    const onCustomOpen = () => setOpen(true)
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('fleet:open-palette', onCustomOpen)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('fleet:open-palette', onCustomOpen)
+    }
   }, [])
 
   useEffect(() => {

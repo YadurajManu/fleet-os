@@ -268,3 +268,116 @@ export function ErrorNote({ error }: { error: unknown }) {
     </div>
   )
 }
+
+/** Ring/Donut gauge with color-coded thresholds for CPU/RAM metrics */
+export function RingGauge({
+  value,
+  max,
+  label,
+  sublabel,
+  size = 56,
+  strokeWidth = 4.5,
+  warnAt = 0.65,
+  dangerAt = 0.85,
+}: {
+  value: number
+  max: number
+  label?: string
+  sublabel?: string
+  size?: number
+  strokeWidth?: number
+  warnAt?: number
+  dangerAt?: number
+}) {
+  const ratio = max > 0 ? Math.min(1, Math.max(0, value / max)) : 0
+  const radius = (size - strokeWidth * 2) / 2
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference - ratio * circumference
+
+  const tone = ratio >= dangerAt ? 'down' : ratio >= warnAt ? 'warn' : 'ok'
+  const strokeColor =
+    tone === 'down' ? 'var(--color-down)' : tone === 'warn' ? 'var(--color-warn)' : 'var(--color-signal)'
+
+  return (
+    <div className="flex items-center gap-3">
+      <div className="relative shrink-0" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="-rotate-90">
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke="var(--color-line-2)"
+            strokeWidth={strokeWidth}
+            opacity={0.4}
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 0.6s cubic-bezier(0.16, 1, 0.3, 1), stroke 0.3s ease' }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px] font-semibold tabular text-[var(--color-fg)]">
+          {Math.round(ratio * 100)}%
+        </div>
+      </div>
+      {(label || sublabel) && (
+        <div className="min-w-0">
+          {label && <div className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--color-fg-muted)]">{label}</div>}
+          {sublabel && <div className="mt-0.5 font-mono text-[9px] text-[var(--color-fg-dim)]">{sublabel}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Mini SVG Sparkline trend graph */
+export function MiniSparkline({
+  data,
+  width = 54,
+  height = 18,
+  tone = 'ok',
+}: {
+  data: number[]
+  width?: number
+  height?: number
+  tone?: 'ok' | 'warn' | 'down'
+}) {
+  if (!data || data.length < 2) return null
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const range = max - min || 1
+  const step = width / (data.length - 1)
+
+  const points = data
+    .map((val, i) => {
+      const x = i * step
+      const y = height - ((val - min) / range) * (height - 4) - 2
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+
+  const color = tone === 'down' ? 'var(--color-down)' : tone === 'warn' ? 'var(--color-warn)' : 'var(--color-signal)'
+
+  return (
+    <svg width={width} height={height} className="shrink-0 overflow-visible">
+      <polyline
+        fill="none"
+        stroke={color}
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={points}
+        opacity={0.8}
+      />
+    </svg>
+  )
+}
+
