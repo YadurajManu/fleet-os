@@ -1,0 +1,57 @@
+name: Hardware / Device Support
+description: Report test results or request support for new hardware (SBCs, architectures, OS variants).
+labels: ["hardware", "agent"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fleet OS is built for real-world heterogeneous hardware. If you tested Fleet on an untested device (e.g. Orange Pi, NVIDIA Jetson, RISC-V, Synology, specialized ARM boards) or ran into compatibility issues, let us know here!
+
+  - type: input
+    id: device_model
+    attributes:
+      label: Device Model / Hardware Spec
+      placeholder: e.g. Orange Pi 5 Plus (RK3588, 16GB RAM) or NVIDIA Jetson Orin Nano
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Architecture
+      options:
+        - arm64 (aarch64)
+        - amd64 (x86_64)
+        - armv7 (32-bit ARM)
+        - riscv64
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os_kernel
+    attributes:
+      label: Operating System & Kernel
+      placeholder: e.g. Armbian 24.2 Linux 6.1.43 / macOS Darwin 24.1 / Windows 11 WSL2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Compatibility Result
+      options:
+        - Working flawlessly (Success Report)
+        - Works with workarounds
+        - Pairing / Agent fails to run
+        - Docker container engine connection fails
+        - Telemetry / Metrics inaccurate
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Test Details / Logs
+      description: Share output of `fleet nodes`, agent logs, or any errors during installation.
+      placeholder: Paste command output or error traces here...
