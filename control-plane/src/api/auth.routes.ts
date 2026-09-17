@@ -244,9 +244,22 @@ export async function authRoutes(app: FastifyInstance) {
     // Store state in Redis with 10 minute TTL
     await redis.set(`oauth:github:${state}`, JSON.stringify({ returnTo }), 'EX', 600)
 
+    // The redirect_uri MUST point to the API's callback handler, not the
+    // dashboard root. Without it, GitHub falls back to the App's default
+    // callback URL — which is typically the dashboard origin. The dashboard's
+    // nginx serves the SPA for every unknown path, so the OAuth code arrives
+    // at the React sign-in page where nothing reads it and login silently
+    // fails.
+    //
+    // The dashboard proxies /api/* to the control plane, so the callback URL
+    // goes through that same proxy, keeping everything same-origin.
+    const dashboardBase = appUrl() || publicOrigin(req)
+    const redirectUri = `${dashboardBase}/api/auth/github/callback`
+
     const authorizeUrl = buildAuthorizeUrl({
       clientId: creds.clientId,
       state,
+      redirectUri,
     })
 
     return reply.redirect(authorizeUrl)
@@ -295,10 +308,14 @@ export async function authRoutes(app: FastifyInstance) {
     let accessToken: string
     let profile: Awaited<ReturnType<typeof fetchGitHubProfile>>
     try {
+      // The redirect_uri must match the one sent during authorization, or
+      // GitHub rejects the exchange with redirect_uri_mismatch.
+      const redirectUri = `${dashboardBase}/api/auth/github/callback`
       accessToken = await exchangeCodeForAccessToken({
         clientId: creds.clientId,
         clientSecret: creds.clientSecret,
         code,
+        redirectUri,
       })
       profile = await fetchGitHubProfile(accessToken)
     } catch (err: unknown) {
