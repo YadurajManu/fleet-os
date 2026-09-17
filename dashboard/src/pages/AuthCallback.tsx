@@ -18,10 +18,18 @@ export default function AuthCallback() {
       return
     }
 
+    const requires2fa = params.get('requires2fa') === 'true'
+    const challengeToken = params.get('challengeToken')
+    const returnTo = params.get('returnTo') || '/'
+
+    if (requires2fa && challengeToken) {
+      navigate(`/login?challengeToken=${encodeURIComponent(challengeToken)}&returnTo=${encodeURIComponent(returnTo)}`, { replace: true })
+      return
+    }
+
     const accessToken = params.get('accessToken')
     const refreshToken = params.get('refreshToken')
     const email = params.get('email')
-    const returnTo = params.get('returnTo') || '/'
 
     async function handleAuth() {
       try {

@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
-import { users, orgs, orgMembers, fleets } from '../db/schema.js'
+import { users, orgs, orgMembers, fleets, authSessions } from '../db/schema.js'
 import { hashPassword, verifyPassword } from '../auth/passwords.js'
 import { issueTokens, consumeRefresh, revokeAllRefresh, REFRESH_TTL_SEC } from '../auth/tokens.js'
 import {
@@ -21,7 +21,7 @@ import {
   deletionScheduledEmail,
   deletionCancelledEmail,
 } from '../email/templates.js'
-import { recordSignIn, loginContextFrom, describeDevice } from '../auth/sessions.js'
+import { recordSignIn, loginContextFrom, describeDevice, listDevices, parseDevice, deviceHash } from '../auth/sessions.js'
 import {
   deletionImpact,
   requestDeletion,
@@ -36,6 +36,7 @@ import {
   exchangeCodeForAccessToken,
   fetchGitHubProfile,
 } from '../auth/github-oauth.js'
+import { generateTotpSecret, generateTotpUri, verifyTotpCode } from '../auth/totp.js'
 import { publicOrigin } from './install.routes.js'
 import { ApiError } from './errors.js'
 import { requireUser } from './guards.js'
@@ -139,7 +140,7 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     const rows = await db
-      .select({ id: users.id, email: users.email, passwordHash: users.passwordHash })
+      .select({ id: users.id, email: users.email, passwordHash: users.passwordHash, totpSecret: users.totpSecret })
       .from(users)
       .where(eq(users.email, parsed.data.email))
       .limit(1)
@@ -160,6 +161,18 @@ export async function authRoutes(app: FastifyInstance) {
 
     // Clear failure counter on successful login.
     await redis.del(loginKey)
+
+    // If Two-Factor Authentication is enabled, issue a short-lived challenge token.
+    if (user.totpSecret) {
+      const challengeToken = randomBytes(32).toString('base64url')
+      await redis.set(
+        `totp:challenge:${challengeToken}`,
+        JSON.stringify({ userId: user.id }),
+        'EX',
+        300 // 5 minutes
+      )
+      return { requires2fa: true, challengeToken }
+    }
 
     // Remember the device and tell the owner if this sign-in is unfamiliar.
     // Never let this fail a login: a mail outage must not lock anyone out.
@@ -415,6 +428,24 @@ export async function authRoutes(app: FastifyInstance) {
       }
     }
 
+    // If the account has 2FA enabled, redirect to 2FA challenge rather than issuing full tokens
+    if (user.totpSecret) {
+      const challengeToken = randomBytes(32).toString('base64url')
+      await redis.set(
+        `totp:challenge:${challengeToken}`,
+        JSON.stringify({ userId: user.id }),
+        'EX',
+        300
+      )
+      const callbackUrl = new URL(`${dashboardBase}/auth/callback`)
+      callbackUrl.searchParams.set('requires2fa', 'true')
+      callbackUrl.searchParams.set('challengeToken', challengeToken)
+      if (returnTo && returnTo !== '/') {
+        callbackUrl.searchParams.set('returnTo', returnTo)
+      }
+      return reply.redirect(callbackUrl.toString())
+    }
+
     // Record sign in device
     try {
       const login = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
@@ -448,6 +479,7 @@ export async function authRoutes(app: FastifyInstance) {
         emailVerifiedAt: users.emailVerifiedAt,
         githubUsername: users.githubUsername,
         avatarUrl: users.avatarUrl,
+        totpSecret: users.totpSecret,
       })
       .from(users)
       .where(eq(users.id, req.userId!))
@@ -460,7 +492,305 @@ export async function authRoutes(app: FastifyInstance) {
       .innerJoin(orgs, eq(orgs.id, orgMembers.orgId))
       .where(eq(orgMembers.userId, req.userId!))
 
-    return { user: rows[0], orgs: memberships }
+    const { totpSecret, ...userProps } = rows[0]
+    return {
+      user: {
+        ...userProps,
+        totpEnabled: Boolean(totpSecret),
+      },
+      orgs: memberships,
+    }
+  })
+
+  /* ── 2FA / TOTP ─────────────────────────────────────────────────── */
+
+  const challengeSchema = z.object({
+    challengeToken: z.string().min(1),
+    code: z.string().min(6).max(8),
+  })
+
+  app.post('/auth/totp/challenge', async (req, reply) => {
+    const parsed = challengeSchema.safeParse(req.body)
+    if (!parsed.success) {
+      throw ApiError.badRequest('invalid_challenge_request', 'Invalid challenge request')
+    }
+
+    const { challengeToken, code } = parsed.data
+    const key = `totp:challenge:${challengeToken}`
+    const raw = await redis.get(key)
+    if (!raw) {
+      throw ApiError.unauthorized('Verification session expired or invalid. Please sign in again.')
+    }
+
+    let challenge: { userId: string }
+    try {
+      challenge = JSON.parse(raw) as { userId: string }
+    } catch {
+      await redis.del(key)
+      throw ApiError.unauthorized('Invalid challenge state')
+    }
+
+    const [user] = await db
+      .select({ id: users.id, email: users.email, totpSecret: users.totpSecret })
+      .from(users)
+      .where(eq(users.id, challenge.userId))
+      .limit(1)
+
+    if (!user || !user.totpSecret) {
+      await redis.del(key)
+      throw ApiError.unauthorized('User not found or 2FA not enabled')
+    }
+
+    // Rate limit attempts per challengeToken
+    const attemptKey = `totp:attempts:${challengeToken}`
+    const attempts = await redis.incr(attemptKey)
+    if (attempts === 1) await redis.expire(attemptKey, 300)
+    if (attempts > 5) {
+      await redis.del(key)
+      await redis.del(attemptKey)
+      throw ApiError.unauthorized('Too many failed verification attempts. Please sign in again.')
+    }
+
+    const valid = verifyTotpCode(user.totpSecret, code)
+    if (!valid) {
+      throw ApiError.unauthorized('Invalid 6-digit verification code')
+    }
+
+    // Code verified: consume challenge
+    await redis.del(key)
+    await redis.del(attemptKey)
+
+    // Record sign in device
+    try {
+      const login = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
+      const verdict = await recordSignIn(app.ctx, user.id, login)
+      req.log.info({ userId: user.id, reason: verdict.reason, country: login.country }, 'sign-in recorded via 2fa')
+      if (verdict.isNew) {
+        const { subject, body } = newSignInEmail({
+          device: describeDevice(verdict.device),
+          ip: login.ip,
+          country: login.country,
+          at: new Date(),
+          reason: verdict.reason,
+          dashboardUrl: app.ctx.config.PUBLIC_DASHBOARD_URL || undefined,
+        })
+        await app.ctx.email.send(user.email, subject, body)
+      }
+    } catch (err) {
+      req.log.warn({ err, userId: user.id }, 'sign-in notification failed')
+    }
+
+    const tokens = await issueTokens(app, redis, user.id)
+    setTokenCookies(reply, tokens)
+    return { ...tokens, user: { id: user.id, email: user.email } }
+  })
+
+  app.post('/auth/totp/setup', { preHandler: requireUser }, async (req) => {
+    const [user] = await db
+      .select({ id: users.id, email: users.email, totpSecret: users.totpSecret })
+      .from(users)
+      .where(eq(users.id, req.userId!))
+      .limit(1)
+
+    if (!user) throw ApiError.notFound('User')
+
+    const secret = generateTotpSecret()
+    const uri = generateTotpUri(user.email, secret, 'Fleet OS')
+
+    // Store pending secret in Redis for 10 minutes
+    await redis.set(`totp:pending:${req.userId!}`, secret, 'EX', 600)
+
+    return { secret, uri }
+  })
+
+  const enableTotpSchema = z.object({
+    code: z.string().min(6).max(8),
+  })
+
+  app.post('/auth/totp/enable', { preHandler: requireUser }, async (req) => {
+    const parsed = enableTotpSchema.safeParse(req.body)
+    if (!parsed.success) {
+      throw ApiError.badRequest('invalid_totp_code', 'Please provide a 6-digit verification code')
+    }
+
+    const pendingKey = `totp:pending:${req.userId!}`
+    const secret = await redis.get(pendingKey)
+    if (!secret) {
+      throw ApiError.badRequest('totp_setup_expired', '2FA setup expired or was not initiated. Please try again.')
+    }
+
+    const valid = verifyTotpCode(secret, parsed.data.code)
+    if (!valid) {
+      throw ApiError.badRequest('invalid_totp_code', 'Invalid 6-digit verification code. Please check your authenticator app.')
+    }
+
+    await db
+      .update(users)
+      .set({ totpSecret: secret })
+      .where(eq(users.id, req.userId!))
+
+    await redis.del(pendingKey)
+
+    const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, req.userId!)).limit(1)
+    const membership = await db
+      .select({ orgId: orgMembers.orgId })
+      .from(orgMembers)
+      .where(eq(orgMembers.userId, req.userId!))
+      .limit(1)
+
+    if (membership[0]) {
+      await recordAudit(db, {
+        orgId: membership[0].orgId,
+        actorUserId: req.userId!,
+        action: 'user.totp_enabled',
+        targetType: 'user',
+        targetId: req.userId!,
+        metadata: { email: user?.email },
+      })
+    }
+
+    return { ok: true }
+  })
+
+  const disableTotpSchema = z.object({
+    code: z.string().optional(),
+    password: z.string().optional(),
+  })
+
+  app.post('/auth/totp/disable', { preHandler: requireUser }, async (req) => {
+    const parsed = disableTotpSchema.safeParse(req.body)
+    if (!parsed.success || (!parsed.data.code && !parsed.data.password)) {
+      throw ApiError.badRequest('missing_confirmation', 'Verification code or password required to disable 2FA')
+    }
+
+    const [user] = await db
+      .select({ id: users.id, email: users.email, passwordHash: users.passwordHash, totpSecret: users.totpSecret })
+      .from(users)
+      .where(eq(users.id, req.userId!))
+      .limit(1)
+
+    if (!user || !user.totpSecret) {
+      throw ApiError.badRequest('totp_not_enabled', 'Two-factor authentication is not enabled')
+    }
+
+    let confirmed = false
+    if (parsed.data.code) {
+      confirmed = verifyTotpCode(user.totpSecret, parsed.data.code)
+    } else if (parsed.data.password && user.passwordHash) {
+      confirmed = await verifyPassword(user.passwordHash, parsed.data.password)
+    }
+
+    if (!confirmed) {
+      throw ApiError.badRequest('invalid_confirmation', 'Invalid verification code or password')
+    }
+
+    await db
+      .update(users)
+      .set({ totpSecret: null })
+      .where(eq(users.id, req.userId!))
+
+    const membership = await db
+      .select({ orgId: orgMembers.orgId })
+      .from(orgMembers)
+      .where(eq(orgMembers.userId, req.userId!))
+      .limit(1)
+
+    if (membership[0]) {
+      await recordAudit(db, {
+        orgId: membership[0].orgId,
+        actorUserId: req.userId!,
+        action: 'user.totp_disabled',
+        targetType: 'user',
+        targetId: req.userId!,
+        metadata: { email: user.email },
+      })
+    }
+
+    return { ok: true }
+  })
+
+  /* ── Active Sessions ─────────────────────────────────────────────── */
+
+  app.get('/auth/sessions', { preHandler: requireUser }, async (req) => {
+    const rows = await listDevices(app.ctx, req.userId!)
+    const currentLogin = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
+    const currentDevice = parseDevice(currentLogin.userAgent)
+    const currentHash = deviceHash(currentDevice)
+
+    const sessions = rows.map((r) => ({
+      id: r.id,
+      deviceHash: r.deviceHash,
+      device: parseDevice(r.userAgent),
+      userAgent: r.userAgent,
+      ip: r.ip,
+      country: r.country,
+      firstSeen: r.firstSeen,
+      lastSeen: r.lastSeen,
+      loginCount: r.loginCount,
+      isCurrent: r.deviceHash === currentHash,
+    }))
+
+    return { sessions }
+  })
+
+  app.delete('/auth/sessions/:id', { preHandler: requireUser }, async (req) => {
+    const { id } = req.params as { id: string }
+    const gone = await db
+      .delete(authSessions)
+      .where(and(eq(authSessions.userId, req.userId!), eq(authSessions.id, id)))
+      .returning({ id: authSessions.id })
+
+    if (!gone.length) {
+      throw ApiError.notFound('Session')
+    }
+
+    const membership = await db
+      .select({ orgId: orgMembers.orgId })
+      .from(orgMembers)
+      .where(eq(orgMembers.userId, req.userId!))
+      .limit(1)
+
+    if (membership[0]) {
+      await recordAudit(db, {
+        orgId: membership[0].orgId,
+        actorUserId: req.userId!,
+        action: 'user.session_revoked',
+        targetType: 'session',
+        targetId: id,
+      })
+    }
+
+    return { ok: true }
+  })
+
+  app.post('/auth/sessions/revoke-others', { preHandler: requireUser }, async (req) => {
+    const currentLogin = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
+    const currentDevice = parseDevice(currentLogin.userAgent)
+    const currentHash = deviceHash(currentDevice)
+
+    const deleted = await db
+      .delete(authSessions)
+      .where(and(eq(authSessions.userId, req.userId!), ne(authSessions.deviceHash, currentHash)))
+      .returning({ id: authSessions.id })
+
+    const membership = await db
+      .select({ orgId: orgMembers.orgId })
+      .from(orgMembers)
+      .where(eq(orgMembers.userId, req.userId!))
+      .limit(1)
+
+    if (membership[0]) {
+      await recordAudit(db, {
+        orgId: membership[0].orgId,
+        actorUserId: req.userId!,
+        action: 'user.sessions_revoked_all_others',
+        targetType: 'session',
+        targetId: req.userId!,
+        metadata: { revokedCount: deleted.length },
+      })
+    }
+
+    return { ok: true, revokedCount: deleted.length }
   })
 
   /* ── password reset and email verification ──────────────────────────

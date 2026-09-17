@@ -5,6 +5,8 @@ import { useAuth, usePoll } from '../lib/auth'
 import { since } from '../lib/format'
 import { Button, Copyable, ErrorNote, Field, Panel } from '../components/ui'
 import CloseAccount from '../components/CloseAccount'
+import TwoFactorSettings from '../components/TwoFactorSettings'
+import SessionsSettings from '../components/SessionsSettings'
 
 type GitHubStatus = {
   configured: boolean
@@ -622,7 +624,7 @@ export default function Settings() {
   )
 
   const me = usePoll(
-    () => api<{ user: { id: string; email: string; githubUsername?: string | null; avatarUrl?: string | null; createdAt: string; emailVerifiedAt?: string | null }; orgs: Array<{ orgName: string; role: string; plan: string }> }>('/auth/me'),
+    () => api<{ user: { id: string; email: string; githubUsername?: string | null; avatarUrl?: string | null; createdAt: string; emailVerifiedAt?: string | null; totpEnabled?: boolean }; orgs: Array<{ orgName: string; role: string; plan: string }> }>('/auth/me'),
     '/auth/me',
     60_000
   )
@@ -635,6 +637,13 @@ export default function Settings() {
       </div>
 
       <AccountSession me={me.data} email={email} fleet={fleet} signOut={signOut} />
+
+      <TwoFactorSettings
+        enabled={Boolean(me.data?.user?.totpEnabled)}
+        onRefresh={() => me.refetch()}
+      />
+
+      <SessionsSettings />
 
       <FleetSettings />
 

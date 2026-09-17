@@ -2,7 +2,15 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { api, session, type Fleet } from './api'
 
 type Me = {
-  user: { id: string; email: string; emailVerifiedAt: string | null }
+  user: {
+    id: string
+    email: string
+    emailVerifiedAt: string | null
+    githubUsername?: string | null
+    avatarUrl?: string | null
+    totpEnabled?: boolean
+    createdAt?: string
+  }
   orgs: Array<{ orgName: string; role: string; plan: string }>
 }
 
@@ -14,8 +22,9 @@ type AuthState = {
   fleets: Fleet[]
   fleet: Fleet | null
   selectFleet: (id: string) => void
-  signIn: (email: string, password: string) => Promise<void>
+  signIn: (email: string, password: string) => Promise<{ requires2fa?: boolean; challengeToken?: string } | void>
   signUp: (email: string, password: string) => Promise<void>
+  complete2fa: (challengeToken: string, code: string) => Promise<void>
   signOut: () => void
   refreshFleets: () => Promise<void>
   /** Re-read /auth/me. The confirmation link is usually opened in another tab,
@@ -82,17 +91,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const enter = useCallback(
     async (path: string, email: string, password: string) => {
-      const res = await api<{ accessToken: string; refreshToken: string; user: { email: string } }>(path, {
+      const res = await api<{
+        accessToken?: string
+        refreshToken?: string
+        user?: { email: string }
+        requires2fa?: boolean
+        challengeToken?: string
+      }>(path, {
         method: 'POST',
         body: { email, password },
         auth: false,
       })
+
+      if (res.requires2fa && res.challengeToken) {
+        return { requires2fa: true, challengeToken: res.challengeToken }
+      }
+
+      if (res.accessToken && res.refreshToken && res.user) {
+        session.set({ accessToken: res.accessToken, refreshToken: res.refreshToken, email: res.user.email })
+        setEmail(res.user.email)
+        const ok = await refreshMe()
+        if (ok) await loadFleets()
+      }
+    },
+    [loadFleets, refreshMe]
+  )
+
+  const complete2fa = useCallback(
+    async (challengeToken: string, code: string) => {
+      const res = await api<{
+        accessToken: string
+        refreshToken: string
+        user: { email: string }
+      }>('/auth/totp/challenge', {
+        method: 'POST',
+        body: { challengeToken, code },
+        auth: false,
+      })
       session.set({ accessToken: res.accessToken, refreshToken: res.refreshToken, email: res.user.email })
       setEmail(res.user.email)
-      // The login response does not carry verification state, so ask for it
-      // rather than assuming. Assuming true would flash the whole dashboard
-      // before the gate closed on it, which looks like a bug and leaks the
-      // shape of an account the reader has not proven is theirs.
       const ok = await refreshMe()
       if (ok) await loadFleets()
     },
@@ -108,7 +145,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       fleet: fleets.find((f) => f.id === fleetId) ?? null,
       selectFleet: setFleetId,
       signIn: (e, p) => enter('/auth/login', e, p),
-      signUp: (e, p) => enter('/auth/signup', e, p),
+      signUp: async (e, p) => { await enter('/auth/signup', e, p) },
+      complete2fa,
       signOut: async () => {
         try { await fetch(`${import.meta.env?.VITE_API ?? '/api'}/auth/logout`, { method: 'POST', credentials: 'include' }) } catch {}
         session.clear()
@@ -125,7 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return ok
       },
     }),
-    [ready, email, verified, fleets, fleetId, enter, loadFleets, refreshMe]
+    [ready, email, verified, fleets, fleetId, enter, complete2fa, loadFleets, refreshMe]
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
