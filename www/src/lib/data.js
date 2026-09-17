@@ -224,7 +224,7 @@ export const FOOTER_LINKS = [
       ['CLI reference', '#/docs/cli'],
       ['REST API', '#/docs/api'],
       ['Self-hosting guide', '#/docs/self-hosting'],
-      ['Source on GitHub', '#/github'],
+      ['Source on GitHub', 'https://github.com/YadurajManu/fleet-os'],
     ],
   },
   {
@@ -241,11 +241,11 @@ export const FOOTER_LINKS = [
   {
     heading: 'Community',
     links: [
-      ['Discord', '#/community'],
-      ['r/selfhosted', '#/community'],
+      ['Discord', 'https://discord.gg/fleet-os'],
+      ['GitHub Discussions', 'https://github.com/YadurajManu/fleet-os/discussions'],
+      ['GitHub Issues', 'https://github.com/YadurajManu/fleet-os/issues'],
+      ['r/selfhosted', 'https://reddit.com/r/selfhosted'],
       ['Homelab showcase', '#/community'],
-      ['Support forum', '#/contact'],
-      ['Bluesky', '#/community'],
       ['Contributing', '#/community'],
     ],
   },

@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/prerender.mjs",
+    "build": "vite build && node scripts/prerender.mjs && node scripts/generate-og.mjs",
     "preview": "vite preview",
-    "prerender": "node scripts/prerender.mjs"
+    "prerender": "node scripts/prerender.mjs",
+    "generate-og": "node scripts/generate-og.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^9.7.0",
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.0",
+    "sharp": "^0.35.4",
     "tailwindcss": "^4.3.3",
     "vite": "^8.2.2"
   }

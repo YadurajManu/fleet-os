@@ -6,6 +6,7 @@ import AmbientMesh from './AmbientMesh'
 import StatusDot from './ui/StatusDot'
 import Logo from './ui/Logo'
 import CopyLine from './ui/CopyLine'
+import GitHubStarBadge from './ui/GitHubStarBadge'
 
 function useTicker() {
   const [n, setN] = useState(0)
@@ -144,6 +145,7 @@ export default function Footer() {
           </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
+            <GitHubStarBadge />
             <span className="inline-flex items-center gap-2 border border-[var(--color-line)] px-3 py-1.5 font-mono text-[10.5px] text-[var(--color-fg-dim)]">
               <StatusDot size={5} />
               v0.9.2 · open beta

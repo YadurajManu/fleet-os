@@ -1,0 +1,7 @@
+POV: You have a drawer full of retired hardware doing nothing, while you pay AWS $68/mo for a hobby app with 4 users.
+
+Fleet OS turns spare machines into an automated, self-healing cloud. One curl command, WireGuard encrypted mesh, 4s zero-downtime failover when someone unplugs the laptop.
+
+Built by Yaduraj (@YadurajManu)
+Check it out: fleet-os.dev
+GitHub: github.com/YadurajManu/fleet-os

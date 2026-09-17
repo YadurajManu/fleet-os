@@ -28,6 +28,16 @@ export const SITE_MAP = [
     ],
   },
   {
+    heading: 'Community',
+    links: [
+      ['Discord', 'https://discord.gg/fleet-os'],
+      ['GitHub Discussions', 'https://github.com/YadurajManu/fleet-os/discussions'],
+      ['GitHub Repository', 'https://github.com/YadurajManu/fleet-os'],
+      ['r/selfhosted', 'https://reddit.com/r/selfhosted'],
+      ['Contributing', '#/community'],
+    ],
+  },
+  {
     heading: 'Company',
     links: [
       ['About', '#/about'],
@@ -37,7 +47,6 @@ export const SITE_MAP = [
       ['Security', '#/security'],
       ['Status', '#/status'],
       ['Contact', '#/contact'],
-      ['Community', '#/community'],
     ],
   },
   {
