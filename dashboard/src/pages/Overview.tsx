@@ -165,28 +165,25 @@ export default function Overview() {
           {/* Quick Actions Bar */}
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              size="sm"
-              variant="secondary"
+              variant="ghost"
               onClick={() => navigate('/doctor')}
-              className="flex items-center gap-1.5 text-[11px]"
+              className="flex items-center gap-1.5 text-[11px] py-1 px-2.5"
             >
               <span>🩺</span>
               <span>Fleet Doctor</span>
             </Button>
             <Button
-              size="sm"
-              variant="secondary"
+              variant="ghost"
               onClick={() => navigate('/services')}
-              className="flex items-center gap-1.5 text-[11px]"
+              className="flex items-center gap-1.5 text-[11px] py-1 px-2.5"
             >
               <span>📦</span>
               <span>Services</span>
             </Button>
             <Button
-              size="sm"
               variant="primary"
               onClick={() => window.dispatchEvent(new CustomEvent('fleet:open-palette'))}
-              className="flex items-center gap-1.5 text-[11px]"
+              className="flex items-center gap-1.5 text-[11px] py-1 px-2.5"
             >
               <span>⚡</span>
               <span>Quick Actions</span>
@@ -215,10 +212,9 @@ export default function Overview() {
               </div>
             </div>
             <Button
-              size="sm"
-              variant="secondary"
+              variant="ghost"
               onClick={() => navigate('/alerts')}
-              className="text-[11px] shrink-0"
+              className="text-[11px] shrink-0 py-1 px-2.5"
             >
               Configure Alerts →
             </Button>
@@ -253,18 +249,16 @@ export default function Overview() {
             </div>
             <div className="flex items-center gap-2 shrink-0 sm:self-center">
               <Button
-                size="sm"
-                variant="secondary"
+                variant="danger"
                 onClick={() => navigate('/doctor')}
-                className="text-[11px] border-[var(--color-down)]/40 text-[var(--color-down)] hover:bg-[var(--color-down)]/10"
+                className="text-[11px] border-[var(--color-down)]/40 text-[var(--color-down)] hover:bg-[var(--color-down)]/10 py-1 px-2.5"
               >
                 Run Doctor
               </Button>
               <Button
-                size="sm"
                 variant="primary"
                 onClick={() => navigate('/services')}
-                className="text-[11px]"
+                className="text-[11px] py-1 px-2.5"
               >
                 View Services →
               </Button>

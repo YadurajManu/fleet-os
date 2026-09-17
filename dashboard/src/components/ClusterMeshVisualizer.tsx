@@ -385,7 +385,7 @@ export default function ClusterMeshVisualizer({
             </filter>
           </defs>
 
-          <g transform={`scale(${zoom})`} transformOrigin={`${cx}px ${cy}px`} style={{ transition: 'transform 0.15s ease-out' }}>
+          <g transform={`scale(${zoom})`} style={{ transformOrigin: `${cx}px ${cy}px`, transition: 'transform 0.15s ease-out' }}>
             {/* Ambient background glow emanating from Control Plane */}
             <circle cx={cx} cy={cy} r={Math.max(rx, ry) * 1.4} fill="url(#mesh-bg-radial)" pointerEvents="none" />
 

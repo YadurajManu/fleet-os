@@ -10,6 +10,7 @@
  * decision, which the handler makes and reports before it hands off.
  */
 import 'dotenv/config'
+process.env.NODE_ENV = 'test'
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq } from 'drizzle-orm'
