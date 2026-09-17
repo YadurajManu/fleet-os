@@ -61,8 +61,11 @@ export const users = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     email: text('email').notNull(),
-    passwordHash: text('password_hash').notNull(),
+    passwordHash: text('password_hash'),
     totpSecret: text('totp_secret'), // PRD 7.8 — optional 2FA
+    githubId: text('github_id'),
+    githubUsername: text('github_username'),
+    avatarUrl: text('avatar_url'),
     /** Null until the address is confirmed. Accounts predating this are backfilled. */
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
     /** When the owner asked. Kept separate so "requested but not confirmed" is visible. */
@@ -71,7 +74,10 @@ export const users = pgTable(
     deletionScheduledFor: timestamp('deletion_scheduled_for', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('users_email_key').on(t.email)]
+  (t) => [
+    uniqueIndex('users_email_key').on(t.email),
+    uniqueIndex('users_github_id_key').on(t.githubId),
+  ]
 )
 
 /**

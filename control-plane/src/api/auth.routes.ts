@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
@@ -29,6 +30,13 @@ import {
   GRACE_DAYS,
 } from '../auth/account-deletion.js'
 import { recordAudit } from '../lib/audit.js'
+import {
+  getGitHubOAuthCredentials,
+  buildAuthorizeUrl,
+  exchangeCodeForAccessToken,
+  fetchGitHubProfile,
+} from '../auth/github-oauth.js'
+import { publicOrigin } from './install.routes.js'
 import { ApiError } from './errors.js'
 import { requireUser } from './guards.js'
 
@@ -139,7 +147,7 @@ export async function authRoutes(app: FastifyInstance) {
     const user = rows[0]
     // Hash even when the user is absent so a missing account is not detectable
     // by response time.
-    const ok = user
+    const ok = user && user.passwordHash
       ? await verifyPassword(user.passwordHash, parsed.data.password)
       : await verifyPassword('$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', parsed.data.password)
 
@@ -214,17 +222,215 @@ export async function authRoutes(app: FastifyInstance) {
     return { ok: true }
   })
 
+  app.get('/auth/config', async () => {
+    const creds = getGitHubOAuthCredentials(app.ctx.config)
+    return {
+      githubOAuth: creds !== null,
+    }
+  })
+
+  app.get('/auth/github', async (req, reply) => {
+    const creds = getGitHubOAuthCredentials(app.ctx.config)
+    if (!creds) {
+      throw ApiError.badRequest(
+        'github_oauth_not_configured',
+        'GitHub OAuth is not configured on this control plane.'
+      )
+    }
+
+    const state = randomBytes(32).toString('base64url')
+    const returnTo = ((req.query as Record<string, string>)?.returnTo || '/').slice(0, 500)
+
+    // Store state in Redis with 10 minute TTL
+    await redis.set(`oauth:github:${state}`, JSON.stringify({ returnTo }), 'EX', 600)
+
+    const authorizeUrl = buildAuthorizeUrl({
+      clientId: creds.clientId,
+      state,
+    })
+
+    return reply.redirect(authorizeUrl)
+  })
+
+  app.get('/auth/github/callback', async (req, reply) => {
+    const query = req.query as Record<string, string | undefined>
+    const code = query.code
+    const state = query.state
+    const error = query.error
+    const errorDescription = query.error_description
+
+    const dashboardBase = appUrl() || publicOrigin(req)
+
+    if (error) {
+      req.log.warn({ error, errorDescription }, 'github oauth returned error')
+      const msg = encodeURIComponent(errorDescription || error)
+      return reply.redirect(`${dashboardBase}/auth/callback?error=${msg}`)
+    }
+
+    if (!code || !state) {
+      return reply.redirect(`${dashboardBase}/auth/callback?error=${encodeURIComponent('Missing code or state from GitHub')}`)
+    }
+
+    // Verify and consume state (single-use CSRF protection)
+    const stateKey = `oauth:github:${state}`
+    const rawState = await redis.get(stateKey)
+    if (!rawState) {
+      return reply.redirect(`${dashboardBase}/auth/callback?error=${encodeURIComponent('Expired or invalid OAuth state. Please try signing in again.')}`)
+    }
+    await redis.del(stateKey)
+
+    let returnTo = '/'
+    try {
+      const parsedState = JSON.parse(rawState) as { returnTo?: string }
+      if (parsedState.returnTo && parsedState.returnTo.startsWith('/')) {
+        returnTo = parsedState.returnTo
+      }
+    } catch {}
+
+    const creds = getGitHubOAuthCredentials(app.ctx.config)
+    if (!creds) {
+      return reply.redirect(`${dashboardBase}/auth/callback?error=${encodeURIComponent('GitHub OAuth credentials not configured')}`)
+    }
+
+    let accessToken: string
+    let profile: Awaited<ReturnType<typeof fetchGitHubProfile>>
+    try {
+      accessToken = await exchangeCodeForAccessToken({
+        clientId: creds.clientId,
+        clientSecret: creds.clientSecret,
+        code,
+      })
+      profile = await fetchGitHubProfile(accessToken)
+    } catch (err: unknown) {
+      req.log.error({ err }, 'github oauth token exchange or profile fetch failed')
+      const msg = encodeURIComponent(err instanceof Error ? err.message : 'GitHub OAuth failed')
+      return reply.redirect(`${dashboardBase}/auth/callback?error=${msg}`)
+    }
+
+    // Find or create user
+    const existingByGithub = await db
+      .select()
+      .from(users)
+      .where(eq(users.githubId, profile.id))
+      .limit(1)
+
+    let user = existingByGithub[0]
+
+    if (user) {
+      // Update github metadata if changed
+      if (user.githubUsername !== profile.login || user.avatarUrl !== profile.avatarUrl) {
+        await db
+          .update(users)
+          .set({
+            githubUsername: profile.login,
+            avatarUrl: profile.avatarUrl,
+            emailVerifiedAt: user.emailVerifiedAt ?? new Date(),
+          })
+          .where(eq(users.id, user.id))
+      }
+    } else {
+      // Check if user exists by verified email
+      const existingByEmail = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, profile.email))
+        .limit(1)
+
+      if (existingByEmail[0]) {
+        // Link GitHub to existing account
+        user = existingByEmail[0]
+        await db
+          .update(users)
+          .set({
+            githubId: profile.id,
+            githubUsername: profile.login,
+            avatarUrl: profile.avatarUrl,
+            emailVerifiedAt: user.emailVerifiedAt ?? new Date(),
+          })
+          .where(eq(users.id, user.id))
+
+        const [member] = await db
+          .select({ orgId: orgMembers.orgId })
+          .from(orgMembers)
+          .where(eq(orgMembers.userId, user.id))
+          .limit(1)
+
+        if (member) {
+          await recordAudit(db, {
+            orgId: member.orgId,
+            actorUserId: user.id,
+            action: 'user.linked_github',
+            targetType: 'user',
+            targetId: user.id,
+            metadata: { githubLogin: profile.login },
+          })
+        }
+      } else {
+        // Create new user, default org, and fleet
+        user = await db.transaction(async (tx) => {
+          const [newUser] = await tx
+            .insert(users)
+            .values({
+              email: profile.email,
+              githubId: profile.id,
+              githubUsername: profile.login,
+              avatarUrl: profile.avatarUrl,
+              emailVerifiedAt: new Date(),
+            })
+            .returning()
+
+          const orgName = profile.login || profile.email.split('@')[0] || 'personal'
+          const [org] = await tx.insert(orgs).values({ name: `${orgName}'s org` }).returning()
+          await tx.insert(orgMembers).values({ orgId: org!.id, userId: newUser!.id, role: 'owner' })
+          const [fleet] = await tx.insert(fleets).values({ orgId: org!.id, name: 'homelab' }).returning()
+
+          await recordAudit(tx, {
+            orgId: org!.id,
+            actorUserId: newUser!.id,
+            action: 'org.created',
+            targetType: 'org',
+            targetId: org!.id,
+            metadata: { via: 'github_oauth', githubLogin: profile.login },
+          })
+
+          return newUser!
+        })
+      }
+    }
+
+    // Record sign in device
+    try {
+      const login = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
+      await recordSignIn(app.ctx, user.id, login)
+    } catch (err) {
+      req.log.warn({ err, userId: user.id }, 'oauth sign-in recording failed')
+    }
+
+    // Issue tokens and set cookies
+    const tokens = await issueTokens(app, redis, user.id)
+    setTokenCookies(reply, tokens)
+
+    // Redirect to dashboard callback handler
+    const callbackUrl = new URL(`${dashboardBase}/auth/callback`)
+    callbackUrl.searchParams.set('accessToken', tokens.accessToken)
+    callbackUrl.searchParams.set('refreshToken', tokens.refreshToken)
+    callbackUrl.searchParams.set('email', user.email)
+    if (returnTo && returnTo !== '/') {
+      callbackUrl.searchParams.set('returnTo', returnTo)
+    }
+
+    return reply.redirect(callbackUrl.toString())
+  })
+
   app.get('/auth/me', { preHandler: requireUser }, async (req) => {
     const rows = await db
       .select({
         id: users.id,
         email: users.email,
         createdAt: users.createdAt,
-        // The dashboard gates itself on this. Without it here there is no way
-        // for a signed-in client to know the address was never confirmed, and
-        // an unverified account gets the whole product - including a recovery
-        // flow that mails a link to an address nobody has proven they own.
         emailVerifiedAt: users.emailVerifiedAt,
+        githubUsername: users.githubUsername,
+        avatarUrl: users.avatarUrl,
       })
       .from(users)
       .where(eq(users.id, req.userId!))
@@ -430,7 +636,7 @@ export async function authRoutes(app: FastifyInstance) {
       .limit(1)
     if (!user) throw ApiError.notFound('User')
 
-    if (!(await verifyPassword(user.passwordHash, parsed.data.password))) {
+    if (!user.passwordHash || !(await verifyPassword(user.passwordHash, parsed.data.password))) {
       throw ApiError.unauthorized('That password is not correct')
     }
 
