@@ -61,9 +61,10 @@ export function Panel({ title, right, children, className = '' }: { title?: stri
 
 export function Button({
   children, variant = 'ghost', className = '', ...rest
-}: { variant?: 'primary' | 'ghost' | 'danger' } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+}: { variant?: 'primary' | 'secondary' | 'ghost' | 'danger' } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   const styles = {
     primary: 'bg-[var(--color-signal)] text-[#04140c] hover:bg-[#55ee9c] disabled:opacity-50',
+    secondary: 'border border-[var(--color-line-2)] bg-[var(--color-ink-900)] text-[var(--color-fg)] hover:border-[var(--color-fg-dim)] hover:bg-[var(--color-ink-800)] disabled:opacity-40',
     ghost: 'border border-[var(--color-line-2)] text-[var(--color-fg)] hover:border-[var(--color-fg-dim)] hover:bg-[var(--color-ink-800)] disabled:opacity-40',
     danger: 'border border-[var(--color-line-2)] text-[var(--color-fg-muted)] hover:border-[var(--color-down)] hover:text-[var(--color-down)] disabled:opacity-40',
   }[variant]

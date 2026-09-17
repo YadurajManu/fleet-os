@@ -612,7 +612,7 @@ function FleetSettings() {
 
 
 export default function Settings() {
-  const { fleet } = useAuth()
+  const { fleet, email, signOut } = useAuth()
   const isAdmin = fleet?.role === 'owner' || fleet?.role === 'admin'
 
   const audit = usePoll(
@@ -621,12 +621,20 @@ export default function Settings() {
     20000
   )
 
+  const me = usePoll(
+    () => api<{ user: { id: string; email: string; githubUsername?: string | null; avatarUrl?: string | null; createdAt: string; emailVerifiedAt?: string | null }; orgs: Array<{ orgName: string; role: string; plan: string }> }>('/auth/me'),
+    '/auth/me',
+    60_000
+  )
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-[22px] font-semibold tracking-[-0.03em]">Settings</h1>
-        <p className="mt-1 text-[13.5px] text-[var(--color-fg-muted)]">Fleet configuration and the audit trail.</p>
+        <p className="mt-1 text-[13.5px] text-[var(--color-fg-muted)]">Fleet configuration, account, and the audit trail.</p>
       </div>
+
+      <AccountSession me={me.data} email={email} fleet={fleet} signOut={signOut} />
 
       <FleetSettings />
 
@@ -667,3 +675,153 @@ export default function Settings() {
     </div>
   )
 }
+
+/* ── Account & Session ──────────────────────────────────────────────── */
+
+function AccountSession({
+  me,
+  email,
+  fleet,
+  signOut,
+}: {
+  me: { user: { id: string; email: string; githubUsername?: string | null; avatarUrl?: string | null; createdAt: string; emailVerifiedAt?: string | null }; orgs: Array<{ orgName: string; role: string; plan: string }> } | null
+  email: string | null
+  fleet: ReturnType<typeof useAuth>['fleet']
+  signOut: () => void
+}) {
+  const [confirming, setConfirming] = useState(false)
+
+  const user = me?.user
+  const org = me?.orgs?.[0]
+
+  return (
+    <Panel title="account & session" right={<span className="normal-case">who you are and how to leave</span>}>
+      <div className="space-y-5 p-5">
+        {/* Profile row */}
+        <div className="flex items-start gap-4">
+          {/* Avatar */}
+          {user?.avatarUrl ? (
+            <img
+              src={user.avatarUrl}
+              alt=""
+              className="h-12 w-12 shrink-0 rounded-full border border-[var(--color-line-2)] shadow-[0_0_0_3px_var(--color-ink-950)]"
+            />
+          ) : (
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[var(--color-line-2)] bg-[var(--color-ink-800)] text-[16px] font-semibold text-[var(--color-fg-muted)]">
+              {(email || '?').charAt(0).toUpperCase()}
+            </div>
+          )}
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[14px] font-medium tracking-[-0.01em]">{email}</span>
+              {user?.emailVerifiedAt && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--color-signal)_12%,transparent)] border border-[color-mix(in_oklab,var(--color-signal)_25%,transparent)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--color-signal)]">
+                  ✓ verified
+                </span>
+              )}
+            </div>
+
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {/* GitHub link */}
+              {user?.githubUsername ? (
+                <a
+                  href={`https://github.com/${user.githubUsername}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 font-mono text-[11px] text-[var(--color-fg-muted)] transition-colors hover:text-[var(--color-fg)]"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+                  </svg>
+                  @{user.githubUsername}
+                </a>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-[var(--color-fg-dim)]">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" opacity="0.4" aria-hidden="true">
+                    <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+                  </svg>
+                  no GitHub linked
+                </span>
+              )}
+
+              {/* Role badge */}
+              {fleet?.role && (
+                <span className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.08em] ${
+                  fleet.role === 'owner'
+                    ? 'border-[color-mix(in_oklab,var(--color-warn)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-warn)_8%,transparent)] text-[var(--color-warn)]'
+                    : fleet.role === 'admin'
+                    ? 'border-[color-mix(in_oklab,var(--color-focus)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-focus)_8%,transparent)] text-[var(--color-focus)]'
+                    : 'border-[var(--color-line-2)] bg-[var(--color-ink-900)] text-[var(--color-fg-dim)]'
+                }`}>
+                  {fleet.role}
+                </span>
+              )}
+
+              {/* Org */}
+              {org && (
+                <span className="font-mono text-[10.5px] text-[var(--color-fg-dim)]">
+                  {org.orgName}
+                </span>
+              )}
+            </div>
+
+            {user?.createdAt && (
+              <p className="mt-1.5 font-mono text-[10px] text-[var(--color-fg-dim)]">
+                member since {new Date(user.createdAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div className="border-t border-[var(--color-line)]" />
+
+        {/* Logout section */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[13px] font-medium">Sign out</p>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-fg-muted)]">
+              End your session on this device. You'll need to sign in again.
+            </p>
+          </div>
+
+          {!confirming ? (
+            <button
+              onClick={() => setConfirming(true)}
+              className="group relative inline-flex items-center gap-2 rounded-[4px] border border-[var(--color-line-2)] bg-[var(--color-ink-900)] px-4 py-2 font-mono text-[11.5px] font-medium text-[var(--color-fg-muted)] transition-all duration-200 hover:border-[var(--color-down)] hover:bg-[color-mix(in_oklab,var(--color-down)_8%,transparent)] hover:text-[var(--color-down)]"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-200 group-hover:translate-x-0.5">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" x2="9" y1="12" y2="12" />
+              </svg>
+              Sign out
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setConfirming(false)}
+                className="rounded-[4px] border border-[var(--color-line)] px-3 py-2 font-mono text-[11px] text-[var(--color-fg-dim)] transition-colors hover:border-[var(--color-line-2)] hover:text-[var(--color-fg-muted)]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={signOut}
+                className="inline-flex items-center gap-2 rounded-[4px] border border-[var(--color-down)] bg-[var(--color-down)] px-4 py-2 font-mono text-[11.5px] font-semibold text-[var(--color-ink-950)] transition-all duration-200 hover:brightness-110"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" x2="9" y1="12" y2="12" />
+                </svg>
+                Confirm sign out
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
