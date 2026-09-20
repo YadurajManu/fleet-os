@@ -131,6 +131,9 @@ services:
       # Cloudflare's free plan rejects bodies over 100MB, and "max" exports
       # every intermediate build stage.
       BUILDX_CACHE_MODE: ${BUILDX_CACHE_MODE:-max}
+      BUILD_REGISTRY_URL: ${BUILD_REGISTRY_URL:-https://fleetbuilds.${INGRESS_ZONE:-fleetos.app}}
+      BUILD_MODE: ${BUILD_MODE:-agent}
+      ALLOW_QEMU_FALLBACK: ${ALLOW_QEMU_FALLBACK:-false}
       BUILD_WORKDIR: /var/lib/fleet-os/builds
       BACKUP_DIR: /var/lib/fleet-os/backups
       INSTALL_SCRIPT_PATH: /app/install/install.sh

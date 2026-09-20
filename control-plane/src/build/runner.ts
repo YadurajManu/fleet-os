@@ -26,6 +26,12 @@ export type BuildProgress = {
 }
 
 export type BuildRequest = {
+  gitSource?: { repository: string; commit: string; installationId?: number; context: string }
+  sourceKey?: string
+  deploymentId?: string
+  serviceId?: string
+  fleetId?: string
+
   /** Overrides the configured workspace root, for a fresh git checkout. */
   contextRoot?: string
   serviceName: string
@@ -64,14 +70,16 @@ export type BuildResult = {
 /**
  * Multi-arch image builds (FR-3, tech doc §3).
  *
- * An interface with one honest implementation. Builds run centrally for v1 so
- * a Pi never has to compile anything; offloading to the most capable node in
- * the fleet is the documented later optimisation.
+ * Agent delegation is the default implementation. The original local Buildx
+ * implementation remains available as an explicit development/emergency fallback.
  */
 export interface BuildRunner {
   readonly name: string
   available(): Promise<boolean>
   build(req: BuildRequest): Promise<BuildResult>
+  handleMessage?(nodeId: string, message: unknown): Promise<void>
+  cancel?(deploymentId: string): Promise<void>
+  close?(): void
 }
 
 export class BuildUnavailableError extends Error {

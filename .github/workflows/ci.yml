@@ -48,6 +48,7 @@ jobs:
       SECRETS_MASTER_KEY: ZmxlZXQtb3MtdGVzdC1tYXN0ZXIta2V5LTMyYnl0ZXM=
       LOG_LEVEL: error
       BUILD_WORKDIR: /tmp/fleet-os-ci-builds
+      BUILD_MODE: local
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

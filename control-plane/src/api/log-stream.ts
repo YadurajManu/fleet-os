@@ -8,6 +8,7 @@ import { services, nodes } from '../db/schema.js'
 const CHANNEL_PREFIX = 'fleet:logs:'
 
 interface LogEntry {
+  serviceId?: string
   service: string
   text: string
   nodeId: string
@@ -113,6 +114,8 @@ export async function logStreamHandler(
     'X-Accel-Buffering': 'no',
   })
 
+  const buildSeed = await redis.lrange(`build:logs:${serviceId}`, 0, 199).catch(() => [])
+  for (const line of buildSeed.reverse()) { try { seed.push(JSON.parse(line)) } catch {} }
   // Send seed.
   for (const entry of seed) {
     reply.raw.write(`data: ${JSON.stringify(entry)}\n\n`)
@@ -125,6 +128,7 @@ export async function logStreamHandler(
   const onMessage = (_: string, message: string) => {
     try {
       const entry: LogEntry = JSON.parse(message)
+      if (entry.serviceId && entry.serviceId !== serviceId) return
       reply.raw.write(`data: ${JSON.stringify(entry)}\n\n`)
       ;(reply.raw as ServerResponse & { flush: () => void }).flush?.()
     } catch {

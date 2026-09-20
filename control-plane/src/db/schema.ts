@@ -184,6 +184,18 @@ export const nodes = pgTable(
 
     // capability, reported by the agent at registration (FR-2)
     arch: text('arch').notNull(),
+    platform: text('platform'),
+    variant: text('variant'),
+    engineKind: text('engine_kind'),
+    effectiveCpu: real('effective_cpu'),
+    effectiveMemBytes: bigint('effective_mem_bytes', { mode: 'number' }),
+    reliabilityScore: real('reliability_score').notNull().default(0.5),
+    canBuild: boolean('can_build').notNull().default(false),
+    platforms: text('platforms').array().notNull().default([]),
+    maxConcurrentBuilds: integer('max_concurrent_builds').notNull().default(1),
+    buildDiskBytes: bigint('build_disk_bytes', { mode: 'number' }).notNull().default(21474836480),
+    buildDiskReserveBytes: bigint('build_disk_reserve_bytes', { mode: 'number' }).notNull().default(0),
+    buildCacheFreeBytes: bigint('build_cache_free_bytes', { mode: 'number' }).notNull().default(0),
     os: text('os').notNull().default('linux'),
     cpuCores: integer('cpu_cores').notNull(),
     ramMb: integer('ram_mb').notNull(),
@@ -314,6 +326,8 @@ export const services = pgTable(
 
     repoUrl: text('repo_url'),
     buildContext: text('build_context'),
+    buildArgs: jsonb('build_args').$type<Record<string, string>>().notNull().default({}),
+    buildSecretRefs: text('build_secret_refs').array().notNull().default([]),
     image: text('image'), // set instead of buildContext for prebuilt images
 
     placementPolicy: placementPolicy('placement_policy').notNull().default('flexible'),
@@ -325,6 +339,10 @@ export const services = pgTable(
     requiresGpu: boolean('requires_gpu').notNull().default(false),
     minReliabilityTier: reliabilityTier('min_reliability_tier').notNull().default('opportunistic'),
     compatibleArches: text('compatible_arches').array().notNull().default([]),
+    platforms: jsonb('platforms').$type<'auto' | string[]>().notNull().default('auto'),
+    placementArch: text('placement_arch'),
+    allowEmulation: boolean('allow_emulation').notNull().default(false),
+    imagePlatforms: text('image_platforms').array().notNull().default([]),
 
     affinity: text('affinity').array().notNull().default([]),
     antiAffinity: text('anti_affinity').array().notNull().default([]),
@@ -720,3 +738,23 @@ export const deploymentExplanations = pgTable('deployment_explanations', {
   hits: integer('hits').notNull().default(1),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+/** Attempts are fenced by (id, attempt, builderNodeId); no credentials are persisted here. */
+export const buildJobs = pgTable('build_jobs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  deploymentId: uuid('deployment_id').notNull().references(() => deployments.id, { onDelete: 'cascade' }),
+  serviceId: uuid('service_id').notNull().references(() => services.id, { onDelete: 'cascade' }),
+  platform: text('platform').notNull(),
+  sourceRef: text('source_ref').notNull(),
+  status: text('status').$type<'queued' | 'assigned' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out'>().notNull().default('queued'),
+  builderNodeId: uuid('builder_node_id').references(() => nodes.id, { onDelete: 'set null' }),
+  attempt: integer('attempt').notNull().default(0),
+  leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  imageDigest: text('image_digest'),
+  error: text('error'),
+  reservedCpu: real('reserved_cpu').notNull().default(2),
+  reservedMemBytes: bigint('reserved_mem_bytes', { mode: 'number' }).notNull().default(2147483648),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [index('build_jobs_deployment_idx').on(t.deploymentId), index('build_jobs_lease_idx').on(t.status, t.leaseExpiresAt), index('build_jobs_cache_idx').on(t.serviceId, t.sourceRef, t.platform)])

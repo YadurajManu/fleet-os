@@ -1,3 +1,4 @@
+import { buildTransferRoutes } from './build/transfers.js'
 import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
@@ -98,6 +99,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
 
   await app.register(authRoutes)
   await app.register(agentRoutes)
+  await app.register(buildTransferRoutes)
   await app.register(fleetRoutes)
   await app.register(webhookRoutes)
   await app.register(githubRoutes)

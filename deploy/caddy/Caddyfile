@@ -27,3 +27,12 @@ fleetregistry.{$INGRESS_ZONE} {
 	# this file exists to escape was never Caddy's.
 	reverse_proxy registry:5000
 }
+
+# Scoped build pushes must bypass Cloudflare's upload cap too. Keep ordinary
+# registry pulls above unchanged for old agents. This host uses per-job grants.
+fleetbuilds.{$INGRESS_ZONE} {
+ handle /v2/* {
+  reverse_proxy control-plane:8080
+ }
+ respond 404
+}

@@ -16,10 +16,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/fleet-os/fleet-os/agent/internal/backup"
+	"github.com/fleet-os/fleet-os/agent/internal/build"
 	"github.com/fleet-os/fleet-os/agent/internal/capability"
 	"github.com/fleet-os/fleet-os/agent/internal/client"
 	"github.com/fleet-os/fleet-os/agent/internal/diagnostics"
@@ -42,6 +44,16 @@ var Version = "dev"
 var errUpgradeStaged = errors.New("a verified agent upgrade is staged")
 
 func main() {
+	if handled, err := upgrade.RunHelper(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "agent update:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if dispatchService() {
+		return
+	}
 	err := run()
 	if errors.Is(err, errUpgradeStaged) {
 		// Non-zero on purpose: Restart=on-failure. See ExitUpgradeStaged.
@@ -75,7 +87,11 @@ func run() error {
 	if *showCaps {
 		// Useful on its own: run this before pairing to see what the control
 		// plane is going to be told about the machine.
-		return printJSON(capability.Detect(Version))
+		report, err := capability.DetectEngine(context.Background(), Version)
+		if err != nil {
+			return err
+		}
+		return printJSON(report)
 	}
 
 	// Before anything else: a binary staged by a previous run is installed
@@ -98,6 +114,7 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	serviceStopHook(stop)
 
 	saved, err := state.Load(*statePath)
 	if err != nil {
@@ -163,9 +180,56 @@ func run() error {
 		log.Info("container runtime ready")
 	}
 
+	builderConfig, err := capability.LoadBuilderConfig(filepath.Dir(*statePath))
+	if err != nil {
+		return err
+	}
+	hostSampler := sampler.New(Version, engine, reporter)
+	var capabilityMu sync.Mutex
+	var engineReport *capability.Report
+	go func() {
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			probeCtx, probeCancel := context.WithTimeout(ctx, 25*time.Second)
+			report, probeErr := capability.DetectEngine(probeCtx, Version)
+			if probeErr == nil {
+				if err := capability.ApplyBuilder(probeCtx, &report, filepath.Dir(*statePath), builderConfig); err != nil {
+					log.Debug("builder unavailable", "reason", err)
+				}
+				capabilityMu.Lock()
+				engineReport = &report
+				capabilityMu.Unlock()
+			} else {
+				log.Warn("Docker engine capability unavailable", "err", probeErr)
+				capabilityMu.Lock()
+				if engineReport != nil {
+					engineReport.CanBuild = false
+				}
+				capabilityMu.Unlock()
+			}
+			probeCancel()
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+	hostSampler.EngineCapabilities = func(context.Context) *capability.Report {
+		capabilityMu.Lock()
+		defer capabilityMu.Unlock()
+		if engineReport == nil {
+			return nil
+		}
+		copy := *engineReport
+		engineCopy := *engineReport.EngineReport
+		copy.EngineReport = &engineCopy
+		return &copy
+	}
 	loop := &heartbeat.Loop{
 		Client:   api,
-		Sampler:  sampler.New(Version, engine, reporter),
+		Sampler:  hostSampler,
 		Interval: interval,
 		Log:      log,
 	}
@@ -177,7 +241,21 @@ func run() error {
 	// Reverse tunnel connects to the control plane and multiplexes incoming
 	// HTTP ingress requests directly to local containers behind NAT/firewalls.
 	tunnelClient := tunnel.New(saved.ControlPlaneURL, saved.AgentToken, log)
+	builder := build.New(filepath.Join(filepath.Dir(*statePath), "builds"), builderConfig, tunnelClient.SendBuild)
+	tunnelClient.Builder = builder
 	go tunnelClient.Run(ctx)
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				builder.Replay()
+			}
+		}
+	}()
 
 	// Self-upgrade. Cancelling runCtx - and only runCtx - is how a staged
 	// build stops the loop without being mistaken for a shutdown: the outer ctx
@@ -236,7 +314,17 @@ func register(ctx context.Context, log *slog.Logger, controlPlane, token, stateP
 			"no saved state and no pairing token: generate one in the dashboard and pass --token (or set FLEET_PAIRING_TOKEN)")
 	}
 
-	report := capability.Detect(Version)
+	report, err := capability.DetectEngine(ctx, Version)
+	if err != nil {
+		return nil, err
+	}
+	config, err := capability.LoadBuilderConfig(filepath.Dir(statePath))
+	if err != nil {
+		return nil, err
+	}
+	if err = capability.ApplyBuilder(ctx, &report, filepath.Dir(statePath), config); err != nil {
+		log.Warn("builder unavailable", "reason", err)
+	}
 	log.Info("detected capability",
 		"arch", report.Arch, "cores", report.CPUCores,
 		"ram_mb", report.RAMMb, "disk_mb", report.DiskMb, "gpu", report.GPU)

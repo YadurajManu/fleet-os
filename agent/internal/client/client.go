@@ -103,9 +103,10 @@ type DeployStage struct {
 }
 
 type Heartbeat struct {
-	CPUPct     float64 `json:"cpu_pct"`
-	RAMUsedMb  int     `json:"ram_used_mb"`
-	DiskUsedMb int     `json:"disk_used_mb"`
+	Capabilities *capability.Report `json:"capabilities,omitempty"`
+	CPUPct       float64            `json:"cpu_pct"`
+	RAMUsedMb    int                `json:"ram_used_mb"`
+	DiskUsedMb   int                `json:"disk_used_mb"`
 	// Capacity, not what is left. The capability report's disk_mb is FREE
 	// space and is what the scheduler places against; this is the denominator
 	// a "used of total" reading needs.
@@ -125,8 +126,8 @@ type Heartbeat struct {
 	Containers    []Container `json:"containers"`
 	// What in-flight deploys are doing. Empty on an idle node.
 	Deploys []DeployStage `json:"deploys,omitempty"`
-	Runtime       Runtime     `json:"runtime"`
-	Logs          []LogTail   `json:"logs"`
+	Runtime Runtime       `json:"runtime"`
+	Logs    []LogTail     `json:"logs"`
 }
 
 // Runtime is deliberately observational. In particular registryStatus becomes
@@ -155,6 +156,7 @@ type HeartbeatResponse struct {
 }
 
 type DesiredService struct {
+	Platform        string `json:"platform,omitempty"`
 	Name            string `json:"name"`
 	DeploymentID    string `json:"deployment_id"`
 	Image           string `json:"image"`

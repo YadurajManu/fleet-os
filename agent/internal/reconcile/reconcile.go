@@ -333,7 +333,7 @@ func (e *Engine) start(ctx context.Context, svc client.DesiredService, registryA
 	// The credential is passed through, never logged. A registry the fleet
 	// reaches from outside the LAN requires one, and an empty string is the
 	// correct value for a local registry that does not.
-	err := e.Docker.Pull(pullCtx, svc.Image, registryAuth, func(p docker.PullProgress) {
+	onProgress := func(p docker.PullProgress) {
 		e.stage(svc, client.DeployStage{
 			Stage:   "pulling",
 			Layers:  p.Layers,
@@ -342,7 +342,8 @@ func (e *Engine) start(ctx context.Context, svc client.DesiredService, registryA
 			Current: p.Current,
 			Total:   p.Total,
 		})
-	})
+	}
+	err := e.Docker.PullForPlatform(pullCtx, svc.Image, registryAuth, svc.Platform, onProgress)
 	if err != nil {
 		return fmt.Errorf("pull: %w", err)
 	}
@@ -358,6 +359,7 @@ func (e *Engine) start(ctx context.Context, svc client.DesiredService, registryA
 		DeploymentID:  svc.DeploymentID,
 		NodeID:        e.NodeID,
 		Image:         svc.Image,
+		Platform:      svc.Platform,
 		Volume:        svc.Volume,
 		VolumePath:    svc.VolumePath,
 		Env:           svc.Env,

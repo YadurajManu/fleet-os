@@ -169,6 +169,27 @@
       "when": 1788795443780,
       "tag": "0023_github_oauth",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788795443781,
+      "tag": "0024_agent_build_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788795443782,
+      "tag": "0025_build_inputs",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1789898938811,
+      "tag": "0026_builder_disk_reserve",
+      "breakpoints": true
     }
   ]
 }

@@ -133,7 +133,8 @@ export function phaseWriter(ctx: AppContext, deploymentId: string): PhaseWriter 
     // already have moved on, and a late write would walk the row backwards.
     if (settled || ORDER.indexOf(next) <= ORDER.indexOf(phase)) return
     phase = next
-    await ctx.db.update(deployments).set({ status: next }).where(eq(deployments.id, deploymentId))
+    const changed = await ctx.db.update(deployments).set({ status: next }).where(and(eq(deployments.id, deploymentId), inArray(deployments.status, ORDER))).returning({id:deployments.id})
+    if (!changed.length) throw new Error('deployment was cancelled or already finished')
   }
 
   return {

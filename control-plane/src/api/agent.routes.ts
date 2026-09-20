@@ -18,7 +18,21 @@ import { invalidateRoutesForService } from '../ingress/routes.js'
 import { recordCanaryHealthy, evaluateCanaryHealth } from '../heartbeat/watchdog.js'
 
 /** The capability report an agent sends at registration (tech doc §7). */
+const engineCapability = {
+  platform: z.string().regex(/^linux\/(amd64|arm64|arm\/v7)$/).optional(),
+  variant: z.enum(['v7']).optional(),
+  engine_kind: z.enum(['native', 'docker-desktop']).optional(),
+  effective_cpu: z.number().int().min(1).max(1024).optional(),
+  effective_mem_bytes: z.number().int().min(64 * 1024 * 1024).max(Number.MAX_SAFE_INTEGER).optional(),
+  can_build: z.boolean().default(false),
+  platforms: z.array(z.string().regex(/^linux\/(amd64|arm64|arm\/v7)$/)).max(3).default([]),
+  max_concurrent_builds: z.number().int().min(1).max(16).default(1),
+  build_disk_bytes: z.number().int().min(1073741824).max(Number.MAX_SAFE_INTEGER).default(21474836480),
+  build_disk_reserve_bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+  build_cache_free_bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+}
 const capability = z.object({
+  ...engineCapability,
   arch: z.enum(['arm64', 'armv7', 'amd64']),
   os: z.string().max(32).default('linux'),
   cpu_cores: z.number().int().min(1).max(1024),
@@ -33,6 +47,7 @@ const capability = z.object({
 })
 
 const heartbeat = z.object({
+  capabilities: capability.optional(),
   cpu_pct: z.number().min(0).max(100),
   ram_used_mb: z.number().int().min(0),
   disk_used_mb: z.number().int().min(0),
@@ -210,6 +225,7 @@ export async function agentRoutes(app: FastifyInstance) {
           name,
           arch: cap.arch,
           os: cap.os,
+          ...engineValues(cap),
           cpuCores: cap.cpu_cores,
           ramMb: cap.ram_mb,
           diskMb: cap.disk_mb,
@@ -268,6 +284,14 @@ export async function agentRoutes(app: FastifyInstance) {
     }
     const hb = parsed.data
     const nodeId = req.agentNodeId!
+    if (hb.capabilities) {
+      const cap = hb.capabilities
+      await db.update(nodes).set({ ...engineValues(cap), arch: cap.arch, os: cap.os, cpuCores: cap.cpu_cores, ramMb: cap.ram_mb }).where(eq(nodes.id, nodeId))
+    } else if (/^v?0\.[012]\./.test(hb.agent_version ?? '')) {
+      // A rolled-back agent may inherit a node that previously opted in.
+      // Old agents cannot handle build messages or explicit execution platforms.
+      await db.update(nodes).set({canBuild:false,platform:null,platforms:[],engineKind:null,variant:null,effectiveCpu:null,effectiveMemBytes:null,buildCacheFreeBytes:0}).where(eq(nodes.id,nodeId))
+    }
     const fleetId = req.agentFleetId!
 
     await heartbeats.record({
@@ -610,12 +634,15 @@ export async function agentRoutes(app: FastifyInstance) {
     const nodeId = req.agentNodeId!
     const fleetId = req.agentFleetId!
 
+    const [targetNode] = await db.select({platform:nodes.platform}).from(nodes).where(eq(nodes.id,nodeId)).limit(1)
     const rows = await db
       .select({
         serviceId: services.id,
         service: services.name,
         image: services.image,
         imageTags: deployments.imageTags,
+        imagePlatforms: services.imagePlatforms,
+        allowEmulation: services.allowEmulation,
         deploymentId: deployments.id,
         hostPort: deployments.hostPort,
         containerPort: services.containerPort,
@@ -700,7 +727,8 @@ export async function agentRoutes(app: FastifyInstance) {
       services: withEnv.map(({ row: r, env }) => ({
         name: r.service,
         deployment_id: r.deploymentId,
-        image: r.image ?? r.imageTags[0] ?? null,
+        image: r.imageTags[0] ?? r.image ?? null,
+        platform: targetNode?.platform && r.imagePlatforms.includes(targetNode.platform) ? targetNode.platform : r.allowEmulation ? r.imagePlatforms[0] : undefined,
         health_check_path: r.healthCheckPath,
         health_interval_sec: r.healthIntervalSec,
         health_timeout_sec: r.healthTimeoutSec,
@@ -719,4 +747,13 @@ export async function agentRoutes(app: FastifyInstance) {
       })),
     }
   })
+}
+
+function engineValues(cap: z.infer<typeof capability>) {
+  return {
+    platform: cap.platform, variant: cap.variant ?? null, engineKind: cap.engine_kind,
+    effectiveCpu: cap.effective_cpu, effectiveMemBytes: cap.effective_mem_bytes,
+    canBuild: Boolean(cap.can_build && cap.platform && cap.effective_cpu && cap.effective_mem_bytes),
+    platforms: cap.platforms, maxConcurrentBuilds: cap.max_concurrent_builds, buildCacheFreeBytes: cap.build_cache_free_bytes, buildDiskReserveBytes: cap.build_disk_reserve_bytes, buildDiskBytes: cap.build_disk_bytes,
+  }
 }

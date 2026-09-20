@@ -26,6 +26,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -227,7 +228,7 @@ func InstallStaged(stateDir string) (bool, error) {
 		// Nothing staged is the overwhelmingly common case, and not an error.
 		return false, nil
 	}
-	if info.Mode()&0o111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		return false, fmt.Errorf("%s is not executable", staged)
 	}
 
@@ -239,7 +240,7 @@ func InstallStaged(stateDir string) (bool, error) {
 	if resolved, err := filepath.EvalSymlinks(self); err == nil {
 		self = resolved
 	}
-	return installStagedInto(staged, self)
+	return installForPlatform(staged, self)
 }
 
 // installStagedInto is the part that can be tested without a test binary
