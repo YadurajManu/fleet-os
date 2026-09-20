@@ -1,5 +1,7 @@
+import { resolveSecrets } from '../secrets/store.js'
+import { repositoryBuildToken } from '../github/app.js'
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm'
-import { createHash } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import { mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { execFile } from 'node:child_process'
@@ -91,7 +93,7 @@ export class AgentBuildRunner implements BuildRunner {
    return {job:assigned,builder}
   })
  }
- private async runJob(initial:typeof buildJobs.$inferSelect,req:BuildRequest,checksum:string,origin:URL,repo:string){
+ private async runJob(initial:typeof buildJobs.$inferSelect,req:BuildRequest,checksum:string,origin:URL,repo:string,buildArgs:Record<string,string>,buildSecrets:Record<string,string>){
   let job=initial
   const excluded=new Set<string>()
   for(let retry=0;retry<3;retry++){
@@ -101,9 +103,14 @@ export class AgentBuildRunner implements BuildRunner {
    const grant={job:job.id,attempt:job.attempt,node:builder.id,repo,exp}
    const emulated=builder.platform!==job.platform
    req.onProgress?.({phase:'building',platform:job.platform,builder:builder.id,emulated,detail:`assigned to ${builder.id}${emulated?' (slow QEMU fallback)':''}`})
+   let sourceToken = signGrant({...grant,purpose:'source'},this.ctx.config.JWT_SECRET)
+   if (req.gitSource?.installationId && this.ctx.github) {
+     const repository = new URL(req.gitSource.repository).pathname.split('/').at(-1)!.replace(/\.git$/, '')
+     sourceToken = await repositoryBuildToken(this.ctx.github, req.gitSource.installationId, repository)
+   } else if (req.gitSource) sourceToken = ''
    const assignment:BuildAssignment={type:'build.assign',version:1,job_id:job.id,attempt:job.attempt,platform:job.platform,cache_key:`${req.serviceId}:${job.platform}`,emulated,
-    source:{url:new URL(`/agent/build-source/${job.id}`,origin).href,token:signGrant({...grant,purpose:'source'},this.ctx.config.JWT_SECRET),sha256:checksum},
-    dockerfile:'Dockerfile',registry_target:`${origin.host}/${repo}:${req.gitSha.replace(/[^a-zA-Z0-9_.-]/g,'').slice(0,40)||'source'}-${job.platform.replaceAll('/','-')}-${job.id.slice(0,8)}-${job.attempt}`,
+    source:{url:new URL(`/agent/build-source/${job.id}`,origin).href,token:sourceToken,sha256:checksum,...(req.gitSource ? {repository:req.gitSource.repository,commit:req.gitSource.commit,context:req.gitSource.context} : {})},
+    build_args:buildArgs,secrets:buildSecrets, dockerfile:'Dockerfile',registry_target:`${origin.host}/${repo}:${req.gitSha.replace(/[^a-zA-Z0-9_.-]/g,'').slice(0,40)||'source'}-${job.platform.replaceAll('/','-')}-${job.id.slice(0,8)}-${job.attempt}`,
     registry_username:'build',registry_password:signGrant({...grant,purpose:'push'},this.ctx.config.JWT_SECRET),timeout_ms:Math.min(this.ctx.config.BUILD_TIMEOUT_MS,3600000),cpu:2,memory_bytes:2147483648,disk_bytes:20*1073741824}
    if(!this.send(builder.id,assignment))await this.ctx.db.update(buildJobs).set({leaseExpiresAt:new Date(0)}).where(eq(buildJobs.id,job.id))
    const deadline=Date.now()+assignment.timeout_ms
@@ -138,7 +145,13 @@ export class AgentBuildRunner implements BuildRunner {
    await exec('tar',['-czf',archive,'--exclude=.git','-C',context,'.'],{timeout:60000})
    if((await stat(archive)).size>256*1048576)throw new Error('source archive exceeds 256MiB')
    const checksum=createHash('sha256').update(await readFile(archive)).digest('hex')
-   const sourceRef=req.sourceKey??checksum
+   const [service] = await this.ctx.db.select().from(services).where(and(eq(services.id, req.serviceId), eq(services.fleetId, req.fleetId))).limit(1)
+   if (!service) throw new Error('build service does not belong to this fleet')
+   const secrets = await resolveSecrets(this.ctx, req.fleetId, req.serviceId, service.buildSecretRefs)
+   if (secrets.missing.length) throw new Error(`missing build secrets: ${secrets.missing.join(', ')}`)
+   // Credentials and secret values never enter the job row. Secret changes must
+   // invalidate a cached output, so include only their keyed digest in this key.
+   const sourceRef=createHmac('sha256',this.ctx.config.JWT_SECRET).update(JSON.stringify([req.sourceKey??checksum,service.buildArgs,secrets.values])).digest('hex')
    const groups=planBuilds(req.platforms,new Map(req.platforms.map(p=>[p,p])))
    const jobs:Promise<string>[]=[]
    for(const group of groups){
@@ -150,7 +163,7 @@ export class AgentBuildRunner implements BuildRunner {
      jobs.push(Promise.resolve(cached.imageDigest));continue
     }
     const [job]=await this.ctx.db.insert(buildJobs).values({deploymentId,serviceId:req.serviceId,platform,sourceRef}).returning()
-    jobs.push(this.runJob(job!,req,checksum,origin,repo))
+    jobs.push(this.runJob(job!,req,checksum,origin,repo,service.buildArgs,secrets.values))
    }
    const outcomes=await Promise.allSettled(jobs.map(p=>p.catch(async err=>{await this.cancel(deploymentId);throw err})))
    const failure=outcomes.find(x=>x.status==='rejected')

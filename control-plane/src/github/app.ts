@@ -263,3 +263,13 @@ export async function authenticatedCloneUrl(
  * ./installations.ts, which only ever considers installations the calling org
  * has claimed.
  */
+
+/** Short-lived contents-only credential for exactly one repository, never cached broadly. */
+export async function repositoryBuildToken(config: GitHubConfig, installationId: number, repository: string): Promise<string> {
+  if (!/^[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('Invalid repository name')
+  const fresh = await ghFetch<TokenResponse>(
+    `https://api.github.com/app/installations/${installationId}/access_tokens`, await appJwt(config),
+    { method: 'POST', body: JSON.stringify({ repositories: [repository], permissions: { contents: 'read' } }) }
+  )
+  return fresh.token
+}

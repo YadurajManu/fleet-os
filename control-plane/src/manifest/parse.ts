@@ -153,6 +153,8 @@ const serviceFields = z
     /** Source repository used for push-triggered deploys. */
     repo: z.string().min(1, 'repo must be a repository URL').optional(),
     build: z.string().optional(),
+    build_args: z.record(z.string().regex(ENV_NAME), z.string()).default({}),
+    build_secrets: z.array(z.string().regex(ENV_NAME)).default([]),
     image: z.string().optional(),
     placement: z.enum(['pinned', 'preferred', 'flexible']).default('flexible'),
     node: z.string().optional(),

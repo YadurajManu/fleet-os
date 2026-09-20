@@ -26,6 +26,7 @@ export type BuildProgress = {
 }
 
 export type BuildRequest = {
+  gitSource?: { repository: string; commit: string; installationId?: number; context: string }
   sourceKey?: string
   deploymentId?: string
   serviceId?: string

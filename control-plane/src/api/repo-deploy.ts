@@ -51,6 +51,7 @@ export async function deployRepository(
 
   try {
     let remote = spec.sourceUrl
+    let buildInstallation: number | undefined
     if (app.ctx.github) {
       try {
         const fullName = normaliseRepo(remote).split('/').slice(-2).join('/')
@@ -58,7 +59,10 @@ export async function deployRepository(
         // unscoped search would happily find a stranger's installation that
         // can reach the repo and check out their private source.
         const installation = await installationForRepoInOrg(app.ctx, app.ctx.github, spec.orgId, fullName)
-        if (installation) remote = await authenticatedCloneUrl(app.ctx.github, installation, remote)
+        if (installation) {
+          buildInstallation = installation
+          remote = await authenticatedCloneUrl(app.ctx.github, installation, remote)
+        }
       } catch (err) {
         log.warn({ err, repository: spec.sourceUrl }, 'could not obtain a GitHub installation token')
       }
@@ -108,7 +112,10 @@ export async function deployRepository(
 
     const deployed: string[] = []
     for (const service of toDeploy) {
-      await deployFromPush(app, service, spec.gitSha, checkout.path)
+      await deployFromPush(app, service, spec.gitSha, checkout.path, {
+        repository: `https://${normaliseRepo(spec.sourceUrl)}.git`, commit: spec.gitSha,
+        installationId: buildInstallation, context: service.buildContext ?? '.',
+      })
       deployed.push(service.name)
       log.info({ service: service.name, sha: shortSha }, 'repository deploy succeeded')
     }

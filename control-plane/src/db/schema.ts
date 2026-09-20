@@ -324,6 +324,8 @@ export const services = pgTable(
 
     repoUrl: text('repo_url'),
     buildContext: text('build_context'),
+    buildArgs: jsonb('build_args').$type<Record<string, string>>().notNull().default({}),
+    buildSecretRefs: text('build_secret_refs').array().notNull().default([]),
     image: text('image'), // set instead of buildContext for prebuilt images
 
     placementPolicy: placementPolicy('placement_policy').notNull().default('flexible'),

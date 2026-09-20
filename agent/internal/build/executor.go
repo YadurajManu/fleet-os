@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -202,9 +204,32 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (string, error) {
 	if err = fetchSource(ctx, a.Source, source); err != nil {
 		return "", err
 	}
+	if a.Source.Context != "" {
+		contextPath, pathErr := safePath(source, a.Source.Context)
+		if pathErr != nil {
+			return "", pathErr
+		}
+		resolved, pathErr := filepath.EvalSymlinks(contextPath)
+		if pathErr != nil {
+			return "", pathErr
+		}
+		rel, pathErr := filepath.Rel(source, resolved)
+		if pathErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("build context escapes checkout")
+		}
+		source = resolved
+	}
 	dockerfile, err := safePath(source, a.Dockerfile)
 	if err != nil {
 		return "", err
+	}
+	dockerfile, err = filepath.EvalSymlinks(dockerfile)
+	if err != nil {
+		return "", err
+	}
+	dockerfileRel, err := filepath.Rel(source, dockerfile)
+	if err != nil || dockerfileRel == ".." || strings.HasPrefix(dockerfileRel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("Dockerfile escapes build context")
 	}
 	configDir := filepath.Join(dir, "docker")
 	if err = os.Mkdir(configDir, 0700); err != nil {
@@ -358,6 +383,9 @@ func safePath(root, name string) (string, error) {
 	return filepath.Join(root, cleaned), nil
 }
 func fetchSource(ctx context.Context, s Source, dest string) error {
+	if s.Repository != "" {
+		return fetchGit(ctx, s, dest)
+	}
 	u, err := url.Parse(s.URL)
 	if err != nil || u.Scheme != "https" || u.User != nil {
 		return fmt.Errorf("source requires HTTPS")
@@ -450,4 +478,19 @@ func extract(r io.Reader, dest string) error {
 			return fmt.Errorf("source links and special files are not allowed")
 		}
 	}
+}
+
+func fetchGit(ctx context.Context, s Source, dest string) error {
+	u, err := url.Parse(s.Repository)
+	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil || u.RawQuery != "" || !regexp.MustCompile(`^[a-fA-F0-9]{40}$`).MatchString(s.Commit) {
+		return fmt.Errorf("Git source requires a GitHub HTTPS repository and exact commit SHA")
+	}
+	for _, args := range [][]string{{"init", dest}, {"-C", dest, "fetch", "--depth=1", "--no-tags", s.Repository, s.Commit}, {"-C", dest, "checkout", "--detach", "FETCH_HEAD"}} {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader", "GIT_CONFIG_VALUE_0=Authorization: Basic "+base64.StdEncoding.EncodeToString([]byte("x-access-token:"+s.Token)))
+		if err = cmd.Run(); err != nil {
+			return fmt.Errorf("could not fetch the exact GitHub commit")
+		}
+	}
+	return nil
 }

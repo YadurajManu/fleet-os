@@ -1,3 +1,4 @@
+import type { BuildRequest } from '../build/runner.js'
 import { planPlatforms } from '../build/platforms.js'
 import { and, eq, inArray } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
@@ -21,7 +22,8 @@ export async function deployFromPush(
   app: FastifyInstance,
   service: typeof services.$inferSelect,
   gitSha: string,
-  contextRoot: string
+  contextRoot: string,
+  gitSource?: BuildRequest['gitSource']
 ): Promise<{ nodeId: string; nodeName: string; image: string }> {
   const ctx = app.ctx
   const fleetId = service.fleetId
@@ -62,7 +64,7 @@ export async function deployFromPush(
         buildContext: service.buildContext ?? '.',
         gitSha,
         platforms: ctx.config.BUILD_MODE === 'agent' ? planPlatforms(toServiceSpec(service), snapshot) : platformsFor(arches),
-        deploymentId, serviceId: service.id, fleetId,
+        deploymentId, serviceId: service.id, fleetId, gitSource,
         sourceKey: `${gitSha}:${service.buildContext ?? '.'}`,
         registry: ctx.config.REGISTRY_URL ?? '',
         contextRoot,

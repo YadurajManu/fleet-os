@@ -176,6 +176,13 @@
       "when": 1788795443781,
       "tag": "0024_agent_build_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788795443782,
+      "tag": "0025_build_inputs",
+      "breakpoints": true
     }
   ]
 }

@@ -3,9 +3,12 @@
 package build
 
 type Source struct {
-	Token  string `json:"token,omitempty"`
-	URL    string `json:"url"`
-	SHA256 string `json:"sha256"`
+	Repository string `json:"repository,omitempty"`
+	Commit     string `json:"commit,omitempty"`
+	Context    string `json:"context,omitempty"`
+	Token      string `json:"token,omitempty"`
+	URL        string `json:"url"`
+	SHA256     string `json:"sha256"`
 }
 type Assignment struct {
 	CacheKey         string            `json:"cache_key"`

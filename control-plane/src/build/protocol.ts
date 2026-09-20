@@ -11,7 +11,7 @@ export type BuildEvent = z.infer<typeof buildEvent>
 export type BuildAssignment = {
   cache_key: string; emulated?: boolean
   type: 'build.assign'; version: 1; job_id: string; attempt: number; platform: string
-  source: { url: string; sha256: string; token: string }; dockerfile: string
+  source: { url: string; sha256: string; token: string; repository?: string; commit?: string; context?: string }; dockerfile: string
   build_args?: Record<string, string>; secrets?: Record<string, string>
   registry_target: string; registry_username: string; registry_password: string
   timeout_ms: number; cpu: number; memory_bytes: number; disk_bytes: number

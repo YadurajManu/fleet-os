@@ -117,6 +117,8 @@ export async function syncManifest(
         requestCpu: String(svc.resources.cpu),
         requiresGpu: svc.gpu,
         minReliabilityTier: TIER[svc.min_reliability],
+        buildArgs: svc.build_args,
+        buildSecretRefs: svc.build_secrets,
         compatibleArches: svc.arch,
         platforms: svc.platforms,
         placementArch: svc.placement_constraint?.arch ?? null,
