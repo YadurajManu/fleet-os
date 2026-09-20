@@ -623,6 +623,14 @@ export const logsCommand = {
     const [name] = args
     if (!name) throw new CliError('usage: fleet logs <service> [--follow] [--since 1h]', EXIT.usage)
     const service = await findService(fleetId, name, projectFlag(flags))
+    if (flags.follow || flags.f) {
+      await streamRequest<{ text: string }, void>('GET', `/services/${service.id}/logs/stream`, {
+        onMessage: (entry) => {
+          if (typeof entry.text === 'string') process.stdout.write(entry.text + (entry.text.endsWith('\n') ? '' : '\n'))
+        },
+      })
+      return
+    }
     if (flags.since) console.error(c.dim('note: agent log tails are live snapshots; --since is limited to the current retained tail.'))
     let previous = ''
     const render = async () => {
@@ -634,9 +642,7 @@ export const logsCommand = {
       previous = next
     }
     await render()
-    if (!flags.follow && !flags.f) return
-    if (!process.stdout.isTTY) throw new CliError('--follow needs an interactive terminal', EXIT.usage)
-    while (true) { await sleep(2000); await render() }
+
   },
 }
 

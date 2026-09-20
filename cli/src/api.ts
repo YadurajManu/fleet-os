@@ -174,6 +174,7 @@ export async function streamRequest<TProgress = any, TResult = any>(
   opts: {
     body?: unknown
     onProgress?: (progress: TProgress) => void
+    onMessage?: (message: TProgress) => void
     profile?: Profile
   } = {}
 ): Promise<TResult> {
@@ -271,7 +272,9 @@ export async function streamRequest<TProgress = any, TResult = any>(
 
         try {
           const parsed = JSON.parse(data)
-          if (event === 'progress') {
+          if (event === 'message' && opts.onMessage) {
+            opts.onMessage(parsed)
+          } else if (event === 'progress') {
             opts.onProgress?.(parsed)
           } else if (event === 'result') {
             finalResult = parsed
@@ -288,5 +291,6 @@ export async function streamRequest<TProgress = any, TResult = any>(
   }
 
   if (finalResult !== undefined) return finalResult
+  if (opts.onMessage) return undefined as TResult
   throw new CliError('Stream closed before an answer was received', EXIT.failure)
 }

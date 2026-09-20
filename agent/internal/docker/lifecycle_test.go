@@ -1,6 +1,10 @@
 package docker
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -10,6 +14,7 @@ func TestSplitTag(t *testing.T) {
 		image, wantRef, wantTag string
 	}{
 		{"nginx", "nginx", "latest"},
+		{"localhost:5001/web@sha256:" + strings.Repeat("a", 64), "localhost:5001/web@sha256:" + strings.Repeat("a", 64), ""},
 		{"nginx:1.27", "nginx", "1.27"},
 		{"ghcr.io/you/app:v2", "ghcr.io/you/app", "v2"},
 		// A registry port must not be mistaken for a tag — this is the case
@@ -114,4 +119,35 @@ func TestCompareVersions(t *testing.T) {
 			t.Errorf("compareVersions(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
 		}
 	}
+}
+
+func TestPullPreservesDigestReference(t *testing.T) {
+	image := "registry.example:5000/app@sha256:" + strings.Repeat("a", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("fromImage"); got != image {
+			t.Errorf("fromImage = %q", got)
+		}
+		if r.URL.Query().Has("tag") {
+			t.Error("digest pull must not send tag")
+		}
+		if got := r.URL.Query().Get("platform"); got != "linux/arm64" {
+			t.Errorf("platform = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"Downloaded"}`))
+	}))
+	defer server.Close()
+	target, _ := url.Parse(server.URL)
+	client := &Client{apiVersion: "v1.44", http: &http.Client{Transport: digestTestTransport{target: target}}}
+	if err := client.PullForPlatform(context.Background(), image, "", "linux/arm64", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type digestTestTransport struct{ target *url.URL }
+
+func (d digestTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r.URL.Scheme = d.target.Scheme
+	r.URL.Host = d.target.Host
+	return http.DefaultTransport.RoundTrip(r)
 }
