@@ -16,8 +16,8 @@ let ctx:AppContext,runner:AgentBuildRunner,dir:string,orgId:string,fleetId:strin
 const digest=`sha256:${'a'.repeat(64)}`
 before(async()=>{
  dir=await mkdtemp(join(tmpdir(),'fleet-agent-build-test-'))
- ctx=createContext({...loadConfig(),PUBLIC_API_URL:'https://api.example.test',REGISTRY_URL:'registry.example.test',BUILD_WORKDIR:dir})
- runner=new AgentBuildRunner(ctx)
+ ctx=createContext({...loadConfig(),BUILD_MODE:'agent',PUBLIC_API_URL:'https://api.example.test',REGISTRY_URL:'registry.example.test',BUILD_WORKDIR:dir})
+ runner=ctx.builds as AgentBuildRunner
  const [o]=await ctx.db.insert(orgs).values({name:'agent-build-tests'}).returning();orgId=o!.id
  const [f]=await ctx.db.insert(fleets).values({orgId,name:'test'}).returning();fleetId=f!.id
  const [s]=await ctx.db.insert(services).values({fleetId,name:'app',buildContext:'.'}).returning();serviceId=s!.id
@@ -86,4 +86,9 @@ test('expired lease retries on another native builder; late result is fenced',as
  const result=await runner.build(await request('retry'));await task
  assert.equal(result.digest,digest);assert.equal(assigned.length,2);assert.notEqual(assigned[0],assigned[1])
  await ctx.db.delete(nodes).where(eq(nodes.id,n!.id))
+})
+
+test('agent builds are the default, local remains an explicit fallback',()=>{
+ assert.equal(loadConfig({...process.env,BUILD_MODE:undefined}).BUILD_MODE,'agent')
+ assert.equal(runner.name,'agent')
 })

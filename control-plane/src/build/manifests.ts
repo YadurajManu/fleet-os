@@ -24,3 +24,28 @@ export async function mergeManifests(repo:string,tag:string,digests:string[],cre
  }catch{throw new Error('registry manifest assembly failed; inspect registry connectivity and per-platform digests')}
  finally{await rm(dir,{recursive:true,force:true})}
 }
+
+export function manifestPlatforms(manifest: unknown): string[] {
+ const m=manifest as {manifests?:Array<{platform?:{os?:string;architecture?:string;variant?:string}}>}
+ return [...new Set((m.manifests??[]).map(x=>{
+  const p=x.platform
+  return p?.os==='linux' && p.architecture ? `linux/${p.architecture}${p.architecture==='arm'&&p.variant?`/${p.variant}`:''}` : ''
+ }).filter(p=>/^linux\/(amd64|arm64|arm\/v7)$/.test(p)))]
+}
+export async function inspectImage(image:string):Promise<{platforms:string[];digest:string}>{
+ if(image.startsWith('-') || /[\s\r\n]/.test(image))throw new Error('invalid image reference')
+ try{
+  const {stdout}=await exec('docker',['buildx','imagetools','inspect','--raw',image],{timeout:30000,maxBuffer:4*1048576})
+  const manifest=JSON.parse(stdout)
+  let platforms=manifestPlatforms(manifest)
+  if(!manifest.manifests){
+   const {stdout:config}=await exec('docker',['buildx','imagetools','inspect','--format','{{json .Image}}',image],{timeout:30000,maxBuffer:4*1048576})
+   const c=JSON.parse(config)
+   platforms=manifestPlatforms({manifests:[{platform:{os:c.os,architecture:c.architecture,variant:c.variant}}]})
+  }
+  if(!platforms.length)throw new Error('no supported Linux image platform')
+  const {stdout:d}=await exec('docker',['buildx','imagetools','inspect','--format','{{.Manifest.Digest}}',image],{timeout:30000,maxBuffer:1024})
+  const digest=d.trim();if(!/^sha256:[a-f0-9]{64}$/.test(digest))throw new Error('no image digest')
+  return {platforms,digest}
+ }catch{throw new Error('Cannot inspect image manifest platforms; check the image reference and registry access')}
+}

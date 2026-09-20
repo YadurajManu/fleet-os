@@ -1,6 +1,7 @@
 import { Redis } from 'ioredis'
 import { createDb, type Db } from '../db/client.js'
 import { HeartbeatTracker } from '../heartbeat/tracker.js'
+import { AgentBuildRunner } from '../build/agent.js'
 import { BuildxRunner } from '../build/buildx.js'
 import type { BuildRunner } from '../build/runner.js'
 import type { GitHubConfig } from '../github/app.js'
@@ -89,11 +90,13 @@ export function createContext(
     startedAt: new Date(),
   }
   ctx.tunnels = new TunnelRegistry(ctx as AppContext)
+  if (config.BUILD_MODE === 'agent') ctx.builds = new AgentBuildRunner(ctx as AppContext)
 
   return ctx as AppContext
 }
 
 export async function closeContext(ctx: AppContext): Promise<void> {
+  ctx.builds.close?.()
   await ctx.sql.end({ timeout: 5 })
   ctx.redis.disconnect()
 }

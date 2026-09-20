@@ -1,3 +1,4 @@
+import { planPlatforms } from '../build/platforms.js'
 import { and, eq, inArray } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { deployments, placementEvents, services, fleets } from '../db/schema.js'
@@ -60,7 +61,9 @@ export async function deployFromPush(
         serviceName: service.name,
         buildContext: service.buildContext ?? '.',
         gitSha,
-        platforms: platformsFor(arches),
+        platforms: ctx.config.BUILD_MODE === 'agent' ? planPlatforms(toServiceSpec(service), snapshot) : platformsFor(arches),
+        deploymentId, serviceId: service.id, fleetId,
+        sourceKey: `${gitSha}:${service.buildContext ?? '.'}`,
         registry: ctx.config.REGISTRY_URL ?? '',
         contextRoot,
         onProgress: phases.onBuildProgress,

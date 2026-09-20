@@ -1,3 +1,5 @@
+import { planPlatforms } from '../build/platforms.js'
+import { inspectImage } from '../build/manifests.js'
 import { and, eq, ne, desc, inArray, gte, count } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
@@ -401,6 +403,11 @@ export async function serviceRoutes(app: FastifyInstance) {
     async (req) => {
       const { service, fleetId } = await loadService(app, req.params as { serviceId: string })
       const { nodes: snapshot, placements, antiAffinityBy } = await fleetSnapshot(app.ctx, fleetId)
+      const requestedImage = service.image
+      if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
+        const metadata = await inspectImage(requestedImage)
+        service.imagePlatforms = metadata.platforms
+      }
       const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
       return { service: service.name, decision }
     }
@@ -630,6 +637,18 @@ export async function serviceRoutes(app: FastifyInstance) {
     }
   )
 
+  app.post('/services/:serviceId/builds/:deploymentId/cancel', { preHandler: requireServicePermission('service.deploy') }, async (req, reply) => {
+    const { service } = await loadService(app, req.params as { serviceId: string })
+    const { deploymentId } = z.object({ deploymentId: z.string().uuid() }).parse(req.params)
+    const [dep] = await db.select().from(deployments).where(and(eq(deployments.id, deploymentId), eq(deployments.serviceId, service.id))).limit(1)
+    if (!dep) return reply.code(404).send({ error: 'deployment not found' })
+    if (!['queued', 'building', 'pushing'].includes(dep.status)) return reply.code(409).send({ error: 'deployment is not building' })
+    if (!app.ctx.builds.cancel) return reply.code(409).send({ error: 'build cancellation requires BUILD_MODE=agent' })
+    await app.ctx.builds.cancel(deploymentId)
+    await db.update(deployments).set({ status: 'failed', failureReason: 'build_cancelled', finishedAt: new Date() }).where(eq(deployments.id, deploymentId))
+    return { cancelled: true }
+  })
+
   app.post(
     '/services/:serviceId/deploy',
     { preHandler: requireServicePermission('service.deploy') },
@@ -649,6 +668,11 @@ export async function serviceRoutes(app: FastifyInstance) {
       const { service, fleetId, orgId } = await loadService(app, req.params as { serviceId: string })
       const { nodes: snapshot, placements, antiAffinityBy } = await fleetSnapshot(app.ctx, fleetId)
 
+      const requestedImage = body.image ?? service.image
+      if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
+        const metadata = await inspectImage(requestedImage)
+        service.imagePlatforms = metadata.platforms
+      }
       const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
       if (decision.outcome !== 'placed') {
         // Exit code 3 in the CLI. The rejection list is the useful part.
@@ -736,7 +760,7 @@ export async function serviceRoutes(app: FastifyInstance) {
           : targetNode
             ? [targetNode.arch]
             : ['amd64']
-        const platforms = platformsFor(arches)
+        const platforms = app.ctx.config.BUILD_MODE === 'agent' ? planPlatforms(toServiceSpec(service), snapshot) : platformsFor(arches)
         if (!platforms.length) {
           throw ApiError.unprocessable(
             'no_buildable_platform',
@@ -783,6 +807,7 @@ export async function serviceRoutes(app: FastifyInstance) {
             await phases.set('building')
             const gitSha = body.gitSha ?? 'latest'
             const built = await app.ctx.builds.build({
+              deploymentId, serviceId: service.id, fleetId,
               serviceName: service.name,
               // An upload *is* the context: the CLI resolved `build: ./api`
               // against the manifest's directory before packing, so the archive
