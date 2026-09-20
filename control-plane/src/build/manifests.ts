@@ -142,6 +142,22 @@ export async function inspectImage(
     registry && host === registry ? config.REGISTRY_CREDENTIALS : undefined
   try {
     return await withRegistry(host, credentials, async (env) => {
+      const { stdout: d } = await exec(
+        'docker',
+        [
+          'buildx',
+          'imagetools',
+          'inspect',
+          '--format',
+          '{{.Manifest.Digest}}',
+          image,
+        ],
+        { env, timeout: 30000, maxBuffer: 1024 }
+      )
+      const digest = d.trim()
+      if (!/^sha256:[a-f0-9]{64}$/.test(digest))
+        throw new Error('no image digest')
+      image = pinnedImage(image, digest)
       const { stdout } = await exec(
         'docker',
         ['buildx', 'imagetools', 'inspect', '--raw', image],
@@ -177,21 +193,6 @@ export async function inspectImage(
       }
       if (!platforms.length)
         throw new Error('no supported Linux image platform')
-      const { stdout: d } = await exec(
-        'docker',
-        [
-          'buildx',
-          'imagetools',
-          'inspect',
-          '--format',
-          '{{.Manifest.Digest}}',
-          image,
-        ],
-        { env, timeout: 30000, maxBuffer: 1024 }
-      )
-      const digest = d.trim()
-      if (!/^sha256:[a-f0-9]{64}$/.test(digest))
-        throw new Error('no image digest')
       return { platforms, digest }
     })
   } catch {

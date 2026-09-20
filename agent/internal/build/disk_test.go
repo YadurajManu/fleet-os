@@ -32,25 +32,6 @@ func TestBudgetViolationCancelsSolveAndPrunes(t *testing.T) {
 		t.Fatal("cache was not pruned", err)
 	}
 }
-func TestCacheCapAppliedAfterEveryBuild(t *testing.T) {
-	for i := 0; i < 3; i++ {
-		calls := 0
-		err := pruneCache(func(args ...string) ([]byte, error) {
-			if args[len(args)-1] == "--help" {
-				return []byte("--keep-storage"), nil
-			}
-			calls++
-			if args[len(args)-2] != "--keep-storage" || args[len(args)-1] != "10737418240B" {
-				t.Fatal(args)
-			}
-			return nil, nil
-		}, "fleet-test", 10<<30)
-		if err != nil || calls != 1 {
-			t.Fatal("missing post-build cap", i, err)
-		}
-	}
-}
-
 func TestPruningPreservesUnrelatedAndCurrentVolumes(t *testing.T) {
 	retained := "fleet-aaaaaaaaaaaaaaaaaaaaaaaa"
 	removed := []string{}

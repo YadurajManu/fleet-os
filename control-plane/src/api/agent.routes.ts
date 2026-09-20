@@ -287,6 +287,10 @@ export async function agentRoutes(app: FastifyInstance) {
     if (hb.capabilities) {
       const cap = hb.capabilities
       await db.update(nodes).set({ ...engineValues(cap), arch: cap.arch, os: cap.os, cpuCores: cap.cpu_cores, ramMb: cap.ram_mb }).where(eq(nodes.id, nodeId))
+    } else if (/^v?0\.[012]\./.test(hb.agent_version ?? '')) {
+      // A rolled-back agent may inherit a node that previously opted in.
+      // Old agents cannot handle build messages or explicit execution platforms.
+      await db.update(nodes).set({canBuild:false,platform:null,platforms:[],engineKind:null,variant:null,effectiveCpu:null,effectiveMemBytes:null,buildCacheFreeBytes:0}).where(eq(nodes.id,nodeId))
     }
     const fleetId = req.agentFleetId!
 
