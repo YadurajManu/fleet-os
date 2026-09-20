@@ -1,6 +1,6 @@
 import { resolveSecrets } from '../secrets/store.js'
 import { repositoryBuildToken } from '../github/app.js'
-import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, lt, or } from 'drizzle-orm'
 import { createHash, createHmac } from 'node:crypto'
 import { mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -25,6 +25,7 @@ const sleep = (ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
 export class AgentBuildRunner implements BuildRunner {
  readonly name='agent'
  private inFlight=new Set<string>()
+ private cancelled=new Set<string>()
  private timer:ReturnType<typeof setInterval>
  constructor(private ctx:AppContext) {
   this.timer=setInterval(()=>{void this.reapOrphans().catch(()=>{})},10000);this.timer.unref()
@@ -42,7 +43,7 @@ export class AgentBuildRunner implements BuildRunner {
   if(!this.inFlight.has(job.deploymentId) || !job.leaseExpiresAt || job.leaseExpiresAt.getTime()<=Date.now()){
    this.send(nodeId,{...receipt,type:'build.cancel'});return
   }
-  const fence=and(eq(buildJobs.id,job.id),eq(buildJobs.attempt,event.attempt),eq(buildJobs.builderNodeId,nodeId),inArray(buildJobs.status,[...ACTIVE]))
+  const fence=and(eq(buildJobs.id,job.id),eq(buildJobs.attempt,event.attempt),eq(buildJobs.builderNodeId,nodeId),inArray(buildJobs.status,[...ACTIVE]),gt(buildJobs.leaseExpiresAt,new Date()))
   if(event.type==='build.ack' || event.type==='build.renew'){
    await this.ctx.db.update(buildJobs).set({status:'running',leaseExpiresAt:new Date(Date.now()+LEASE_MS)}).where(fence)
   }else if(event.type==='build.log' && event.text){
@@ -58,20 +59,22 @@ export class AgentBuildRunner implements BuildRunner {
   }
  }
  async cancel(deploymentId:string){
+  if(this.inFlight.has(deploymentId))this.cancelled.add(deploymentId)
   const jobs=await this.ctx.db.update(buildJobs).set({status:'cancelled',finishedAt:new Date(),leaseExpiresAt:null,error:'cancelled by operator'})
    .where(and(eq(buildJobs.deploymentId,deploymentId),inArray(buildJobs.status,['queued',...ACTIVE]))).returning()
   for(const job of jobs)if(job.builderNodeId)this.send(job.builderNodeId,{type:'build.cancel',version:1,job_id:job.id,attempt:job.attempt})
  }
  private async reapOrphans(){
-  const expired=await this.ctx.db.select().from(buildJobs).where(and(inArray(buildJobs.status,[...ACTIVE]),lt(buildJobs.leaseExpiresAt,new Date())))
+  const expired=await this.ctx.db.select().from(buildJobs).where(or(and(inArray(buildJobs.status,[...ACTIVE]),lt(buildJobs.leaseExpiresAt,new Date())),and(eq(buildJobs.status,'queued'),lt(buildJobs.createdAt,new Date(Date.now()-LEASE_MS)))))
   for(const job of expired){
    if(this.inFlight.has(job.deploymentId))continue
-   await this.ctx.db.update(buildJobs).set({status:'timed_out',error:'control plane restarted or build lease expired',finishedAt:new Date()}).where(and(eq(buildJobs.id,job.id),eq(buildJobs.attempt,job.attempt),lt(buildJobs.leaseExpiresAt,new Date()),inArray(buildJobs.status,[...ACTIVE])))
+   await this.ctx.db.update(buildJobs).set({status:'timed_out',error:'control plane restarted or build lease expired',finishedAt:new Date()}).where(and(eq(buildJobs.id,job.id),eq(buildJobs.attempt,job.attempt),or(and(lt(buildJobs.leaseExpiresAt,new Date()),inArray(buildJobs.status,[...ACTIVE])),eq(buildJobs.status,'queued'))))
    await this.ctx.db.update(deployments).set({status:'failed',failureReason:'build_lease_expired: retry the deployment',finishedAt:new Date()}).where(and(eq(deployments.id,job.deploymentId),inArray(deployments.status,['queued','building','pushing'])))
    if(job.builderNodeId)this.send(job.builderNodeId,{type:'build.cancel',version:1,job_id:job.id,attempt:job.attempt})
   }
  }
  private async reserve(job:typeof buildJobs.$inferSelect,req:BuildRequest,excluded:Set<string>){
+  if(this.cancelled.has(job.deploymentId))throw new Error('build cancelled')
   return this.ctx.db.transaction(async tx=>{
    // Serialize builder allocation across requests/processes using node rows.
    const rows=await tx.select().from(nodes).where(eq(nodes.fleetId,req.fleetId!)).orderBy(asc(nodes.id)).for('update')
@@ -83,10 +86,10 @@ export class AgentBuildRunner implements BuildRunner {
     return {id:n.id,platform:n.platform,canBuild:n.canBuild && n.status==='online' && !excluded.has(n.id),connected:this.ctx.tunnels.has(n.id),
      active:active.filter(j=>j.builderNodeId===n.id).length,maxConcurrentBuilds:n.maxConcurrentBuilds,
      freeCpu:(n.effectiveCpu??0)-(capacity.committedCpu??0),freeMemBytes:(n.effectiveMemBytes??0)-capacity.committedRamMb*1048576,
-     buildCacheFreeBytes:n.buildCacheFreeBytes,load:capacity.loadFactor??0.5,reliabilityScore:n.reliabilityScore}
+     buildDiskBytes:n.buildDiskBytes,buildCacheFreeBytes:n.buildCacheFreeBytes,buildDiskReserveBytes:n.buildDiskReserveBytes,load:capacity.loadFactor??0.5,reliabilityScore:n.reliabilityScore}
    })
    const builder=selectBuilder(pool,job.platform,previous?.builderNodeId??null,this.ctx.config.ALLOW_QEMU_FALLBACK)
-   if(!builder)throw new BuildUnavailableError(`no build-capable ${job.platform} agent online with available CPU/memory/concurrency`)
+   if(!builder)throw new BuildUnavailableError(`no build-capable ${job.platform} agent online with available CPU/memory/concurrency and disk budget plus reserve`)
    const [assigned]=await tx.update(buildJobs).set({status:'assigned',builderNodeId:builder.id,attempt:job.attempt+1,leaseExpiresAt:new Date(Date.now()+LEASE_MS),startedAt:new Date(),finishedAt:null,error:null})
     .where(and(eq(buildJobs.id,job.id),eq(buildJobs.attempt,job.attempt),inArray(buildJobs.status,['queued','timed_out']))).returning()
    if(!assigned)throw new Error('build cancelled before assignment')
@@ -111,7 +114,7 @@ export class AgentBuildRunner implements BuildRunner {
    const assignment:BuildAssignment={type:'build.assign',version:1,job_id:job.id,attempt:job.attempt,platform:job.platform,cache_key:`${req.serviceId}:${job.platform}`,emulated,
     source:{url:new URL(`/agent/build-source/${job.id}`,origin).href,token:sourceToken,sha256:checksum,...(req.gitSource ? {repository:req.gitSource.repository,commit:req.gitSource.commit,context:req.gitSource.context} : {})},
     build_args:buildArgs,secrets:buildSecrets, dockerfile:'Dockerfile',registry_target:`${origin.host}/${repo}:${req.gitSha.replace(/[^a-zA-Z0-9_.-]/g,'').slice(0,40)||'source'}-${job.platform.replaceAll('/','-')}-${job.id.slice(0,8)}-${job.attempt}`,
-    registry_username:'build',registry_password:signGrant({...grant,purpose:'push'},this.ctx.config.JWT_SECRET),timeout_ms:Math.min(this.ctx.config.BUILD_TIMEOUT_MS,3600000),cpu:2,memory_bytes:2147483648,disk_bytes:20*1073741824}
+    registry_username:'build',registry_password:signGrant({...grant,purpose:'push'},this.ctx.config.JWT_SECRET),timeout_ms:Math.min(this.ctx.config.BUILD_TIMEOUT_MS,3600000),cpu:2,memory_bytes:2147483648,disk_bytes:builder.buildDiskBytes??20*1073741824}
    if(!this.send(builder.id,assignment))await this.ctx.db.update(buildJobs).set({leaseExpiresAt:new Date(0)}).where(eq(buildJobs.id,job.id))
    const deadline=Date.now()+assignment.timeout_ms
    while(true){
@@ -153,27 +156,33 @@ export class AgentBuildRunner implements BuildRunner {
    // invalidate a cached output, so include only their keyed digest in this key.
    const sourceRef=createHmac('sha256',this.ctx.config.JWT_SECRET).update(JSON.stringify([req.sourceKey??checksum,service.buildArgs,secrets.values])).digest('hex')
    const groups=planBuilds(req.platforms,new Map(req.platforms.map(p=>[p,p])))
-   const jobs:Promise<string>[]=[]
+   const jobs:Promise<PromiseSettledResult<string>>[]=[]
    for(const group of groups){
+    if(this.cancelled.has(deploymentId))throw new Error('build cancelled')
     const platform=group.platforms[0]!
     const [cached]=await this.ctx.db.select().from(buildJobs).where(and(eq(buildJobs.serviceId,req.serviceId),eq(buildJobs.platform,platform),eq(buildJobs.sourceRef,sourceRef),eq(buildJobs.status,'succeeded'))).orderBy(desc(buildJobs.finishedAt)).limit(1)
     if(cached?.imageDigest){
      await this.ctx.db.insert(buildJobs).values({deploymentId,serviceId:req.serviceId,platform,sourceRef,status:'succeeded',imageDigest:cached.imageDigest,finishedAt:new Date()})
      req.onProgress?.({phase:'building',platform,detail:'reusing previously built digest'})
-     jobs.push(Promise.resolve(cached.imageDigest));continue
+     jobs.push(Promise.resolve({status:'fulfilled',value:cached.imageDigest}));continue
     }
     const [job]=await this.ctx.db.insert(buildJobs).values({deploymentId,serviceId:req.serviceId,platform,sourceRef}).returning()
-    jobs.push(this.runJob(job!,req,checksum,origin,repo,service.buildArgs,secrets.values))
+    jobs.push(this.runJob(job!,req,checksum,origin,repo,service.buildArgs,secrets.values).then(
+     value=>({status:'fulfilled',value} as const),
+     async reason=>{await this.cancel(deploymentId);return {status:'rejected',reason} as const}
+    ))
    }
-   const outcomes=await Promise.allSettled(jobs.map(p=>p.catch(async err=>{await this.cancel(deploymentId);throw err})))
+   const outcomes=await Promise.all(jobs)
    const failure=outcomes.find(x=>x.status==='rejected')
    if(failure?.status==='rejected')throw failure.reason
+   if(this.cancelled.has(deploymentId))throw new Error('build cancelled')
    const digests=outcomes.map(x=>(x as PromiseFulfilledResult<string>).value)
    const registry=this.ctx.config.REGISTRY_URL!.replace(/^https?:\/\//,'').replace(/\/$/,'')
    const imageRepo=`${registry}/${repo}`
    const digest=digests.length===1?digests[0]!:await mergeManifests(imageRepo,`${deploymentId}`,digests,this.ctx.config.REGISTRY_CREDENTIALS)
+   if(this.cancelled.has(deploymentId))throw new Error('build cancelled')
    await this.ctx.db.update(services).set({imagePlatforms:req.platforms}).where(eq(services.id,req.serviceId))
    return {imageTags:[`${imageRepo}@${digest}`],digest,durationMs:Date.now()-started}
-  }finally{this.inFlight.delete(deploymentId);await this.cancel(deploymentId);await rm(archive,{force:true})}
+  }finally{this.inFlight.delete(deploymentId);await this.cancel(deploymentId);this.cancelled.delete(deploymentId);await rm(archive,{force:true})}
  }
 }

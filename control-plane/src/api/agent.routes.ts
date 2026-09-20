@@ -27,6 +27,8 @@ const engineCapability = {
   can_build: z.boolean().default(false),
   platforms: z.array(z.string().regex(/^linux\/(amd64|arm64|arm\/v7)$/)).max(3).default([]),
   max_concurrent_builds: z.number().int().min(1).max(16).default(1),
+  build_disk_bytes: z.number().int().min(1073741824).max(Number.MAX_SAFE_INTEGER).default(21474836480),
+  build_disk_reserve_bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
   build_cache_free_bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
 }
 const capability = z.object({
@@ -744,6 +746,6 @@ function engineValues(cap: z.infer<typeof capability>) {
     platform: cap.platform, variant: cap.variant ?? null, engineKind: cap.engine_kind,
     effectiveCpu: cap.effective_cpu, effectiveMemBytes: cap.effective_mem_bytes,
     canBuild: Boolean(cap.can_build && cap.platform && cap.effective_cpu && cap.effective_mem_bytes),
-    platforms: cap.platforms, maxConcurrentBuilds: cap.max_concurrent_builds, buildCacheFreeBytes: cap.build_cache_free_bytes,
+    platforms: cap.platforms, maxConcurrentBuilds: cap.max_concurrent_builds, buildCacheFreeBytes: cap.build_cache_free_bytes, buildDiskReserveBytes: cap.build_disk_reserve_bytes, buildDiskBytes: cap.build_disk_bytes,
   }
 }

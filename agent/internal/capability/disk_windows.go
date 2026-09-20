@@ -36,3 +36,13 @@ func freeDiskMb(path string) int {
 	}
 	return int(freeToCaller / (1024 * 1024))
 }
+
+func HostDisk(path string) (free, total int64, err error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	var available, capacity, unused uint64
+	err = windows.GetDiskFreeSpaceEx(p, &available, &capacity, &unused)
+	return int64(available), int64(capacity), err
+}

@@ -13,18 +13,22 @@ import (
 
 // EngineReport describes the Linux container engine, never the agent host.
 type EngineReport struct {
-	Platform            string   `json:"platform"`
-	Variant             string   `json:"variant,omitempty"`
-	EngineKind          string   `json:"engine_kind"`
-	EffectiveCPU        int      `json:"effective_cpu"`
-	EffectiveMemBytes   int64    `json:"effective_mem_bytes"`
-	CanBuild            bool     `json:"can_build"`
-	Platforms           []string `json:"platforms"`
-	MaxConcurrentBuilds int      `json:"max_concurrent_builds"`
-	BuildCacheFreeBytes int64    `json:"build_cache_free_bytes"`
+	BuildDiskBytes        int64    `json:"build_disk_bytes"`
+	Platform              string   `json:"platform"`
+	Variant               string   `json:"variant,omitempty"`
+	EngineKind            string   `json:"engine_kind"`
+	EffectiveCPU          int      `json:"effective_cpu"`
+	EffectiveMemBytes     int64    `json:"effective_mem_bytes"`
+	CanBuild              bool     `json:"can_build"`
+	Platforms             []string `json:"platforms"`
+	MaxConcurrentBuilds   int      `json:"max_concurrent_builds"`
+	BuildCacheFreeBytes   int64    `json:"build_cache_free_bytes"`
+	BuildDiskReserveBytes int64    `json:"build_disk_reserve_bytes"`
 }
 
 type BuilderConfig struct {
+	CacheBytes          int64 `json:"build_cache_bytes"`
+	ReserveBytes        int64 `json:"build_reserve_bytes"`
 	Builder             bool  `json:"builder"`
 	MaxConcurrentBuilds int   `json:"max_concurrent_builds"`
 	CPU                 int   `json:"build_cpu"`
@@ -33,7 +37,7 @@ type BuilderConfig struct {
 }
 
 func LoadBuilderConfig(dir string) (BuilderConfig, error) {
-	c := BuilderConfig{MaxConcurrentBuilds: 1, CPU: 2, MemoryBytes: 2 << 30, DiskBytes: 20 << 30}
+	c := BuilderConfig{MaxConcurrentBuilds: 1, CPU: 2, MemoryBytes: 2 << 30, DiskBytes: 20 << 30, CacheBytes: 10 << 30, ReserveBytes: 5 << 30}
 	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if os.IsNotExist(err) {
 		return c, nil
@@ -44,7 +48,7 @@ func LoadBuilderConfig(dir string) (BuilderConfig, error) {
 	if err = json.Unmarshal(b, &c); err != nil {
 		return c, fmt.Errorf("agent config.json: %w", err)
 	}
-	if c.MaxConcurrentBuilds < 1 || c.MaxConcurrentBuilds > 16 || c.CPU < 1 || c.MemoryBytes < 256<<20 || c.DiskBytes < 1<<30 {
+	if c.MaxConcurrentBuilds < 1 || c.MaxConcurrentBuilds > 16 || c.CPU < 1 || c.MemoryBytes < 256<<20 || c.DiskBytes < 1<<30 || c.CacheBytes < 1<<30 || c.ReserveBytes < 1<<30 {
 		return c, fmt.Errorf("invalid builder resource limits")
 	}
 	return c, nil
@@ -87,7 +91,7 @@ func FromDockerInfo(body []byte) (EngineReport, string, error) {
 	if strings.Contains(strings.ToLower(info.OperatingSystem), "docker desktop") {
 		kind = "docker-desktop"
 	}
-	return EngineReport{Platform: p, Variant: variant, EngineKind: kind, EffectiveCPU: info.NCPU, EffectiveMemBytes: info.MemTotal, Platforms: []string{p}, MaxConcurrentBuilds: 1}, arch, nil
+	return EngineReport{BuildDiskBytes: 20 << 30, Platform: p, Variant: variant, EngineKind: kind, EffectiveCPU: info.NCPU, EffectiveMemBytes: info.MemTotal, Platforms: []string{p}, MaxConcurrentBuilds: 1}, arch, nil
 }
 
 func DockerCommand(ctx context.Context, args ...string) *exec.Cmd {

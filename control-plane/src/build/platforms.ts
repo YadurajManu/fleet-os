@@ -16,10 +16,10 @@ export function planPlatforms(service: ServiceSpec, nodes: NodeSnapshot[]): stri
 export type Builder = {
  id: string; platform: string | null; canBuild: boolean; connected: boolean
  active: number; maxConcurrentBuilds: number; freeCpu: number; freeMemBytes: number
- buildCacheFreeBytes: number; load: number; reliabilityScore: number
+ buildDiskBytes?: number; buildDiskReserveBytes?: number; buildCacheFreeBytes: number; load: number; reliabilityScore: number
 }
 export function selectBuilder(pool: Builder[], platform: string, sticky: string | null, allowQemu = false): Builder | undefined {
-  const capable = pool.filter(n => n.canBuild && n.connected && n.active < n.maxConcurrentBuilds && n.freeCpu >= 2 && n.freeMemBytes >= 2147483648)
+  const capable = pool.filter(n => n.canBuild && n.connected && n.active < n.maxConcurrentBuilds && n.freeCpu >= 2 && n.freeMemBytes >= 2147483648 && n.buildCacheFreeBytes - (n.buildDiskReserveBytes ?? 0) >= (n.buildDiskBytes ?? 20*1073741824)*(n.active+1))
   const native = capable.filter(n => n.platform === platform)
   const eligible = native.length ? native : allowQemu ? capable.filter(n => n.platform === 'linux/amd64') : []
   return eligible.sort((a,b) => Number(b.id === sticky) - Number(a.id === sticky)

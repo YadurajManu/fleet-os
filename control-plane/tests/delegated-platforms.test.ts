@@ -21,7 +21,7 @@ test('effective engine resources override host totals and include reservations',
  const n={...node('mac','arm64'),effectiveCpu:2,effectiveMemBytes:512*1048576,committedRamMb:400,committedCpu:2}
  assert.equal(filterNodes(service,[n]).eligible.length,0)
 })
-const builder=(id:string,platform:string):Builder=>({id,platform,canBuild:true,connected:true,active:0,maxConcurrentBuilds:1,freeCpu:4,freeMemBytes:8*1073741824,buildCacheFreeBytes:1e10,load:0.2,reliabilityScore:0.5})
+const builder=(id:string,platform:string):Builder=>({id,platform,buildCacheFreeBytes:100*1073741824,canBuild:true,connected:true,active:0,maxConcurrentBuilds:1,freeCpu:4,freeMemBytes:8*1073741824,load:0.2,reliabilityScore:0.5})
 test('native selection, warm cache, opt-in, concurrency, and explicit QEMU fallback',()=>{
  const mac=builder('mac','linux/arm64'),x86=builder('x86','linux/amd64')
  assert.equal(selectBuilder([mac,x86],'linux/arm64','x86')?.id,'mac')

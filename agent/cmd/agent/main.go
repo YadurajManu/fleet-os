@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -184,20 +185,55 @@ func run() error {
 		return err
 	}
 	hostSampler := sampler.New(Version, engine, reporter)
-	var lastEngineCheck time.Time
-	hostSampler.EngineCapabilities = func(ctx context.Context) *capability.Report {
-		if time.Since(lastEngineCheck) < 30*time.Second {
+	var capabilityMu sync.Mutex
+	var engineReport *capability.Report
+	go func() {
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			probeCtx, probeCancel := context.WithTimeout(ctx, 25*time.Second)
+			report, probeErr := capability.DetectEngine(probeCtx, Version)
+			if probeErr == nil {
+				report.MaxConcurrentBuilds = builderConfig.MaxConcurrentBuilds
+				report.BuildDiskBytes = builderConfig.DiskBytes
+				if builderConfig.Builder {
+					space, spaceErr := capability.ProbeDisk(probeCtx, filepath.Dir(*statePath), builderConfig.ReserveBytes, "")
+					buildxErr := capability.DockerCommand(probeCtx, "buildx", "version").Run()
+					if spaceErr == nil && buildxErr == nil {
+						report.BuildCacheFreeBytes = space.Free
+						report.BuildDiskReserveBytes = space.Reserve
+						report.CanBuild = space.Preflight(builderConfig.DiskBytes) == nil
+					}
+				}
+				capabilityMu.Lock()
+				engineReport = &report
+				capabilityMu.Unlock()
+			} else {
+				log.Warn("Docker engine capability unavailable", "err", probeErr)
+				capabilityMu.Lock()
+				if engineReport != nil {
+					engineReport.CanBuild = false
+				}
+				capabilityMu.Unlock()
+			}
+			probeCancel()
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+	hostSampler.EngineCapabilities = func(context.Context) *capability.Report {
+		capabilityMu.Lock()
+		defer capabilityMu.Unlock()
+		if engineReport == nil {
 			return nil
 		}
-		lastEngineCheck = time.Now()
-		report, err := capability.DetectEngine(ctx, Version)
-		if err != nil {
-			log.Warn("Docker engine capability unavailable", "err", err)
-			return nil
-		}
-		report.CanBuild = builderConfig.Builder
-		report.MaxConcurrentBuilds = builderConfig.MaxConcurrentBuilds
-		return &report
+		copy := *engineReport
+		engineCopy := *engineReport.EngineReport
+		copy.EngineReport = &engineCopy
+		return &copy
 	}
 	loop := &heartbeat.Loop{
 		Client:   api,

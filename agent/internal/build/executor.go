@@ -172,7 +172,7 @@ func redact(s string, a Assignment) string {
 	return s
 }
 
-func (e *Executor) execute(ctx context.Context, a Assignment) (string, error) {
+func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult string, buildErr error) {
 	if a.CPU < 1 || a.CPU > e.Config.CPU || a.MemoryBytes < 256<<20 || a.MemoryBytes > e.Config.MemoryBytes || a.DiskBytes < 1<<30 || a.DiskBytes > e.Config.DiskBytes {
 		return "", fmt.Errorf("requested build limits exceed agent limits")
 	}
@@ -190,6 +190,15 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (string, error) {
 		return "", fmt.Errorf("invalid registry target")
 	}
 	if err = os.MkdirAll(e.Root, 0700); err != nil {
+		return "", err
+	}
+	preflightCtx, preflightCancel := context.WithTimeout(ctx, 30*time.Second)
+	disk, diskErr := capability.ProbeDisk(preflightCtx, e.Root, e.Config.ReserveBytes, "")
+	preflightCancel()
+	if diskErr != nil {
+		return "", diskErr
+	}
+	if err = disk.Preflight(a.DiskBytes); err != nil {
 		return "", err
 	}
 	dir, err := os.MkdirTemp(e.Root, "job-")
@@ -276,6 +285,14 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (string, error) {
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		if err := pruneCache(func(args ...string) ([]byte, error) {
+			command := capability.DockerCommand(cleanup, args...)
+			command.Env = append(os.Environ(), "DOCKER_CONFIG="+configDir)
+			return command.Output()
+		}, builder, e.Config.CacheBytes); err != nil {
+			buildErr = fmt.Errorf("build cache pruning failed: %w", err)
+			digestResult = ""
+		}
 		cmd := capability.DockerCommand(cleanup, "buildx", "rm", "--force", "--keep-state", builder)
 		cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+configDir)
 		_ = cmd.Run()
@@ -285,32 +302,31 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (string, error) {
 	// Enforce a measured disk budget, including layers produced by RUN. Docker
 	// Desktop cannot supply host filesystem project quotas; sampling may overshoot
 	// between checks. Never call this a filesystem hard quota.
-	diskExceeded := make(chan struct{}, 1)
-	go func() {
-		tick := time.NewTicker(5 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-buildCtx.Done():
-				return
-			case <-tick.C:
-				check, cancel := context.WithTimeout(buildCtx, 4*time.Second)
-				out, err := capability.DockerCommand(check, "exec", "buildx_buildkit_"+builder+"0", "du", "-sk", "/var/lib/buildkit").Output()
-				cancel()
-				if err == nil {
-					fields := strings.Fields(string(out))
-					if len(fields) > 0 {
-						kb, _ := strconv.ParseInt(fields[0], 10, 64)
-						if kb*1024 > a.DiskBytes {
-							diskExceeded <- struct{}{}
-							stop()
-							return
-						}
-					}
-				}
-			}
+	diskExceeded := watchDisk(buildCtx, stop, 3*time.Second, func(check context.Context) error {
+		out, err := capability.DockerCommand(check, "exec", "buildx_buildkit_"+builder+"0", "du", "-sk", "/var/lib/buildkit").Output()
+		if err != nil {
+			return fmt.Errorf("cannot monitor build disk usage: %w", err)
 		}
-	}()
+		fields := strings.Fields(string(out))
+		if len(fields) == 0 {
+			return fmt.Errorf("cannot measure build disk usage")
+		}
+		kb, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil {
+			return err
+		}
+		if kb*1024 >= a.DiskBytes {
+			return fmt.Errorf("disk budget exceeded")
+		}
+		space, err := capability.ProbeDisk(check, e.Root, e.Config.ReserveBytes, builder)
+		if err != nil {
+			return err
+		}
+		if space.Free < space.Reserve {
+			return fmt.Errorf("disk reserve breached")
+		}
+		return nil
+	})
 	metadata := filepath.Join(dir, "metadata.json")
 	args := []string{"buildx", "build", "--builder", builder, "--platform", a.Platform, "--push", "--provenance=false", "--progress=plain", "--network=default", "--tag", a.RegistryTarget, "--file", dockerfile, "--metadata-file", metadata}
 	for k, v := range a.BuildArgs {
@@ -352,8 +368,8 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (string, error) {
 	}
 	err = cmd.Wait()
 	select {
-	case <-diskExceeded:
-		return "", fmt.Errorf("build exceeded disk budget")
+	case diskErr := <-diskExceeded:
+		return "", diskErr
 	default:
 	}
 	if err != nil {

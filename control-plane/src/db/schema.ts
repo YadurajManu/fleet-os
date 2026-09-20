@@ -193,6 +193,8 @@ export const nodes = pgTable(
     canBuild: boolean('can_build').notNull().default(false),
     platforms: text('platforms').array().notNull().default([]),
     maxConcurrentBuilds: integer('max_concurrent_builds').notNull().default(1),
+    buildDiskBytes: bigint('build_disk_bytes', { mode: 'number' }).notNull().default(21474836480),
+    buildDiskReserveBytes: bigint('build_disk_reserve_bytes', { mode: 'number' }).notNull().default(0),
     buildCacheFreeBytes: bigint('build_cache_free_bytes', { mode: 'number' }).notNull().default(0),
     os: text('os').notNull().default('linux'),
     cpuCores: integer('cpu_cores').notNull(),

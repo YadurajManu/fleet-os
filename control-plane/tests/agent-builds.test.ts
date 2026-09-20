@@ -21,7 +21,7 @@ before(async()=>{
  const [o]=await ctx.db.insert(orgs).values({name:'agent-build-tests'}).returning();orgId=o!.id
  const [f]=await ctx.db.insert(fleets).values({orgId,name:'test'}).returning();fleetId=f!.id
  const [s]=await ctx.db.insert(services).values({fleetId,name:'app',buildContext:'.'}).returning();serviceId=s!.id
- const [n]=await ctx.db.insert(nodes).values({fleetId,name:'mac',arch:'arm64',platform:'linux/arm64',os:'linux',cpuCores:8,ramMb:16384,effectiveCpu:8,effectiveMemBytes:16*1073741824,diskMb:100000,canBuild:true,status:'online',agentTokenHash:'test-build-hash'}).returning();nodeId=n!.id
+ const [n]=await ctx.db.insert(nodes).values({fleetId,name:'mac',arch:'arm64',platform:'linux/arm64',os:'linux',cpuCores:8,ramMb:16384,effectiveCpu:8,effectiveMemBytes:16*1073741824,diskMb:100000,buildCacheFreeBytes:100*1073741824,canBuild:true,status:'online',agentTokenHash:'test-build-hash'}).returning();nodeId=n!.id
  await writeFile(join(dir,'Dockerfile'),'FROM scratch\n')
  ctx.tunnels.has=()=>true
 })
@@ -62,7 +62,7 @@ test('no opted-in builder fails clearly and leaves no active jobs',async()=>{
  await assert.rejects(runner.build(req),/no build-capable linux\/arm64 agent/)
  const jobs=await ctx.db.select().from(buildJobs).where(eq(buildJobs.deploymentId,req.deploymentId!))
  assert.ok(jobs.every(j=>!['queued','assigned','running'].includes(j.status)))
- await ctx.db.update(nodes).set({canBuild:true}).where(eq(nodes.id,nodeId))
+ await ctx.db.update(nodes).set({buildCacheFreeBytes:100*1073741824,canBuild:true}).where(eq(nodes.id,nodeId))
 })
 test('operator cancellation stops the assigned attempt and returns a terminal error',async()=>{
  const req=await request('cancel')
@@ -72,7 +72,7 @@ test('operator cancellation stops the assigned attempt and returns a terminal er
  assert.equal(cancelSent,true)
 })
 test('expired lease retries on another native builder; late result is fenced',async()=>{
- const [n]=await ctx.db.insert(nodes).values({fleetId,name:'other',arch:'arm64',platform:'linux/arm64',cpuCores:8,ramMb:16384,effectiveCpu:8,effectiveMemBytes:16*1073741824,diskMb:100000,canBuild:true,status:'online',agentTokenHash:'test-build-hash-two'}).returning()
+ const [n]=await ctx.db.insert(nodes).values({fleetId,name:'other',arch:'arm64',platform:'linux/arm64',cpuCores:8,ramMb:16384,effectiveCpu:8,effectiveMemBytes:16*1073741824,diskMb:100000,buildCacheFreeBytes:100*1073741824,canBuild:true,status:'online',agentTokenHash:'test-build-hash-two'}).returning()
  const assigned:string[]=[];let previous:BuildAssignment|undefined;let task:Promise<void>|undefined
  ctx.tunnels.sendBuild=(id,msg)=>{
   const a=msg as BuildAssignment;if(a.type!=='build.assign')return true
