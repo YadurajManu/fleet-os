@@ -37,7 +37,7 @@ anywhere someone is representing the project in public.
 
 ## Reporting
 
-Email **hello@fleet-os.dev**.
+Email **yadurajsingham@gmail.com**.
 
 Being honest about what that means: reports go to one person, who is also the
 maintainer of the project you may be reporting about. There is no committee and
