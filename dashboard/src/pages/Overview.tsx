@@ -87,26 +87,6 @@ export default function Overview() {
   const mapNodes = map.data?.nodes ?? []
   const all = nodes.data?.nodes ?? []
 
-  // An empty fleet gets the guide rather than a dead end.
-  if (nodes.data && services.data && !nodes.error && !services.error && fleet && (!mapNodes.length || !services.data.services.length)) {
-    return (
-      <div className="space-y-5">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-[-0.03em]">Welcome to {fleet.name}</h1>
-          <p className="mt-1 text-[13.5px] text-[var(--color-fg-muted)]">
-            Two steps to something of your own running on hardware you control.
-          </p>
-        </div>
-        <FirstRun
-          fleet={fleet}
-          nodes={all}
-          services={services.data?.services ?? []}
-          onChanged={() => services.refetch()}
-        />
-      </div>
-    )
-  }
-
   const allServices = services.data?.services ?? []
   const { running, deploying, attention } = serviceCounts(allServices)
   const maxAgeMs = fleet.heartbeatIntervalSec * fleet.heartbeatMissThreshold * 1000
@@ -129,6 +109,16 @@ export default function Overview() {
         </div>
         <div className="flex gap-2"><Button variant="ghost" onClick={() => navigate('/doctor')}>Fleet Doctor</Button><Button onClick={() => navigate('/services')}>View services →</Button></div>
       </header>
+      {nodes.data && services.data && !nodes.error && !services.error &&
+        (!all.length || !allServices.length) && (
+          <FirstRun
+            key={`setup-${fleet.id}`}
+            fleet={fleet}
+            nodes={all}
+            services={allServices}
+            onChanged={() => services.refetch()}
+          />
+        )}
       {nodes.error && <ErrorNote error={nodes.error} />}
       {services.error && <ErrorNote error={services.error} />}
 
