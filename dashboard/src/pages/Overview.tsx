@@ -1,7 +1,9 @@
+import { freshTelemetry, loadRatio, serviceCounts } from '../lib/telemetry'
+import { helpFor } from '../lib/failureReasons'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, type Node, type PlacementMapNode, type Service, type TimelineEvent } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
-import { mb, pct, since, toneOf } from '../lib/format'
+import { mb, since, toneOf } from '../lib/format'
 import { Dot, Empty, ErrorNote, GridFiller, Panel, StatusPill, Button, RingGauge } from '../components/ui'
 import ClusterMeshVisualizer from '../components/ClusterMeshVisualizer'
 import FirstRun from '../components/FirstRun'
@@ -86,7 +88,7 @@ export default function Overview() {
   const all = nodes.data?.nodes ?? []
 
   // An empty fleet gets the guide rather than a dead end.
-  if (!map.loading && fleet && (!mapNodes.length || !(services.data?.services ?? []).length)) {
+  if (nodes.data && services.data && !nodes.error && !services.error && fleet && (!mapNodes.length || !services.data.services.length)) {
     return (
       <div className="space-y-5">
         <div>
@@ -105,367 +107,76 @@ export default function Overview() {
     )
   }
 
-  const offline = mapNodes.filter((n) => n.status === 'offline')
-  const pinnedDown = mapNodes.flatMap((n) =>
-    n.services.filter((s) => s.status === 'pinned_unavailable').map((s) => ({ node: n.name, service: s.name }))
-  )
-  const totalServices = mapNodes.reduce((sum, n) => sum + n.services.length, 0)
-
-  // Declared but not running, and not already explained by a pinned node being down.
   const allServices = services.data?.services ?? []
-  const broken = allServices.filter(
-    (s) =>
-      s.current?.status !== 'running' &&
-      s.current?.status !== 'online' &&
-      s.current?.status !== 'deploying' &&
-      !pinnedDown.some((p) => p.service === s.name)
-  )
-
-  const canAlert = (alerts.data?.rules ?? []).some((r) => r.enabled)
+  const { running, deploying, attention } = serviceCounts(allServices)
+  const maxAgeMs = fleet.heartbeatIntervalSec * fleet.heartbeatMissThreshold * 1000
+  const fresh = all.filter(n => freshTelemetry(n, maxAgeMs))
+  const reachable = all.filter(n => n.live)
+  const unavailable = Boolean(nodes.error || services.error || !nodes.data || !services.data)
+  const canAlert = (alerts.data?.rules ?? []).some(r => r.enabled)
+  const latestSample = all.map(n => n.lastHeartbeatAt).filter((at): at is string => Boolean(at)).sort().at(-1)
 
   return (
-    <div className="space-y-6">
-      {/* ── Page Header with Fleet Context & Quick Actions ── */}
-      {fleet && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--color-line)] pb-4">
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-[var(--color-line)] bg-[var(--color-ink-900)] text-[var(--color-signal)] shadow-inner">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polygon points="12 2 2 7 12 12 22 7 12 2"/>
-                <polyline points="2 17 12 22 22 17"/>
-                <polyline points="2 12 12 17 22 12"/>
-              </svg>
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2.5">
-                <h1 className="text-[21px] font-semibold tracking-[-0.02em] text-[var(--color-fg)]">
-                  {fleet.name}
-                </h1>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-line)] bg-[var(--color-ink-900)] px-2.5 py-0.5 font-mono text-[10px] text-[var(--color-fg-muted)]">
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ${
-                      offline.length > 0 || broken.length > 0
-                        ? 'bg-[var(--color-warn)] animate-pulse'
-                        : 'bg-[var(--color-signal)]'
-                    }`}
-                  />
-                  {offline.length > 0
-                    ? `${offline.length} node offline`
-                    : broken.length > 0
-                    ? `${broken.length} service degraded`
-                    : 'all systems operational'}
-                </span>
+    <div className="overview-page space-y-6">
+      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-[var(--color-line)] pb-5">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{fleet.name}</h1>
+          <p className="mt-2 text-sm text-[var(--color-fg-muted)]">
+            {unavailable ? 'Fleet status unavailable' : attention.length ? `${attention.length} services need attention` : deploying.length ? `${deploying.length} services deploying` : 'No deployment issues reported'}
+            {' · '}{nodes.error ? 'Telemetry refresh failed' : latestSample ? `Latest heartbeat ${since(latestSample)}` : 'Waiting for heartbeat'}
+          </p>
+          <details className="mt-2 text-xs text-[var(--color-fg-dim)]"><summary className="cursor-pointer">Fleet details</summary><p className="mt-2">ID: <code>{fleet.id}</code> · Expected heartbeat every {fleet.heartbeatIntervalSec}s</p></details>
+        </div>
+        <div className="flex gap-2"><Button variant="ghost" onClick={() => navigate('/doctor')}>Fleet Doctor</Button><Button onClick={() => navigate('/services')}>View services →</Button></div>
+      </header>
+      {nodes.error && <ErrorNote error={nodes.error} />}
+      {services.error && <ErrorNote error={services.error} />}
+
+      {attention.length > 0 && <Panel title="Needs attention" right={<span className="text-[var(--color-warn)]">{attention.length} services</span>}>
+        <ul className="divide-y divide-[var(--color-line)]">
+          {attention.map(service => {
+            const reason = service.last?.failureReason
+            const help = helpFor(reason)
+            const pinned = service.current?.status === 'pinned_unavailable' || reason?.startsWith('node_down_pinned')
+            return <li key={service.id} className="flex flex-wrap items-start justify-between gap-4 p-5">
+              <div className="min-w-0 flex-1">
+                <Link to={`/services/${service.id}`} className="font-medium underline-offset-4 hover:underline">{service.name}</Link>
+                <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{pinned ? 'The service is pinned to an unavailable node.' : help?.what ?? (service.last ? 'The latest deployment is not running. Review its status and logs.' : 'This service has not been deployed.')}</p>
+                <p className="mt-1 text-sm text-[var(--color-fg-muted)]">{pinned ? 'Check the node and its storage before changing placement.' : help?.next ?? 'Open service details to review the next step.'}</p>
+                {reason && <details className="mt-2 text-xs text-[var(--color-fg-dim)]"><summary className="cursor-pointer">Technical reason</summary><p className="mt-1 break-words font-mono">{reason}</p></details>}
               </div>
-              <p className="mt-0.5 font-mono text-[11px] text-[var(--color-fg-dim)]">
-                Fleet ID: <code className="text-[var(--color-fg-muted)]">{fleet.id}</code> · Heartbeat every {fleet.heartbeatIntervalSec}s
-              </p>
-            </div>
-          </div>
+              <Link to={`/services/${service.id}`} className="shrink-0 text-sm text-[var(--color-signal)] underline underline-offset-4">Review service →</Link>
+            </li>
+          })}
+        </ul>
+      </Panel>}
 
-          {/* Quick Actions Bar */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => navigate('/doctor')}
-              className="flex items-center gap-1.5 text-[11px] py-1 px-2.5"
-            >
-              <span>🩺</span>
-              <span>Fleet Doctor</span>
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => navigate('/services')}
-              className="flex items-center gap-1.5 text-[11px] py-1 px-2.5"
-            >
-              <span>📦</span>
-              <span>Services</span>
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => window.dispatchEvent(new CustomEvent('fleet:open-palette'))}
-              className="flex items-center gap-1.5 text-[11px] py-1 px-2.5"
-            >
-              <span>⚡</span>
-              <span>Quick Actions</span>
-              <kbd className="ml-1 rounded bg-black/30 px-1 py-0.5 font-mono text-[9px] text-[var(--color-fg-muted)]">⌘K</kbd>
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* What happened while you were away */}
-      {fleet && <SinceYouLeft fleetId={fleet.id} />}
-
-      {/* Warning if no alerts configured */}
-      {alerts.data && !canAlert && (services.data?.services.length ?? 0) > 0 && (
-        <div className="fade-up rounded-[4px] border border-[var(--color-warn)]/40 bg-[color-mix(in_oklab,var(--color-warn)_6%,var(--color-ink-950))] p-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <span className="text-[16px]">⚠️</span>
-              <div>
-                <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--color-warn)] font-medium">
-                  no alert channels active
-                </div>
-                <p className="mt-1 text-[13px] text-[var(--color-fg-muted)]">
-                  A node going down or deploy failing will not notify external channels. Configure Slack, Telegram, or Webhooks.
-                </p>
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              onClick={() => navigate('/alerts')}
-              className="text-[11px] shrink-0 py-1 px-2.5"
-            >
-              Configure Alerts →
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Something is wrong and nothing said so until you went looking */}
-      {broken.length > 0 && (
-        <div className="fade-up rounded-[4px] border border-[var(--color-down)]/40 bg-[color-mix(in_oklab,var(--color-down)_7%,var(--color-ink-950))] p-4 transition-all hover:border-[var(--color-down)]/70">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-down)] text-[var(--color-ink-950)] font-bold text-[12px]">
-                !
-              </div>
-              <div>
-                <div className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--color-down)]">
-                  <span>{broken.length} service{broken.length === 1 ? '' : 's'} degraded</span>
-                </div>
-                <p className="mt-1 text-[13.5px] leading-relaxed text-[var(--color-fg)]">
-                  <span className="font-medium">
-                    {broken.slice(0, 4).map((s) => s.name).join(', ')}
-                  </span>
-                  {broken.length > 4 && ` and ${broken.length - 4} more`}
-                </p>
-                <p className="mt-0.5 font-mono text-[11px] text-[var(--color-fg-muted)]">
-                  {broken[0]?.last?.failureReason
-                    ? broken[0].last.failureReason.split('\n')[0]?.slice(0, 120)
-                    : 'Open Services or Fleet Doctor to diagnose root cause and apply auto-fix.'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 sm:self-center">
-              <Button
-                variant="danger"
-                onClick={() => navigate('/doctor')}
-                className="text-[11px] border-[var(--color-down)]/40 text-[var(--color-down)] hover:bg-[var(--color-down)]/10 py-1 px-2.5"
-              >
-                Run Doctor
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => navigate('/services')}
-                className="text-[11px] py-1 px-2.5"
-              >
-                View Services →
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* What needs a human comes first, always */}
-      {pinnedDown.length > 0 && (
-        <div className="fade-up rounded-[4px] border-l-4 border-[var(--color-down)] bg-[color-mix(in_oklab,var(--color-down)_7%,transparent)] px-5 py-4">
-          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-down)]">
-            needs attention
-          </div>
-          {pinnedDown.map((p) => (
-            <p key={p.service} className="mt-2 text-[14px] leading-relaxed">
-              <span className="font-medium">{p.service}</span> is down and was{' '}
-              <span className="text-[var(--color-down)]">not moved</span> — it is pinned to{' '}
-              <span className="font-mono text-[13px]">{p.node}</span>.
-              <span className="block text-[13px] text-[var(--color-fg-muted)]">
-                Pinned services stay with their data. Bring that node back, or repin the service.
-              </span>
-            </p>
-          ))}
-        </div>
-      )}
-
-      {/* ── Fleet Summary Cards (Elevated Glassmorphism & High Contrast) ── */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Card 1: Nodes Online */}
-        <div
-          className={`stat-card rounded-[4px] p-4 ${
-            offline.length ? 'stat-card-glow-warn' : 'stat-card-glow-ok'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[var(--color-fg-dim)]">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-fg-muted)]">
-                Nodes Online
-              </span>
-            </div>
-            <Dot tone={offline.length ? 'warn' : 'ok'} size={6} />
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span
-              className={`tabular text-[26px] font-bold tracking-[-0.03em] ${
-                offline.length ? 'text-gradient-warn' : 'text-gradient-signal'
-              }`}
-            >
-              {mapNodes.length - offline.length}
-            </span>
-            <span className="font-mono text-[13px] text-[var(--color-fg-dim)]">/ {mapNodes.length} total</span>
-          </div>
-          <div className="mt-2 flex items-center justify-between font-mono text-[10px] text-[var(--color-fg-dim)]">
-            <span>{offline.length ? `${offline.length} node offline` : 'All nodes responsive'}</span>
-            <Link to="/nodes" className="text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] transition-colors">
-              view →
-            </Link>
-          </div>
-        </div>
-
-        {/* Card 2: Services Running */}
-        <div
-          className={`stat-card rounded-[4px] p-4 ${
-            broken.length ? 'stat-card-glow-down' : 'stat-card-glow-ok'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[var(--color-fg-dim)]">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.12 6.4-6.05-4.06a2 2 0 0 0-2.17-.05L2.95 8.41a2 2 0 0 0-.95 1.7v5.82a2 2 0 0 0 .95 1.7l9.95 6.08a2 2 0 0 0 2.1-.01l6.12-4.08a2 2 0 0 0 .88-1.69V8.08a2 2 0 0 0-.88-1.68Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/></svg>
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-fg-muted)]">
-                Services Running
-              </span>
-            </div>
-            <Dot tone={broken.length ? 'down' : 'ok'} size={6} />
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span
-              className={`tabular text-[26px] font-bold tracking-[-0.03em] ${
-                broken.length ? 'text-[var(--color-down)]' : 'text-gradient-signal'
-              }`}
-            >
-              {allServices.length ? allServices.length - broken.length : totalServices}
-            </span>
-            <span className="font-mono text-[13px] text-[var(--color-fg-dim)]">
-              {allServices.length ? `/ ${allServices.length} deployed` : 'placed'}
-            </span>
-          </div>
-          <div className="mt-2 flex items-center justify-between font-mono text-[10px]">
-            <span className={broken.length ? 'text-[var(--color-down)] font-medium' : 'text-[var(--color-fg-dim)]'}>
-              {broken.length ? `${broken.length} degraded` : '100% workloads active'}
-            </span>
-            <Link to="/services" className="text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] transition-colors">
-              manage →
-            </Link>
-          </div>
-        </div>
-
-        {/* Card 3: Unplaced Workloads */}
-        <div
-          className={`stat-card rounded-[4px] p-4 ${
-            (map.data?.unplaced.length ?? 0) > 0 ? 'stat-card-glow-warn' : ''
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[var(--color-fg-dim)]">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-fg-muted)]">
-                Unplaced
-              </span>
-            </div>
-            <Dot tone={(map.data?.unplaced.length ?? 0) > 0 ? 'warn' : 'idle'} size={6} />
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span
-              className={`tabular text-[26px] font-bold tracking-[-0.03em] ${
-                (map.data?.unplaced.length ?? 0) > 0 ? 'text-gradient-warn' : 'text-[var(--color-fg)]'
-              }`}
-            >
-              {map.data?.unplaced.length ?? 0}
-            </span>
-            <span className="font-mono text-[12px] text-[var(--color-fg-dim)]">pending</span>
-          </div>
-          <div className="mt-2 flex items-center justify-between font-mono text-[10px] text-[var(--color-fg-dim)]">
-            <span>
-              {(map.data?.unplaced.length ?? 0) > 0
-                ? 'Requires placement'
-                : 'Zero unassigned'}
-            </span>
-            {(map.data?.unplaced.length ?? 0) > 0 ? (
-              <Link to="/services" className="text-[var(--color-warn)] font-medium hover:underline">
-                place →
-              </Link>
-            ) : (
-              <span className="text-[var(--color-fg-dim)]">optimal</span>
-            )}
-          </div>
-        </div>
-
-        {/* Card 4: Heartbeat & Telemetry */}
-        <div className="stat-card rounded-[4px] p-4 stat-card-glow-ok">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[var(--color-signal)]">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--color-fg-muted)]">
-                Heartbeat
-              </span>
-            </div>
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-signal)]" />
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="tabular text-[26px] font-bold tracking-[-0.03em] text-gradient-signal">
-              {fleet.heartbeatIntervalSec}s
-            </span>
-            <span className="font-mono text-[12px] text-[var(--color-fg-dim)]">cycle</span>
-          </div>
-          <div className="mt-2 flex items-center justify-between font-mono text-[10px] text-[var(--color-fg-dim)]">
-            <span>Tolerance: {fleet.heartbeatMissThreshold} misses</span>
-            <span className="text-[var(--color-signal)]">healthy</span>
-          </div>
-        </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          { label: 'Services running', value: services.error || !services.data ? '—' : `${running.length} / ${allServices.length}`, detail: `${deploying.length} deploying · deployment state, not health checks`, to: '/services' },
+          { label: 'Nodes reachable', value: nodes.error || !nodes.data ? '—' : `${reachable.length} / ${all.length}`, detail: 'Agent heartbeat reachability', to: '/nodes' },
+          { label: 'Unplaced workloads', value: String(map.data?.unplaced.length ?? 0), detail: 'Awaiting a placement decision', to: '/services' },
+          { label: 'Fresh telemetry', value: nodes.error || !nodes.data ? '—' : `${fresh.length} / ${all.length}`, detail: `Samples within ${maxAgeMs / 1000}s · unavailable is not zero`, to: '/nodes' },
+        ].map(card => <Link key={card.label} to={card.to} className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] p-5 hover:border-[var(--color-line-2)]">
+          <p className="text-sm text-[var(--color-fg-muted)]">{card.label}</p><p className="mt-3 text-3xl font-semibold tabular-nums">{card.value}</p><p className="mt-2 text-xs leading-relaxed text-[var(--color-fg-muted)]">{card.detail}</p>
+        </Link>)}
       </div>
-
-      {/* ── Interactive Cluster Mesh Topology ── */}
-      <Panel
-        title="cluster mesh"
-        right={
-          <span className="inline-flex items-center gap-1.5 font-mono text-[10px] normal-case">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-signal)]" />
-            live mesh telemetry
-          </span>
-        }
-      >
-        <ClusterMeshVisualizer
-          mapNodes={mapNodes}
-          nodes={all}
-          fleetName={fleet.name}
-          onSelectNode={() => navigate('/nodes')}
-          onSelectService={(name) => {
-            const match = allServices.find((s) => s.name === name)
-            navigate(match ? `/services/${match.id}` : '/services')
-          }}
-        />
-      </Panel>
+      {map.data?.unplaced.length ? <p className="text-sm text-[var(--color-warn)]">Awaiting placement: {map.data.unplaced.join(', ')}. <Link className="underline" to="/services">Review services</Link></p> : null}
 
       {/* ── Placement Map & Recent Activity ── */}
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         {/* Placement map with Ring Gauges & Left Health Stripe */}
         <Panel
-          title="placement map"
+          title="Nodes and capacity"
           right={<span className="font-mono text-[10px] normal-case text-[var(--color-fg-dim)]">{fleet.name} topology</span>}
         >
           <div className="grid gap-px bg-[var(--color-line)] [&>*]:min-h-full sm:grid-cols-2">
             {mapNodes.map((n) => {
               const node = all.find((x) => x.id === n.id)
               const used = n.ramMb - n.freeRamMb
+              const sample = node && !nodes.error ? freshTelemetry(node, maxAgeMs) : null
               const isOffline = n.status === 'offline'
-              const isHighLoad = (n.loadFactor ?? 0) > 0.85
+              const isHighLoad = sample ? (loadRatio(sample.cpuPct) ?? 0) > 0.85 : false
               const stripeColor = isOffline
                 ? 'border-l-[var(--color-down)]'
                 : isHighLoad
@@ -485,7 +196,7 @@ export default function Overview() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <Link
-                        to="/nodes"
+                        to={`/nodes/${n.id}`}
                         className="group flex items-center gap-2 font-mono text-[13px] font-medium text-[var(--color-fg)] hover:text-[var(--color-signal)] transition-colors"
                       >
                         <Dot tone={toneOf(n.status)} size={7} />
@@ -520,26 +231,27 @@ export default function Overview() {
                     <RingGauge
                       value={used}
                       max={n.ramMb}
-                      label="RAM"
+                      label="Fleet memory reserved"
                       sublabel={`${mb(used)} / ${mb(n.ramMb)}`}
                       size={46}
                       strokeWidth={4}
                     />
                     <RingGauge
-                      value={n.loadFactor ?? 0}
+                      value={sample ? loadRatio(sample.cpuPct) : null}
                       max={1}
-                      label="CPU LOAD"
-                      sublabel={pct(n.loadFactor)}
+                      label="Normalized load"
+                      sublabel={sample ? `1m load / cores · ${since(node?.lastHeartbeatAt)}` : 'Unavailable or stale'}
                       size={46}
                       strokeWidth={4}
                     />
                   </div>
 
+                  <p className="mt-3 text-sm text-[var(--color-fg-muted)]">Host memory used: {sample ? `${mb(sample.ramUsedMb)} / ${mb(n.ramMb)}` : 'Unavailable or stale'}</p>
                   {/* Workloads placed on this node */}
                   <div className="mt-3.5">
                     <div className="flex items-center justify-between text-[9px] font-mono uppercase tracking-[0.08em] text-[var(--color-fg-dim)] mb-2">
-                      <span>Allocated Containers</span>
-                      <span>{n.services.length} active</span>
+                      <span>Placed services</span>
+                      <span>{n.services.length} placed</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {n.services.length ? (
@@ -671,6 +383,26 @@ export default function Overview() {
           )}
         </Panel>
       </div>
+      {/* ── Interactive Cluster Mesh Topology ── */}
+      <Panel
+        title="Topology"
+        right={<span className="text-xs text-[var(--color-fg-muted)]">Connections · select a node for details</span>}
+      >
+        <ClusterMeshVisualizer
+          mapNodes={mapNodes}
+          nodes={nodes.error ? [] : all}
+          maxAgeMs={maxAgeMs}
+          fleetName={fleet.name}
+          onSelectNode={(nodeId) => navigate(`/nodes/${nodeId}`)}
+          onSelectService={(name) => {
+            const match = allServices.find((s) => s.name === name)
+            navigate(match ? `/services/${match.id}` : '/services')
+          }}
+        />
+      </Panel>
+
+      <SinceYouLeft key={fleet.id} fleetId={fleet.id} />
+      {alerts.data && !canAlert && <p className="text-sm text-[var(--color-fg-muted)]">External notifications are not configured. <Link to="/alerts" className="underline underline-offset-4">Configure email, Slack, Discord or webhook delivery</Link></p>}
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { freshTelemetry, loadRatio } from '../lib/telemetry'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api, type Node, type Service } from '../lib/api'
@@ -284,7 +285,7 @@ export default function NodeDetail() {
   )
 
   const allSamples = hist.data?.samples ?? []
-  const t = node?.telemetry
+  const t = node && fleet ? freshTelemetry(node, fleet.heartbeatIntervalSec * fleet.heartbeatMissThreshold * 1000) : null
 
   const samples = useMemo(() => {
     if (!zoom) return allSamples
@@ -499,13 +500,13 @@ export default function NodeDetail() {
     const list: ChartDef[] = [
       {
         key: 'cpu',
-        title: 'cpu',
+        title: 'normalized load',
         note: 'band is min to max, line is the mean',
         ceiling: 100,
         format: (v) => `${Math.round(v)}%`,
         emptyHint: 'No CPU history in this window yet. It fills in as the node reports.',
         series: [{
-          label: 'cpu', colour: SERIES.cpu,
+          label: 'normalized load', colour: SERIES.cpu,
           avg: pt((s) => s.cpuPct),
           min: pt((s) => s.cpuMin ?? s.cpuPct),
           max: pt((s) => s.cpuMax ?? s.cpuPct),
@@ -656,8 +657,9 @@ export default function NodeDetail() {
   }
 
   // Live real-time gauge values
-  const liveCpu = t?.cpuPct != null ? Math.round(t.cpuPct) : (peaks?.cpuAvg != null ? Math.round(peaks.cpuAvg) : 0)
-  const liveRamMb = t?.ramUsedMb ?? peaks?.ramAvgMb ?? 0
+  const currentLoad = loadRatio(t?.cpuPct)
+  const liveCpu = currentLoad === null ? 0 : Math.round(currentLoad * 100)
+  const liveRamMb = t?.ramUsedMb ?? 0
   const liveRamPct = node.ramMb ? Math.round((liveRamMb / node.ramMb) * 100) : 0
   const liveDiskMb = t?.diskUsedMb ?? 0
   const liveDiskPct = diskTotal ? Math.round((liveDiskMb / diskTotal) * 100) : 0
@@ -734,25 +736,25 @@ export default function NodeDetail() {
       {/* ─── Real-Time Live Resource Gauges ─── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <CircularGauge
-          label="CPU Load"
+          label="Normalized load"
           pct={liveCpu}
-          valueText={`${liveCpu}%`}
+          valueText={currentLoad === null ? '—' : `${liveCpu}%`}
           subText={t?.load1 != null ? `1m load: ${t.load1.toFixed(2)}` : `${node.cpuCores} cores online`}
-          colour={cpuColor}
+          colour={currentLoad === null ? 'var(--color-fg-dim)' : cpuColor}
         />
         <CircularGauge
           label="RAM Usage"
           pct={liveRamPct}
-          valueText={`${liveRamPct}%`}
-          subText={`${mb(liveRamMb)} of ${mb(node.ramMb)}`}
-          colour={ramColor}
+          valueText={t ? `${liveRamPct}%` : '—'}
+          subText={t ? `${mb(liveRamMb)} of ${mb(node.ramMb)}` : 'Unavailable or stale'}
+          colour={t ? ramColor : 'var(--color-fg-dim)'}
         />
         <CircularGauge
           label="Storage"
           pct={liveDiskPct}
-          valueText={`${liveDiskPct}%`}
-          subText={projection ? `full in ${Math.round(projection.days)}d` : `${mb(liveDiskMb)} used`}
-          colour={diskColor}
+          valueText={t && diskTotal ? `${liveDiskPct}%` : '—'}
+          subText={!t ? 'Unavailable or stale' : projection ? `full in ${Math.round(projection.days)}d` : `${mb(liveDiskMb)} used`}
+          colour={t ? diskColor : 'var(--color-fg-dim)'}
         />
         <div className="flex flex-col justify-between p-4 bg-[var(--color-ink-950)] border border-[var(--color-line)] rounded-lg hover:border-white/[0.12] transition-colors">
           <div className="flex items-center justify-between">
@@ -942,7 +944,7 @@ export default function NodeDetail() {
       {/* ─── Summary Tiles with Embedded Mini-Sparklines ─── */}
       <div className="grid gap-px bg-[var(--color-line)] sm:grid-cols-2 lg:grid-cols-4 rounded-lg overflow-hidden border border-[var(--color-line)]">
         <Tile
-          label={`cpu peak · ${windowLabel}`}
+          label={`load peak · ${windowLabel}`}
           value={peaks?.cpuMax != null ? `${Math.round(peaks.cpuMax)}%` : '—'}
           sub={peaks?.cpuAvg != null ? `avg ${Math.round(peaks.cpuAvg)}%` : undefined}
           tone={peaks?.cpuMax != null && peaks.cpuMax > 85 ? 'var(--color-warn)' : undefined}
@@ -1151,7 +1153,7 @@ export default function NodeDetail() {
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-2">
             {/* CPU */}
             <div className="px-2 py-1 rounded bg-white/[0.03] border border-white/[0.05]">
-              <div className="font-mono text-[9px] uppercase tracking-wider text-[#3987e5]">CPU</div>
+              <div className="font-mono text-[9px] uppercase tracking-wider text-[#3987e5]">Normalized load</div>
               <div className="font-mono text-[13px] font-bold text-white tabular-nums">
                 {hoveredSample.cpuPct != null ? `${Math.round(hoveredSample.cpuPct)}%` : '—'}
               </div>

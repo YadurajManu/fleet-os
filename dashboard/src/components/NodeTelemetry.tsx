@@ -89,7 +89,7 @@ export default function NodeTelemetry({ node, fleetId }: { node: Node; fleetId?:
     const out: Row[] = [
       {
         key: 'cpu',
-        name: 'cpu',
+        name: 'normalized load',
         value: t.cpuPct,
         max: 100,
         display: `${Math.round(t.cpuPct)}%`,
