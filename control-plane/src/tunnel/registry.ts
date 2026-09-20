@@ -74,6 +74,11 @@ export class TunnelRegistry {
    * socket that stops answering pings, which flips this to false and lets ingress
    * fall back to a direct connection.
    */
+  public sendBuild(nodeId: string, message: unknown): boolean {
+    const ws = this.sockets.get(nodeId)
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    ws.send(JSON.stringify(message)); return true
+  }
   public has(nodeId: string): boolean {
     const ws = this.sockets.get(nodeId)
     return Boolean(ws && ws.readyState === WebSocket.OPEN)
@@ -166,7 +171,9 @@ export class TunnelRegistry {
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString()) as TunnelResponse
-        if (msg.type === 'http_response' && msg.id) {
+        if (typeof msg.type === 'string' && msg.type.startsWith('build.') && this.sockets.get(nodeId) === ws) {
+          void this.ctx.builds.handleMessage?.(nodeId, msg).catch(() => log?.warn({ nodeId }, 'build message rejected'))
+        } else if (msg.type === 'http_response' && msg.id) {
           const handler = this.pending.get(msg.id)
           if (handler) {
             clearTimeout(handler.timer)

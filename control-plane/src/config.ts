@@ -70,6 +70,8 @@ const schema = z.object({
    */
   BUILDX_CACHE_MODE: z.enum(['max', 'min', 'off']).default('max'),
   /** Root the build runner checks out repositories into. */
+  BUILD_MODE: z.enum(['agent', 'local']).default('agent'),
+  ALLOW_QEMU_FALLBACK: z.enum(['true','false']).default('false').transform(v => v === 'true'),
   BUILD_WORKDIR: z.string().default('/tmp/fleet-os/builds'),
   /**
    * Where volume backups are stored. Deliberately not under BUILD_WORKDIR:

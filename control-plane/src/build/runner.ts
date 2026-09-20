@@ -26,6 +26,11 @@ export type BuildProgress = {
 }
 
 export type BuildRequest = {
+  sourceKey?: string
+  deploymentId?: string
+  serviceId?: string
+  fleetId?: string
+
   /** Overrides the configured workspace root, for a fresh git checkout. */
   contextRoot?: string
   serviceName: string
@@ -72,6 +77,9 @@ export interface BuildRunner {
   readonly name: string
   available(): Promise<boolean>
   build(req: BuildRequest): Promise<BuildResult>
+  handleMessage?(nodeId: string, message: unknown): Promise<void>
+  cancel?(deploymentId: string): Promise<void>
+  close?(): void
 }
 
 export class BuildUnavailableError extends Error {
