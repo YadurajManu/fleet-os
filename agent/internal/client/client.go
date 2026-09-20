@@ -156,6 +156,7 @@ type HeartbeatResponse struct {
 }
 
 type DesiredService struct {
+	Platform        string `json:"platform,omitempty"`
 	Name            string `json:"name"`
 	DeploymentID    string `json:"deployment_id"`
 	Image           string `json:"image"`

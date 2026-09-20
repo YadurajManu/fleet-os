@@ -1,4 +1,4 @@
-import type { NodeSnapshot, ServiceSpec } from '../scheduler/types.js'
+import type { NodeSnapshot, ServiceSpec, Placements, AntiAffinityIndex } from '../scheduler/types.js'
 import { filterNodes } from '../scheduler/placement.js'
 import { platformsFor } from './runner.js'
 
@@ -7,8 +7,8 @@ import { platformsFor } from './runner.js'
 export function nodePlatform(node: Pick<NodeSnapshot, 'platform' | 'arch'>): string {
   return node.platform ?? platformsFor([node.arch])[0] ?? ''
 }
-export function planPlatforms(service: ServiceSpec, nodes: NodeSnapshot[]): string[] {
-  const { eligible } = filterNodes({ ...service, imagePlatforms: [] }, nodes)
+export function planPlatforms(service: ServiceSpec, nodes: NodeSnapshot[], placements: Placements = {}, antiAffinityBy: AntiAffinityIndex = {}): string[] {
+  const { eligible } = filterNodes({ ...service, imagePlatforms: [] }, nodes, placements, antiAffinityBy)
   if (Array.isArray(service.platforms)) return [...new Set(service.platforms)]
   return [...new Set(eligible.map(nodePlatform))].filter(Boolean).sort()
 }

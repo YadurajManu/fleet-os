@@ -136,6 +136,8 @@ export class AgentBuildRunner implements BuildRunner {
  async build(req:BuildRequest):Promise<BuildResult>{
   if(!req.deploymentId || !req.serviceId || !req.fleetId)throw new BuildUnavailableError('agent builds require deployment, service and fleet identity')
   if(!await this.available())throw new BuildUnavailableError('agent builds require PUBLIC_API_URL and REGISTRY_URL')
+  const [deployment]=await this.ctx.db.select({status:deployments.status}).from(deployments).where(eq(deployments.id,req.deploymentId)).limit(1)
+  if(!deployment || !['queued','building','pushing'].includes(deployment.status))throw new Error('deployment was cancelled or already finished')
   const origin=new URL(this.ctx.config.PUBLIC_API_URL!)
   if(origin.protocol!=='https:' || origin.pathname!=='/')throw new BuildUnavailableError('PUBLIC_API_URL must be an HTTPS origin serving /agent/build-source and /v2/')
   if(!req.platforms.length)throw new BuildUnavailableError('no eligible Linux platforms')

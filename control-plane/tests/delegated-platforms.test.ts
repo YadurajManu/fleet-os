@@ -32,3 +32,13 @@ test('native selection, warm cache, opt-in, concurrency, and explicit QEMU fallb
  assert.equal(selectBuilder([{...mac,active:1}],'linux/arm64',null),undefined)
  assert.equal(selectBuilder([mac,{...mac,id:'warm'}],'linux/arm64','warm')?.id,'warm')
 })
+
+test('builders preserve a disk reserve and account for concurrent build budgets',()=>{
+ const mac=builder('mac','linux/arm64')
+ assert.equal(selectBuilder([{...mac,buildCacheFreeBytes:24*1073741824,buildDiskReserveBytes:5*1073741824}],'linux/arm64',null),undefined)
+ assert.equal(selectBuilder([{...mac,buildCacheFreeBytes:40*1073741824,buildDiskReserveBytes:5*1073741824,active:1,maxConcurrentBuilds:2}],'linux/arm64',null),undefined)
+ assert.equal(selectBuilder([{...mac,buildDiskBytes:5*1073741824,buildCacheFreeBytes:11*1073741824,buildDiskReserveBytes:5*1073741824}],'linux/arm64',null)?.id,'mac')
+})
+test('auto platforms include only nodes satisfying anti-affinity',()=>{
+ assert.deepEqual(planPlatforms({...service,antiAffinity:['db']},[node('mac','arm64'),node('pc','amd64')],{db:'mac'}),['linux/amd64'])
+})

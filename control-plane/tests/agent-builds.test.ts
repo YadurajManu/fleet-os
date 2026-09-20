@@ -92,3 +92,10 @@ test('agent builds are the default, local remains an explicit fallback',()=>{
  assert.equal(loadConfig({...process.env,BUILD_MODE:undefined}).BUILD_MODE,'agent')
  assert.equal(runner.name,'agent')
 })
+
+test('a cancelled deployment cannot start a later build',async()=>{
+ const req=await request('cancel-before-start')
+ await ctx.db.update(deployments).set({status:'failed',failureReason:'build_cancelled'}).where(eq(deployments.id,req.deploymentId!))
+ ctx.tunnels.sendBuild=()=>{throw new Error('assigned a cancelled deployment')}
+ await assert.rejects(runner.build(req),/cancelled/)
+})

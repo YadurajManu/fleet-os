@@ -1,3 +1,4 @@
+import { inspectImage, pinnedImage } from '../build/manifests.js'
 import type { BuildRequest } from '../build/runner.js'
 import { planPlatforms } from '../build/platforms.js'
 import { and, eq, inArray } from 'drizzle-orm'
@@ -31,6 +32,14 @@ export async function deployFromPush(
   const [fleet] = await ctx.db.select().from(fleets).where(eq(fleets.id, fleetId)).limit(1)
   if (!fleet) throw new Error('fleet vanished mid-deploy')
 
+  let resolvedImage = service.image
+  if (ctx.config.BUILD_MODE === 'agent' && resolvedImage) {
+    const metadata = await inspectImage(resolvedImage,ctx.config)
+    service.imagePlatforms = metadata.platforms
+    resolvedImage = pinnedImage(resolvedImage,metadata.digest)
+    await ctx.db.update(services).set({imagePlatforms:metadata.platforms}).where(eq(services.id,service.id))
+  }
+
   const { nodes: snapshot, placements, antiAffinityBy } = await fleetSnapshot(ctx, fleetId)
   const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
   if (decision.outcome !== 'placed') throw new Error(decision.summary)
@@ -47,7 +56,7 @@ export async function deployFromPush(
   const phases = phaseWriter(ctx, deploymentId)
 
   try {
-    let image = service.image ?? ''
+    let image = resolvedImage ?? ''
     if (!image) {
       // Target the scheduled node's architecture unless the service explicitly specifies
       // compatible architectures. Building for all cluster architectures under QEMU
@@ -63,7 +72,7 @@ export async function deployFromPush(
         serviceName: service.name,
         buildContext: service.buildContext ?? '.',
         gitSha,
-        platforms: ctx.config.BUILD_MODE === 'agent' ? planPlatforms(toServiceSpec(service), snapshot) : platformsFor(arches),
+        platforms: ctx.config.BUILD_MODE === 'agent' ? planPlatforms(toServiceSpec(service), snapshot, placements, antiAffinityBy) : platformsFor(arches),
         deploymentId, serviceId: service.id, fleetId, gitSource,
         sourceKey: `${gitSha}:${service.buildContext ?? '.'}`,
         registry: ctx.config.REGISTRY_URL ?? '',
@@ -77,6 +86,8 @@ export async function deployFromPush(
     const hostPort = await allocateHostPort(ctx, decision.nodeId)
 
     await ctx.db.transaction(async (tx) => {
+      const [pending] = await tx.select({status:deployments.status}).from(deployments).where(eq(deployments.id,deploymentId)).for('update')
+      if (!pending || pending.status !== 'scheduling') throw new Error('deployment was cancelled or already finished')
       await tx
         .update(deployments)
         .set({ status: 'superseded', finishedAt: new Date() })

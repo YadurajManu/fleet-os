@@ -79,7 +79,7 @@ export function filterNodes(
     }
     const declared = Array.isArray(service.platforms) ? service.platforms : []
     const availablePlatforms = service.imagePlatforms?.length ? service.imagePlatforms : declared
-    if (availablePlatforms.length && !availablePlatforms.includes(nodePlatform(node)) && !service.allowEmulation) {
+    if (availablePlatforms.length && !availablePlatforms.includes(nodePlatform(node)) && (!service.allowEmulation || !node.platform)) {
       reject(node, 'platform_incompatible', `image does not support ${nodePlatform(node)}; emulation is disabled`)
       continue
     }

@@ -113,7 +113,7 @@ export async function deployRepository(
     const deployed: string[] = []
     for (const service of toDeploy) {
       await deployFromPush(app, service, spec.gitSha, checkout.path, {
-        repository: `https://${normaliseRepo(spec.sourceUrl)}.git`, commit: spec.gitSha,
+        repository: `https://github.com/${normaliseRepo(spec.sourceUrl).split('/').slice(-2).join('/')}.git`, commit: spec.gitSha,
         installationId: buildInstallation, context: service.buildContext ?? '.',
       })
       deployed.push(service.name)

@@ -15,6 +15,7 @@ import (
 
 // RunSpec is everything needed to bring one service up on this node.
 type RunSpec struct {
+	Platform      string
 	Service       string
 	DeploymentID  string
 	NodeID        string
@@ -110,9 +111,15 @@ type PullProgress struct {
 // onProgress may be nil, and is called from the decode loop, so it must return
 // promptly: a slow callback stalls the pull it is describing.
 func (c *Client) Pull(ctx context.Context, image string, auth string, onProgress func(PullProgress)) error {
+	return c.PullForPlatform(ctx, image, auth, "", onProgress)
+}
+func (c *Client) PullForPlatform(ctx context.Context, image string, auth string, platform string, onProgress func(PullProgress)) error {
 	ref, tag := splitTag(image)
 	path := fmt.Sprintf("/%s/images/create?fromImage=%s&tag=%s", c.api(ctx), url.QueryEscape(ref), url.QueryEscape(tag))
 
+	if platform != "" {
+		path += "&platform=" + url.QueryEscape(platform)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://docker"+path, nil)
 	if err != nil {
 		return err
@@ -378,6 +385,9 @@ func (c *Client) Create(ctx context.Context, spec RunSpec) (string, error) {
 
 	var out createResponse
 	path := fmt.Sprintf("/%s/containers/create?name=%s", c.api(ctx), url.QueryEscape(ContainerName(spec.Service, spec.DeploymentID)))
+	if spec.Platform != "" {
+		path += "&platform=" + url.QueryEscape(spec.Platform)
+	}
 	if err := c.do(ctx, http.MethodPost, path, req, &out); err != nil {
 		// The usual cause of a create failing on the network is somebody having
 		// removed it since we last checked. Drop the cached "it exists" so the

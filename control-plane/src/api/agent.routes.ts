@@ -630,12 +630,15 @@ export async function agentRoutes(app: FastifyInstance) {
     const nodeId = req.agentNodeId!
     const fleetId = req.agentFleetId!
 
+    const [targetNode] = await db.select({platform:nodes.platform}).from(nodes).where(eq(nodes.id,nodeId)).limit(1)
     const rows = await db
       .select({
         serviceId: services.id,
         service: services.name,
         image: services.image,
         imageTags: deployments.imageTags,
+        imagePlatforms: services.imagePlatforms,
+        allowEmulation: services.allowEmulation,
         deploymentId: deployments.id,
         hostPort: deployments.hostPort,
         containerPort: services.containerPort,
@@ -720,7 +723,8 @@ export async function agentRoutes(app: FastifyInstance) {
       services: withEnv.map(({ row: r, env }) => ({
         name: r.service,
         deployment_id: r.deploymentId,
-        image: r.image ?? r.imageTags[0] ?? null,
+        image: r.imageTags[0] ?? r.image ?? null,
+        platform: targetNode?.platform && r.imagePlatforms.includes(targetNode.platform) ? targetNode.platform : r.allowEmulation ? r.imagePlatforms[0] : undefined,
         health_check_path: r.healthCheckPath,
         health_interval_sec: r.healthIntervalSec,
         health_timeout_sec: r.healthTimeoutSec,

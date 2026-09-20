@@ -1,5 +1,5 @@
 import { planPlatforms } from '../build/platforms.js'
-import { inspectImage } from '../build/manifests.js'
+import { inspectImage, pinnedImage } from '../build/manifests.js'
 import { and, eq, ne, desc, inArray, gte, count } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
@@ -405,7 +405,7 @@ export async function serviceRoutes(app: FastifyInstance) {
       const { nodes: snapshot, placements, antiAffinityBy } = await fleetSnapshot(app.ctx, fleetId)
       const requestedImage = service.image
       if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
-        const metadata = await inspectImage(requestedImage)
+        const metadata = await inspectImage(requestedImage, app.ctx.config)
         service.imagePlatforms = metadata.platforms
       }
       const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
@@ -644,8 +644,9 @@ export async function serviceRoutes(app: FastifyInstance) {
     if (!dep) return reply.code(404).send({ error: 'deployment not found' })
     if (!['queued', 'building', 'pushing'].includes(dep.status)) return reply.code(409).send({ error: 'deployment is not building' })
     if (!app.ctx.builds.cancel) return reply.code(409).send({ error: 'build cancellation requires BUILD_MODE=agent' })
+    const cancelled = await db.update(deployments).set({ status: 'failed', failureReason: 'build_cancelled', finishedAt: new Date() }).where(and(eq(deployments.id, deploymentId), inArray(deployments.status,['queued','building','pushing']))).returning({id:deployments.id})
+    if (!cancelled.length) return reply.code(409).send({error:'deployment is no longer building'})
     await app.ctx.builds.cancel(deploymentId)
-    await db.update(deployments).set({ status: 'failed', failureReason: 'build_cancelled', finishedAt: new Date() }).where(eq(deployments.id, deploymentId))
     return { cancelled: true }
   })
 
@@ -668,10 +669,13 @@ export async function serviceRoutes(app: FastifyInstance) {
       const { service, fleetId, orgId } = await loadService(app, req.params as { serviceId: string })
       const { nodes: snapshot, placements, antiAffinityBy } = await fleetSnapshot(app.ctx, fleetId)
 
+      let resolvedImage: string | undefined
       const requestedImage = body.image ?? service.image
       if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
-        const metadata = await inspectImage(requestedImage)
+        const metadata = await inspectImage(requestedImage, app.ctx.config)
         service.imagePlatforms = metadata.platforms
+        resolvedImage = pinnedImage(requestedImage, metadata.digest)
+        await db.update(services).set({imagePlatforms:metadata.platforms}).where(eq(services.id,service.id))
       }
       const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
       if (decision.outcome !== 'placed') {
@@ -734,7 +738,7 @@ export async function serviceRoutes(app: FastifyInstance) {
         )
       }
 
-      let image = body.image ?? service.image
+      let image = resolvedImage ?? body.image ?? service.image
 
       // Decide what will be built, if anything, *before* a row exists. A service
       // with neither an image nor a build context is a configuration error, and
@@ -760,7 +764,7 @@ export async function serviceRoutes(app: FastifyInstance) {
           : targetNode
             ? [targetNode.arch]
             : ['amd64']
-        const platforms = app.ctx.config.BUILD_MODE === 'agent' ? planPlatforms(toServiceSpec(service), snapshot) : platformsFor(arches)
+        const platforms = app.ctx.config.BUILD_MODE === 'agent' ? planPlatforms(toServiceSpec(service), snapshot, placements, antiAffinityBy) : platformsFor(arches)
         if (!platforms.length) {
           throw ApiError.unprocessable(
             'no_buildable_platform',
@@ -854,6 +858,8 @@ export async function serviceRoutes(app: FastifyInstance) {
           const hostPort = service.internal ? null : await allocateHostPort(app.ctx, decision.nodeId)
 
           const deployment = await app.ctx.db.transaction(async (tx) => {
+            const [pending] = await tx.select({status:deployments.status}).from(deployments).where(eq(deployments.id,deploymentId)).for('update')
+            if (!pending || pending.status !== 'scheduling') throw new Error('deployment was cancelled or already finished')
             // A stateful service cannot overlap. Two Postgres processes writing
             // one volume corrupt it, so for these the old release is superseded
             // now and the node replaces the container in place. The downtime is
