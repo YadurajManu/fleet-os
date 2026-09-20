@@ -75,3 +75,9 @@ Initial SEO regression run failed because the link validator incorrectly classif
 3. Plan a tested development-tool upgrade for the four moderate findings; restrict SSH and review Docker build isolation in a separately approved infrastructure change.
 4. Measure mobile WebGL cost and full static rendering/hydration before larger performance work. Add verified monitoring before publishing availability history.
 5. Reconcile this branch with the user's existing website edits before merging them together. Push and remote PR creation remain pending authorization.
+
+## Release validation follow-up
+
+Owner subsequently authorized PR creation, merge and SSH deployment to fleet-cp. PR #7 was opened. Isolated Nginx runtime checks on fleet-cp passed configuration syntax, / and /docs/cli 200, slash/index aliases 301, missing page/asset 404, sitemap/robots 200, security headers and error-page noindex. The temporary container was removed.
+
+Historical main CI runs exposed an existing missing journal entry for 0023_github_oauth.sql, causing fresh-database failures for users.github_id and hanging test jobs. Registered the existing idempotent migration, added a SQL/journal coverage regression test (passed), and bounded the control-plane CI job to 15 minutes. Typecheck/build passed; fresh full CI validation is required before merge. Migration is additive and removes password_hash NOT NULL as originally specified for GitHub-only accounts; no destructive data operation was introduced.

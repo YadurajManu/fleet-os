@@ -162,6 +162,13 @@
       "when": 1788795443779,
       "tag": "0022_service_identity_per_project",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788795443780,
+      "tag": "0023_github_oauth",
+      "breakpoints": true
     }
   ]
 }
