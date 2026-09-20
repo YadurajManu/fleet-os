@@ -1,5 +1,5 @@
 // Where the dashboard is deployed; baked in at build time.
-export const APP_URL = import.meta.env.VITE_APP_URL ?? 'http://localhost:8082'
+export const APP_URL = import.meta.env.VITE_APP_URL ?? 'https://fleetapp.plastikworld.xyz'
 
 // Every string on this page comes from here so the copy stays auditable.
 
@@ -206,36 +206,36 @@ export const FOOTER_LINKS = [
   {
     heading: 'Product',
     links: [
-      ['Overview', '#top'],
+      ['Overview', '/#top'],
       ['Dashboard', APP_URL],
-      ['How it works', '#how'],
-      ['Scheduler', '#/docs/scheduler'],
-      ['Mesh networking', '#/docs/mesh'],
-      ['Failover', '#/docs/failover'],
-      ['Pricing', '#pricing'],
-      ['Changelog', '#/changelog'],
+      ['How it works', '/#how'],
+      ['Scheduler', '/docs/scheduler'],
+      ['Mesh networking', '/docs/mesh'],
+      ['Failover', '/docs/failover'],
+      ['Pricing', '/#pricing'],
+      ['Changelog', '/changelog'],
     ],
   },
   {
     heading: 'Developers',
     links: [
-      ['Documentation', '#/docs'],
-      ['fleet.yaml spec', '#/docs/fleet-yaml'],
-      ['CLI reference', '#/docs/cli'],
-      ['REST API', '#/docs/api'],
-      ['Self-hosting guide', '#/docs/self-hosting'],
+      ['Documentation', '/docs'],
+      ['fleet.yaml spec', '/docs/fleet-yaml'],
+      ['CLI reference', '/docs/cli'],
+      ['REST API', '/docs/api'],
+      ['Self-hosting guide', '/docs/self-hosting'],
       ['Source on GitHub', 'https://github.com/YadurajManu/fleet-os'],
     ],
   },
   {
     heading: 'Company',
     links: [
-      ['About', '#/about'],
-      ['Writing', '#/blog'],
-      ['Roadmap', '#/roadmap'],
-      ['Security', '#/security'],
-      ['Status', '#/status'],
-      ['Contact', '#/contact'],
+      ['About', '/about'],
+      ['Writing', '/blog'],
+      ['Roadmap', '/roadmap'],
+      ['Security', '/security'],
+      ['Status', '/status'],
+      ['Contact', '/contact'],
     ],
   },
   {
@@ -245,15 +245,15 @@ export const FOOTER_LINKS = [
       ['GitHub Discussions', 'https://github.com/YadurajManu/fleet-os/discussions'],
       ['GitHub Issues', 'https://github.com/YadurajManu/fleet-os/issues'],
       ['r/selfhosted', 'https://reddit.com/r/selfhosted'],
-      ['Homelab showcase', '#/community'],
-      ['Contributing', '#/community'],
+      ['Homelab showcase', '/community'],
+      ['Contributing', '/community'],
     ],
   },
 ]
 
 export const LEGAL_LINKS = [
-  ['Privacy', '#/legal/privacy'],
-  ['Terms', '#/legal/terms'],
-  ['Licence', '#/legal/licence'],
-  ['Security', '#/security'],
+  ['Privacy', '/legal/privacy'],
+  ['Terms', '/legal/terms'],
+  ['Licence', '/legal/licence'],
+  ['Security', '/security'],
 ]

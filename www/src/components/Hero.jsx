@@ -125,11 +125,11 @@ export default function Hero() {
                   <path d="M3 8h9m0 0L8.5 4.5M12 8l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </MagneticButton>
-              <MagneticButton href="#/docs" variant="ghost" strength={0.18}>
+              <MagneticButton href="/docs" variant="ghost" strength={0.18}>
                 Read the docs
               </MagneticButton>
               <a
-                href="#/community"
+                href="/community"
                 className="link-draw ml-1 flex items-center gap-1.5 font-mono text-[11.5px] text-[var(--color-fg-dim)] transition-colors duration-300 hover:text-[var(--color-fg-muted)]"
               >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">

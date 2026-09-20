@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import Nav from './components/Nav'
 import Hero from './components/Hero'
 import Problem from './components/Problem'
@@ -11,11 +11,12 @@ import Pricing from './components/Pricing'
 import Builder from './components/Builder'
 import FinalCTA from './components/FinalCTA'
 import Footer from './components/Footer'
-import Founder from './components/Founder'
 import PageShell from './components/PageShell'
 import { useSmoothScroll } from './lib/useCapability'
 import { useRoute } from './lib/router'
 import { useDocumentTitle } from './lib/useDocumentTitle'
+
+const Founder = lazy(() => import('./components/Founder'))
 
 function Landing() {
   return (
@@ -62,7 +63,7 @@ export default function App() {
         {route === null ? (
           <Landing />
         ) : route === 'founder' ? (
-          <Founder />
+          <Suspense fallback={<p role="status">Loading founder page…</p>}><Founder /></Suspense>
         ) : (
           <PageShell route={route} />
         )}

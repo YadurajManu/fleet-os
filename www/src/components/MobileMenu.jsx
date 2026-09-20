@@ -100,7 +100,7 @@ export default function MobileMenu({ open, onClose }) {
           <div className="relative rail pb-16 pt-8">
             {/* live strip, so the menu still reads as a control plane */}
             <motion.a
-              href="#/status"
+              href="/status"
               onClick={onClose}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}

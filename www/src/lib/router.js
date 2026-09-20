@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { PAGES } from './pages'
 
 /**
  * Routing on real paths, with hash routing still honoured.
@@ -18,13 +17,13 @@ import { PAGES } from './pages'
 function fromPath(pathname) {
   const clean = pathname.replace(/^\/+|\/+$/g, '')
   if (!clean) return null
-  return PAGES[clean] || clean === 'founder' ? clean : null
+  return clean
 }
 
 export function currentRoute() {
   const h = window.location.hash || ''
   // An explicit #/route wins: it is what the reader clicked.
-  if (h.startsWith('#/')) return h.slice(2).replace(/\/+$/, '') || 'home'
+  if (h.startsWith('#/')) return h.slice(2).replace(/\/+$/, '') || null
   // A plain #section anchor on the landing page is not a route.
   if (h && !h.startsWith('#/')) return fromPath(window.location.pathname)
   return fromPath(window.location.pathname)

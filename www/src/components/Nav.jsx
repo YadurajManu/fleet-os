@@ -18,11 +18,11 @@ const LANDING_LINKS = [
 // On a sub-page the section anchors are meaningless, so the nav becomes a
 // map of the docs instead of a map of the landing page.
 const PAGE_LINKS = [
-  ['Docs', '#/docs'],
-  ['CLI', '#/docs/cli'],
-  ['API', '#/docs/api'],
-  ['Changelog', '#/changelog'],
-  ['Pricing', '#top'],
+  ['Docs', '/docs'],
+  ['CLI', '/docs/cli'],
+  ['API', '/docs/api'],
+  ['Changelog', '/changelog'],
+  ['Pricing', '/#pricing'],
 ]
 
 export default function Nav({ onPage = false }) {
@@ -58,7 +58,7 @@ export default function Nav({ onPage = false }) {
       }`}
     >
       <div className="rail flex h-[58px] items-center justify-between">
-        <a href="#top" className="group flex items-center">
+        <a href="/#top" className="group flex items-center">
           <Logo size={18} word animate />
         </a>
 
