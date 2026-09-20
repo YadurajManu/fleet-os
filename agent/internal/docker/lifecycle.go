@@ -115,7 +115,10 @@ func (c *Client) Pull(ctx context.Context, image string, auth string, onProgress
 }
 func (c *Client) PullForPlatform(ctx context.Context, image string, auth string, platform string, onProgress func(PullProgress)) error {
 	ref, tag := splitTag(image)
-	path := fmt.Sprintf("/%s/images/create?fromImage=%s&tag=%s", c.api(ctx), url.QueryEscape(ref), url.QueryEscape(tag))
+	path := fmt.Sprintf("/%s/images/create?fromImage=%s", c.api(ctx), url.QueryEscape(ref))
+	if tag != "" {
+		path += "&tag=" + url.QueryEscape(tag)
+	}
 
 	if platform != "" {
 		path += "&platform=" + url.QueryEscape(platform)
@@ -217,6 +220,10 @@ func (c *Client) PullForPlatform(ctx context.Context, image string, auth string,
 }
 
 func splitTag(image string) (string, string) {
+	// Digest references must reach Docker intact, without a tag override.
+	if strings.Contains(image, "@") {
+		return image, ""
+	}
 	// Only split on a colon after the last slash, so a registry port
 	// (registry:5000/img) is not mistaken for a tag.
 	slash := strings.LastIndex(image, "/")
