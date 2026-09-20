@@ -158,6 +158,11 @@ const serviceFields = z
     node: z.string().optional(),
     resources,
     arch: z.array(z.enum(['arm64', 'armv7', 'amd64'])).default([]),
+    platforms: z.union([z.literal('auto'), z.array(z.enum(['linux/amd64', 'linux/arm64', 'linux/arm/v7'])).min(1)]).default('auto'),
+    placement_constraint: z.object({ arch: z.enum(['amd64', 'arm64', 'armv7']) }).optional(),
+    allow_emulation: z.boolean().default(false),
+    network_mode: z.enum(['bridge', 'host']).optional(),
+    volumes: z.array(z.string()).optional(),
     min_reliability: z.enum(['any', 'opportunistic', 'standard', 'high']).default('any'),
     gpu: z.boolean().default(false),
     /**
@@ -216,6 +221,12 @@ const serviceSchema = serviceFields
     volumePath: typeof val.volume === 'string' ? undefined : val.volume?.path,
   }))
   .superRefine((svc, ctx) => {
+    if (svc.network_mode === 'host') {
+      ctx.addIssue({ code: 'custom', message: 'network_mode: host is unsupported by Fleet and cannot be deployed to Docker Desktop nodes. Use bridge networking.' })
+    }
+    if (svc.volumes?.length || (svc.volume && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(svc.volume))) {
+      ctx.addIssue({ code: 'custom', message: 'Only named volumes are supported; bind mounts are not allowed on Docker Desktop. Use volume: { name: data, path: /data }.' })
+    }
     if (!svc.build && !svc.image) {
       ctx.addIssue({ code: 'custom', message: 'a service needs either "build" (a path) or "image" (a reference)' })
     }

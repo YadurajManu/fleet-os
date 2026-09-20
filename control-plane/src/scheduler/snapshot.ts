@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray } from 'drizzle-orm'
-import { nodes, services, deployments } from '../db/schema.js'
+import { nodes, services, deployments, buildJobs } from '../db/schema.js'
 import type { AppContext } from '../api/context.js'
 import type { AntiAffinityIndex, Arch, NodeSnapshot, Placements, ServiceSpec } from './types.js'
 
@@ -29,18 +29,29 @@ export async function fleetSnapshot(
       nodeId: deployments.nodeId,
       serviceName: services.name,
       requestRamMb: services.requestRamMb,
+      requestCpu: services.requestCpu,
       antiAffinity: services.antiAffinity,
     })
     .from(deployments)
     .innerJoin(services, eq(services.id, deployments.serviceId))
     .where(and(eq(services.fleetId, fleetId), inArray(deployments.status, [...ACTIVE])))
 
+  const building = await ctx.db.select({ nodeId: buildJobs.builderNodeId, ram: buildJobs.reservedMemBytes, cpu: buildJobs.reservedCpu })
+    .from(buildJobs).innerJoin(services, eq(buildJobs.serviceId, services.id))
+    .where(and(eq(services.fleetId, fleetId), inArray(buildJobs.status, ['assigned', 'running'])))
+  const committedCpu = new Map<string, number>()
   const committed = new Map<string, number>()
+  for (const job of building) {
+    if (!job.nodeId) continue
+    committed.set(job.nodeId, (committed.get(job.nodeId) ?? 0) + job.ram / 1048576)
+    committedCpu.set(job.nodeId, (committedCpu.get(job.nodeId) ?? 0) + job.cpu)
+  }
   const placements: Placements = {}
   const antiAffinityBy: AntiAffinityIndex = {}
   for (const row of active) {
     if (!row.nodeId) continue
     committed.set(row.nodeId, (committed.get(row.nodeId) ?? 0) + row.requestRamMb)
+    committedCpu.set(row.nodeId, (committedCpu.get(row.nodeId) ?? 0) + Number(row.requestCpu))
     placements[row.serviceName] = row.nodeId
     antiAffinityBy[row.serviceName] = row.antiAffinity
   }
@@ -52,6 +63,12 @@ export async function fleetSnapshot(
         id: n.id,
         name: n.name,
         arch: n.arch,
+        platform: n.platform,
+        engineKind: n.engineKind,
+        effectiveCpu: n.effectiveCpu,
+        effectiveMemBytes: n.effectiveMemBytes,
+        reliabilityScore: n.reliabilityScore,
+        committedCpu: committedCpu.get(n.id) ?? 0,
         status: n.status,
         ramMb: n.ramMb,
         cpuCores: n.cpuCores,
@@ -84,6 +101,10 @@ export function toServiceSpec(
     requiresGpu: row.requiresGpu,
     minReliabilityTier: row.minReliabilityTier,
     compatibleArches: row.compatibleArches as Arch[],
+    platforms: row.platforms,
+    imagePlatforms: row.imagePlatforms,
+    placementArch: row.placementArch,
+    allowEmulation: row.allowEmulation,
     affinity: row.affinity,
     antiAffinity: row.antiAffinity,
     persistentVolume: row.persistentVolume,

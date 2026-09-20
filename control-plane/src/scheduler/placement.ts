@@ -1,3 +1,4 @@
+import { nodePlatform } from '../build/platforms.js'
 import type {
   AntiAffinityIndex,
   Candidate,
@@ -23,7 +24,7 @@ const TIER_RANK: Record<ReliabilityTier, number> = {
  */
 export const WEIGHTS = { headroom: 0.5, reliability: 0.3, load: 0.2 } as const
 
-const freeRam = (node: NodeSnapshot) => Math.max(0, node.ramMb - node.committedRamMb)
+const freeRam = (node: NodeSnapshot) => Math.max(0, (node.effectiveMemBytes ? node.effectiveMemBytes / 1048576 : node.ramMb) - node.committedRamMb)
 
 /**
  * Hard constraints. Every one of these is a yes or no — nothing here is a
@@ -69,6 +70,21 @@ export function filterNodes(
     // A volume cannot follow the workload across machines (PRD 7.7).
     if (service.persistentVolume && service.volumeNodeId && service.volumeNodeId !== node.id) {
       reject(node, 'volume_elsewhere', `volume lives on another node and cannot move automatically`)
+      continue
+    }
+
+    if (service.placementArch && service.placementArch !== node.arch) {
+      reject(node, 'arch_incompatible', `placement constraint requires ${service.placementArch}; node is ${node.arch}`)
+      continue
+    }
+    const declared = Array.isArray(service.platforms) ? service.platforms : []
+    const availablePlatforms = service.imagePlatforms?.length ? service.imagePlatforms : declared
+    if (availablePlatforms.length && !availablePlatforms.includes(nodePlatform(node)) && !service.allowEmulation) {
+      reject(node, 'platform_incompatible', `image does not support ${nodePlatform(node)}; emulation is disabled`)
+      continue
+    }
+    if (node.effectiveCpu != null && node.effectiveCpu - (node.committedCpu ?? 0) < service.requestCpu) {
+      reject(node, 'insufficient_cpu', 'Docker engine CPU capacity is reserved by workloads or builds')
       continue
     }
 
@@ -154,7 +170,7 @@ export function rankNodes(service: ServiceSpec, eligible: NodeSnapshot[]): Candi
       // Headroom *after* placing this service, so a node that would be left
       // full scores worse than one that would still have room.
       const headroom = node.ramMb > 0 ? Math.max(0, available - service.requestRamMb) / node.ramMb : 0
-      const reliability = TIER_RANK[node.reliabilityTier] / TIER_RANK.high
+      const reliability = Math.max(0, Math.min(1, node.reliabilityScore ?? TIER_RANK[node.reliabilityTier] / TIER_RANK.high))
       const load = 1 - Math.min(1, Math.max(0, node.loadFactor ?? 0.5))
 
       const score =

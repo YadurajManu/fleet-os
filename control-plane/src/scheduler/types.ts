@@ -6,6 +6,13 @@ export type PlacementPolicy = 'pinned' | 'preferred' | 'flexible'
 
 /** A node as the scheduler sees it: capability plus what is already on it. */
 export type NodeSnapshot = {
+  platform?: string | null
+  engineKind?: string | null
+  effectiveCpu?: number | null
+  effectiveMemBytes?: number | null
+  reliabilityScore?: number
+  committedCpu?: number
+
   id: string
   name: string
   arch: string
@@ -22,6 +29,11 @@ export type NodeSnapshot = {
 }
 
 export type ServiceSpec = {
+  platforms?: 'auto' | string[]
+  imagePlatforms?: string[]
+  placementArch?: string | null
+  allowEmulation?: boolean
+
   id: string
   name: string
   placementPolicy: PlacementPolicy
@@ -57,6 +69,8 @@ export type RejectionCode =
   | 'draining'
   | 'arch_incompatible'
   | 'insufficient_ram'
+  | 'insufficient_cpu'
+  | 'platform_incompatible'
   | 'no_gpu'
   | 'reliability_too_low'
   | 'missing_tag'
