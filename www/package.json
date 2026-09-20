@@ -8,7 +8,8 @@
     "build": "vite build && node scripts/prerender.mjs && node scripts/generate-og.mjs",
     "preview": "vite preview",
     "prerender": "node scripts/prerender.mjs",
-    "generate-og": "node scripts/generate-og.mjs"
+    "generate-og": "node scripts/generate-og.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^9.7.0",

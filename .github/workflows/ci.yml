@@ -125,3 +125,28 @@ jobs:
             GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null ./cmd/agent
             echo "built $target"
           done
+
+  marketing:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: www/package-lock.json
+      - run: npm ci
+        working-directory: www
+      - run: npm run build
+        working-directory: www
+      - run: npm test
+        working-directory: www
+      - run: npm audit --audit-level=high
+        working-directory: www
+      - name: Validate alternate canonical origin
+        working-directory: www
+        run: npm run build && npm test
+        env:
+          SITE_ORIGIN: https://preview.example.org

@@ -142,7 +142,7 @@ export default function Founder() {
       {/* ── who ─────────────────────────────────────────────────────── */}
       <header className="rail relative border-b border-[var(--color-line)] pb-16 pt-28 lg:pt-32">
         <Reveal className="flex items-center gap-2.5 font-mono text-[11px]" y={8} duration={0.5}>
-          <a href="#top" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg-muted)]">
+          <a href="/#top" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg-muted)]">
             fleet·os
           </a>
           <span className="text-[var(--color-line-2)]">/</span>
@@ -453,16 +453,16 @@ export default function Founder() {
 
           <Reveal className="mt-16 border-t border-[var(--color-line)] pt-8">
             <div className="flex flex-wrap items-center gap-x-7 gap-y-2 font-mono text-[12px]">
-              <a href="#top" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]">
+              <a href="/#top" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]">
                 ← the product
               </a>
-              <a href="#/docs" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]">
+              <a href="/docs" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]">
                 documentation
               </a>
-              <a href="#/changelog" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]">
+              <a href="/changelog" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]">
                 what shipped recently
               </a>
-              <a href="#/about" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]">
+              <a href="/about" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]">
                 about the project
               </a>
             </div>

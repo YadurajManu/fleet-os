@@ -212,7 +212,7 @@ function Block({ b }) {
 /* ── the page ────────────────────────────────────────────────────── */
 
 export default function PageShell({ route }) {
-  const page = PAGES[route]
+  const page = Object.hasOwn(PAGES, route) ? PAGES[route] : undefined
   const mainRef = useRef(null)
   const [activeId, setActiveId] = useState(null)
 
@@ -252,10 +252,10 @@ export default function PageShell({ route }) {
           That page is not in the fleet. The scheduler could not find an eligible node.
         </p>
         <div className="mt-8 flex gap-4">
-          <a href="#top" className="link-draw font-mono text-[12px] text-[var(--color-signal)]">
+          <a href="/#top" className="link-draw font-mono text-[12px] text-[var(--color-signal)]">
             back to the landing page
           </a>
-          <a href="#/docs" className="link-draw font-mono text-[12px] text-[var(--color-fg-muted)]">
+          <a href="/docs" className="link-draw font-mono text-[12px] text-[var(--color-fg-muted)]">
             documentation
           </a>
         </div>
@@ -274,7 +274,7 @@ export default function PageShell({ route }) {
       {/* header */}
       <header className="rail relative border-b border-[var(--color-line)] pb-12 pt-28 lg:pt-32">
         <Reveal className="flex items-center gap-2.5 font-mono text-[11px]" y={8} duration={0.5}>
-          <a href="#top" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg-muted)]">
+          <a href="/#top" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg-muted)]">
             fleet·os
           </a>
           <span className="text-[var(--color-line-2)]">/</span>
@@ -303,7 +303,7 @@ export default function PageShell({ route }) {
 
       {/* body + table of contents */}
       <div className="rail relative grid gap-12 py-14 lg:grid-cols-12 lg:py-16">
-        <main ref={mainRef} className="min-w-0 lg:col-span-8">
+        <div ref={mainRef} className="min-w-0 lg:col-span-8">
           {page.blocks.map((b, i) => (
             <Block key={i} b={b} />
           ))}
@@ -315,7 +315,7 @@ export default function PageShell({ route }) {
                 key ? (
                   <motion.a
                     key={label}
-                    href={`#/${key}`}
+                    href={`/${key}`}
                     whileHover={{ y: -2 }}
                     transition={{ type: 'spring', stiffness: 300, damping: 24 }}
                     className={`group bg-[var(--color-ink-950)] p-5 transition-colors duration-400 hover:bg-[var(--color-ink-900)] ${
@@ -333,7 +333,7 @@ export default function PageShell({ route }) {
               )}
             </nav>
           )}
-        </main>
+        </div>
 
         {/* sticky contents rail */}
         {toc.length > 1 && (
@@ -357,7 +357,7 @@ export default function PageShell({ route }) {
                         href={`#${id}`}
                         onClick={(e) => {
                           e.preventDefault()
-                          document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                          document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
                         }}
                         className={`block py-0.5 pl-4 text-[12.5px] leading-snug transition-colors duration-300 ${
                           active
@@ -376,12 +376,12 @@ export default function PageShell({ route }) {
                 <span className="mono-label">elsewhere</span>
                 <ul className="mt-4 space-y-2">
                   {[
-                    ['Documentation', '#/docs'],
-                    ['CLI reference', '#/docs/cli'],
-                    ['REST API', '#/docs/api'],
-                    ['Changelog', '#/changelog'],
+                    ['Documentation', '/docs'],
+                    ['CLI reference', '/docs/cli'],
+                    ['REST API', '/docs/api'],
+                    ['Changelog', '/changelog'],
                   ]
-                    .filter(([, h]) => h !== `#/${route}`)
+                    .filter(([, h]) => h !== `/${route}`)
                     .map(([label, href]) => (
                       <li key={href}>
                         <a

@@ -52,7 +52,7 @@ const LINKS = [
 
 // This section is the summary. The page is where the argument gets made —
 // including the half about what a one-person project cannot give you.
-const FULL_PAGE = '#/founder'
+const FULL_PAGE = '/founder'
 
 export default function Builder() {
   return (

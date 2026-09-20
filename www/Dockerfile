@@ -5,7 +5,9 @@ RUN npm ci
 COPY . .
 # Where the dashboard lives, baked in at build time so the marketing CTAs
 # point somewhere real rather than at a placeholder.
-ARG VITE_APP_URL=https://app.fleet.plastikworld.xyz
+ARG SITE_ORIGIN=https://fleet.plastikworld.xyz
+ENV SITE_ORIGIN=$SITE_ORIGIN
+ARG VITE_APP_URL=https://fleetapp.plastikworld.xyz
 ENV VITE_APP_URL=$VITE_APP_URL
 RUN npm run build
 

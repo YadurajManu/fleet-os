@@ -48,7 +48,7 @@ function FooterLink({ label, href }) {
 function BackToTop() {
   return (
     <motion.a
-      href="#top"
+      href="/#top"
       whileHover={{ y: -2 }}
       whileTap={{ scale: 0.94 }}
       transition={{ type: 'spring', stiffness: 380, damping: 24 }}
@@ -97,13 +97,13 @@ export default function Footer() {
       <div className="relative border-b border-[var(--color-line)]">
         <div className="rail flex flex-wrap items-center justify-between gap-y-3 py-4">
           <motion.a
-            href="#/status"
+            href="/status"
             {...rise(0)}
             className="group flex items-center gap-2.5"
           >
             <StatusDot size={7} />
             <span className="font-mono text-[11.5px] text-[var(--color-fg)]">
-              <span className="link-draw">All systems operational</span>
+              <span className="link-draw">Service status information</span>
             </span>
             <span className="hidden font-mono text-[11px] text-[var(--color-fg-dim)] sm:inline">
               · control plane · mesh coordinator · registry · build runners
@@ -115,11 +115,11 @@ export default function Footer() {
             className="flex items-center gap-6 font-mono text-[10.5px] text-[var(--color-fg-dim)]"
           >
             <span>
-              uptime{' '}
+              example uptime{' '}
               <span className="tabular-nums text-[var(--color-fg-muted)]">{fmtUptime(uptime)}</span>
             </span>
             <span className="hidden sm:inline">
-              last deploy{' '}
+              example deploy{' '}
               <span className="tabular-nums text-[var(--color-fg-muted)]">{sinceDeploy}s ago</span>
             </span>
           </motion.div>
@@ -130,7 +130,7 @@ export default function Footer() {
       <div className="rail relative grid gap-12 py-16 lg:grid-cols-12 lg:gap-8 lg:py-20">
         {/* identity block */}
         <motion.div {...rise(0)} className="lg:col-span-4">
-          <a href="#top" className="inline-block">
+          <a href="/#top" className="inline-block">
             <Logo size={30} word tagline animate />
           </a>
 
@@ -151,7 +151,7 @@ export default function Footer() {
               v0.9.2 · open beta
             </span>
             <a
-              href="#/legal/licence"
+              href="/legal/licence"
               className="link-draw font-mono text-[10.5px] text-[var(--color-fg-dim)] transition-colors duration-300 hover:text-[var(--color-fg-muted)]"
             >
               self-hosting available
