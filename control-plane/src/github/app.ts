@@ -182,11 +182,15 @@ export type Repo = {
 
 export async function listRepos(config: GitHubConfig, installationId: number): Promise<Repo[]> {
   const token = await installationToken(config, installationId)
-  const { repositories } = await ghFetch<{ repositories: Repo[] }>(
-    'https://api.github.com/installation/repositories?per_page=100',
-    token
-  )
-  return repositories
+  const repositories: Repo[] = []
+  for (let page = 1; ; page++) {
+    const batch = await ghFetch<{ repositories: Repo[] }>(
+      `https://api.github.com/installation/repositories?per_page=100&page=${page}`,
+      token
+    )
+    repositories.push(...batch.repositories)
+    if (batch.repositories.length < 100) return repositories
+  }
 }
 
 /**
