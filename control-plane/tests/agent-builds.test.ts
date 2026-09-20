@@ -271,3 +271,12 @@ test('a cancelled deployment cannot start a later build', async () => {
   }
   await assert.rejects(runner.build(req), /cancelled/)
 })
+
+test('shared build storage cannot be used as an implicit source context', async () => {
+  const req = await request('missing-source')
+  delete req.contextRoot
+  await assert.rejects(
+    runner.build(req),
+    /shared build workdir is not a source context/
+  )
+})

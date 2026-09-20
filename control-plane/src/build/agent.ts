@@ -49,6 +49,27 @@ export class AgentBuildRunner implements BuildRunner {
   private send(nodeId: string, msg: unknown) {
     return this.ctx.tunnels.sendBuild(nodeId, msg)
   }
+  private async progress(
+    req: BuildRequest,
+    text: string,
+    nodeId = 'control-plane'
+  ) {
+    const entry = {
+      service: req.serviceName,
+      serviceId: req.serviceId,
+      nodeId,
+      deploymentId: req.deploymentId,
+      text,
+      at: Date.now(),
+    }
+    await this.ctx.redis
+      .multi()
+      .lpush(`build:logs:${req.serviceId}`, JSON.stringify(entry))
+      .ltrim(`build:logs:${req.serviceId}`, 0, 199)
+      .expire(`build:logs:${req.serviceId}`, 86400)
+      .exec()
+    await publishLog(this.ctx.redis, req.serviceName, entry)
+  }
   async handleMessage(nodeId: string, raw: unknown) {
     const parsed = buildEvent.safeParse(raw)
     if (!parsed.success) return
@@ -334,6 +355,11 @@ export class AgentBuildRunner implements BuildRunner {
         exp,
       }
       const emulated = builder.platform !== job.platform
+      await this.progress(
+        req,
+        `assigned ${job.platform} build to ${builder.id}${emulated ? ' (slow QEMU fallback)' : ''}`,
+        builder.id
+      )
       req.onProgress?.({
         phase: 'building',
         platform: job.platform,
@@ -482,9 +508,11 @@ export class AgentBuildRunner implements BuildRunner {
       deploymentId = req.deploymentId,
       repo = `fleet-builds/${req.serviceId}`
     const archive = archivePath(this.ctx.config.BUILD_WORKDIR, deploymentId)
-    const root = await realpath(
-      req.contextRoot ?? this.ctx.config.BUILD_WORKDIR
-    )
+    if (!req.contextRoot)
+      throw new BuildUnavailableError(
+        'agent builds require an uploaded source context or a repository checkout; the shared build workdir is not a source context'
+      )
+    const root = await realpath(req.contextRoot)
     const context = await realpath(containedContext(root, req.buildContext))
     const contextRelative = relative(root, context)
     if (
@@ -498,9 +526,17 @@ export class AgentBuildRunner implements BuildRunner {
     await mkdir(dirname(archive), { recursive: true, mode: 0o700 })
     this.inFlight.add(deploymentId)
     try {
+      await this.progress(req, 'queued: preparing delegated build source')
+      const archiveDirectory = relative(context, dirname(archive))
+      const excludes =
+        archiveDirectory &&
+        !archiveDirectory.startsWith('..') &&
+        !isAbsolute(archiveDirectory)
+          ? [`--exclude=./${archiveDirectory}`]
+          : []
       await exec(
         'tar',
-        ['-czf', archive, '--exclude=.git', '-C', context, '.'],
+        ['-czf', archive, '--exclude=.git', ...excludes, '-C', context, '.'],
         { timeout: 60000 }
       )
       if ((await stat(archive)).size > 256 * 1048576)
@@ -644,6 +680,11 @@ export class AgentBuildRunner implements BuildRunner {
         .update(services)
         .set({ imagePlatforms: req.platforms })
         .where(eq(services.id, req.serviceId))
+      req.onProgress?.({
+        phase: 'pushing',
+        detail: `pushed immutable image ${digest}`,
+      })
+      await this.progress(req, `pushed ${imageRepo}@${digest}`)
       return {
         imageTags: [`${imageRepo}@${digest}`],
         digest,

@@ -194,16 +194,8 @@ func run() error {
 			probeCtx, probeCancel := context.WithTimeout(ctx, 25*time.Second)
 			report, probeErr := capability.DetectEngine(probeCtx, Version)
 			if probeErr == nil {
-				report.MaxConcurrentBuilds = builderConfig.MaxConcurrentBuilds
-				report.BuildDiskBytes = builderConfig.DiskBytes
-				if builderConfig.Builder {
-					space, spaceErr := capability.ProbeDisk(probeCtx, filepath.Dir(*statePath), builderConfig.ReserveBytes, "")
-					buildxErr := capability.DockerCommand(probeCtx, "buildx", "version").Run()
-					if spaceErr == nil && buildxErr == nil {
-						report.BuildCacheFreeBytes = space.Free
-						report.BuildDiskReserveBytes = space.Reserve
-						report.CanBuild = space.Preflight(builderConfig.DiskBytes) == nil
-					}
+				if err := capability.ApplyBuilder(probeCtx, &report, filepath.Dir(*statePath), builderConfig); err != nil {
+					log.Debug("builder unavailable", "reason", err)
 				}
 				capabilityMu.Lock()
 				engineReport = &report
@@ -325,6 +317,13 @@ func register(ctx context.Context, log *slog.Logger, controlPlane, token, stateP
 	report, err := capability.DetectEngine(ctx, Version)
 	if err != nil {
 		return nil, err
+	}
+	config, err := capability.LoadBuilderConfig(filepath.Dir(statePath))
+	if err != nil {
+		return nil, err
+	}
+	if err = capability.ApplyBuilder(ctx, &report, filepath.Dir(statePath), config); err != nil {
+		log.Warn("builder unavailable", "reason", err)
 	}
 	log.Info("detected capability",
 		"arch", report.Arch, "cores", report.CPUCores,

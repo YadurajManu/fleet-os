@@ -126,3 +126,30 @@ func DetectEngine(ctx context.Context, version string) (Report, error) {
 	report.RAMMb = int(engine.EffectiveMemBytes / (1 << 20))
 	return report, nil
 }
+
+// ApplyBuilder reports opt-in and usable engine disk capacity at registration
+// as well as on heartbeats. Unavailable probes disable building, not liveness.
+func ApplyBuilder(ctx context.Context, report *Report, dir string, config BuilderConfig) error {
+	report.MaxConcurrentBuilds = config.MaxConcurrentBuilds
+	report.BuildDiskBytes = config.DiskBytes
+	report.CanBuild = false
+	if !config.Builder {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	space, err := ProbeDisk(ctx, dir, config.ReserveBytes, "")
+	if err != nil {
+		return err
+	}
+	report.BuildCacheFreeBytes = space.Free
+	report.BuildDiskReserveBytes = space.Reserve
+	if err = space.Preflight(config.DiskBytes); err != nil {
+		return err
+	}
+	if err = DockerCommand(ctx, "buildx", "version").Run(); err != nil {
+		return fmt.Errorf("Buildx is unavailable: %w", err)
+	}
+	report.CanBuild = true
+	return nil
+}
