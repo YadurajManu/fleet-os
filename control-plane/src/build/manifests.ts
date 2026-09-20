@@ -88,12 +88,12 @@ export async function mergeManifests(
           'imagetools',
           'inspect',
           '--format',
-          '{{.Manifest.Digest}}',
+          '{{json .Manifest}}',
           `${repo}:${tag}`,
         ],
         { env, timeout: 30000 }
       )
-      const digest = stdout.trim()
+      const digest = manifestDigest(stdout)
       if (!/^sha256:[a-f0-9]{64}$/.test(digest))
         throw new Error('manifest digest missing')
       return digest
@@ -103,6 +103,15 @@ export async function mergeManifests(
       'registry manifest assembly failed; inspect registry connectivity and per-platform digests'
     )
   }
+}
+
+/** Buildx 0.19 supports the JSON Manifest formatter, not arbitrary field templates. */
+export function manifestDigest(output: string): string {
+  const descriptor = JSON.parse(output) as { digest?: unknown }
+  if (typeof descriptor.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(descriptor.digest)) {
+    throw new Error('manifest digest missing')
+  }
+  return descriptor.digest
 }
 
 export function manifestPlatforms(manifest: unknown): string[] {
@@ -149,12 +158,12 @@ export async function inspectImage(
           'imagetools',
           'inspect',
           '--format',
-          '{{.Manifest.Digest}}',
+          '{{json .Manifest}}',
           image,
         ],
-        { env, timeout: 30000, maxBuffer: 1024 }
+        { env, timeout: 30000, maxBuffer: 4 * 1048576 }
       )
-      const digest = d.trim()
+      const digest = manifestDigest(d)
       if (!/^sha256:[a-f0-9]{64}$/.test(digest))
         throw new Error('no image digest')
       image = pinnedImage(image, digest)
