@@ -281,7 +281,7 @@ export function RingGauge({
   warnAt = 0.65,
   dangerAt = 0.85,
 }: {
-  value: number
+  value: number | null
   max: number
   label?: string
   sublabel?: string
@@ -290,14 +290,15 @@ export function RingGauge({
   warnAt?: number
   dangerAt?: number
 }) {
-  const ratio = max > 0 ? Math.min(1, Math.max(0, value / max)) : 0
+  const known = value !== null && Number.isFinite(value) && value >= 0 && Number.isFinite(max) && max > 0
+  const ratio = known ? Math.min(1, value / max) : 0
   const radius = (size - strokeWidth * 2) / 2
   const circumference = 2 * Math.PI * radius
   const offset = circumference - ratio * circumference
 
-  const tone = ratio >= dangerAt ? 'down' : ratio >= warnAt ? 'warn' : 'ok'
+  const tone = !known ? 'idle' : ratio >= dangerAt ? 'down' : ratio >= warnAt ? 'warn' : 'ok'
   const strokeColor =
-    tone === 'down' ? 'var(--color-down)' : tone === 'warn' ? 'var(--color-warn)' : 'var(--color-signal)'
+    tone === 'idle' ? 'var(--color-fg-dim)' : tone === 'down' ? 'var(--color-down)' : tone === 'warn' ? 'var(--color-warn)' : 'var(--color-signal)'
 
   return (
     <div className="flex items-center gap-3">
@@ -326,7 +327,7 @@ export function RingGauge({
           />
         </svg>
         <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px] font-semibold tabular text-[var(--color-fg)]">
-          {Math.round(ratio * 100)}%
+          {known ? `${Math.round(ratio * 100)}%` : '—'}
         </div>
       </div>
       {(label || sublabel) && (

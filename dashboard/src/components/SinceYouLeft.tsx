@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type TimelineEvent } from '../lib/api'
-import { usePoll } from '../lib/auth'
+import { useAuth, usePoll } from '../lib/auth'
 import { since } from '../lib/format'
 
 /**
@@ -24,9 +24,9 @@ const MARK = 'fleet:lastSeenEvents'
 /** Nothing older than this, however long somebody has been away. */
 const HORIZON_MS = 7 * 24 * 60 * 60 * 1000
 
-function readMark(): number {
+function readMark(key: string): number {
   try {
-    const raw = localStorage.getItem(MARK)
+    const raw = localStorage.getItem(key)
     const at = raw ? Number(raw) : 0
     // A first visit is not "everything that ever happened". Somebody arriving
     // for the first time wants today, not a wall of history they have no
@@ -42,7 +42,9 @@ export default function SinceYouLeft({ fleetId }: { fleetId: string }) {
   // Read once, on mount. Re-reading would move the line forward under the
   // reader as the mark is written, and the list would empty itself while they
   // were still looking at it.
-  const [mark] = useState(readMark)
+  const { email } = useAuth()
+  const storageKey = `${MARK}:${encodeURIComponent(email ?? 'anonymous')}:${fleetId}`
+  const [mark] = useState(() => readMark(storageKey))
   const [dismissed, setDismissed] = useState(false)
 
   const { data } = usePoll(
@@ -58,12 +60,12 @@ export default function SinceYouLeft({ fleetId }: { fleetId: string }) {
     // they appear means a glance at the wrong moment loses them for good.
     return () => {
       try {
-        localStorage.setItem(MARK, String(Date.now()))
+        localStorage.setItem(storageKey, String(Date.now()))
       } catch {
         // Not being able to remember is a lost convenience, not an error.
       }
     }
-  }, [])
+  }, [storageKey])
 
   if (dismissed || !fresh.length) return null
 

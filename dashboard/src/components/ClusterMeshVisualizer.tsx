@@ -1,9 +1,11 @@
+import { loadRatio, freshTelemetry } from '../lib/telemetry'
 import { useState, useMemo, useRef, useEffect, useCallback, type ReactNode } from 'react'
 import { type Node, type PlacementMapNode } from '../lib/api'
 import { mb, pct, toneOf } from '../lib/format'
 import { Dot, Meter, RingGauge } from './ui'
 
 export interface ClusterMeshVisualizerProps {
+  maxAgeMs?: number
   mapNodes: PlacementMapNode[]
   nodes: Node[]
   fleetName?: string
@@ -131,7 +133,7 @@ function NodeCard({
 }) {
   const tone = toneOf(node.status)
   const svcCount = node.services.length
-  const containerCount = node.telemetry?.containers?.length ?? svcCount
+  const containerCount = node.telemetry?.containers?.length
 
   const stripeColor =
     tone === 'ok'
@@ -164,7 +166,7 @@ function NodeCard({
           </span>
           <span>·</span>
           <span>
-            {containerCount} container{containerCount === 1 ? '' : 's'}
+            {containerCount == null ? 'Containers unavailable' : `${containerCount} containers`}
           </span>
           <span>·</span>
           <span className={node.tunnelConnected ? 'font-medium text-[var(--color-signal)]' : 'text-[var(--color-fg-dim)]'}>
@@ -175,23 +177,25 @@ function NodeCard({
         {node.telemetry && (
           <div className="mt-3 flex items-center gap-5 border-t border-[var(--color-line)] pt-2.5">
             <RingGauge
-              value={node.telemetry.cpuPct}
+              value={loadRatio(node.telemetry.cpuPct)}
               max={1}
               size={40}
               strokeWidth={3.5}
-              label="CPU"
-              sublabel={pct(node.telemetry.cpuPct)}
+              label="Normalized load"
+              sublabel={pct(loadRatio(node.telemetry.cpuPct))}
             />
             <RingGauge
               value={node.telemetry.ramUsedMb}
               max={node.ramMb}
               size={40}
               strokeWidth={3.5}
-              label="RAM"
+              label="Host memory"
               sublabel={mb(node.telemetry.ramUsedMb)}
             />
           </div>
         )}
+
+        {!node.telemetry && <p className="mt-3 text-[13px] text-[var(--color-fg-muted)]">Telemetry unavailable or stale</p>}
 
         {svcCount > 0 && (
           <div className="mt-3 flex flex-wrap gap-1">
@@ -220,6 +224,7 @@ function NodeCard({
 export default function ClusterMeshVisualizer({
   mapNodes,
   nodes,
+  maxAgeMs = 15_000,
   fleetName = 'Fleet',
   className = '',
   onSelectNode,
@@ -232,7 +237,7 @@ export default function ClusterMeshVisualizer({
 
   const [zoom, setZoom] = useState(1)
 
-  const COLLAPSED_H = 450
+  const COLLAPSED_H = mapNodes.length <= 3 ? 240 : 360
   const EXPANDED_H = 680
   const targetH = expanded ? EXPANDED_H : COLLAPSED_H
 
@@ -255,7 +260,7 @@ export default function ClusterMeshVisualizer({
       const liveNode = nodes.find((n) => n.id === mn.id)
       return {
         ...mn,
-        telemetry: liveNode?.telemetry ?? null,
+        telemetry: liveNode ? freshTelemetry(liveNode, maxAgeMs) : null,
         os: liveNode?.os ?? '?',
         arch: mn.arch,
         agentVersion: liveNode?.agentVersion ?? null,
@@ -264,7 +269,7 @@ export default function ClusterMeshVisualizer({
         meshConnected: liveNode?.telemetry?.meshConnected ?? false,
       }
     })
-  }, [mapNodes, nodes])
+  }, [mapNodes, nodes, maxAgeMs])
 
   const cx = dims.w / 2
   const cy = dims.h / 2
@@ -286,10 +291,10 @@ export default function ClusterMeshVisualizer({
     []
   )
 
-  const hoveredNode = enriched.find((n) => n.id === hovered)
+  const hoveredNode = enriched.find((n) => n.id === active)
   const onlineCount = enriched.filter((n) => n.status === 'online').length
   const totalContainers = enriched.reduce(
-    (sum, n) => sum + (n.telemetry?.containers?.length ?? n.services.length),
+    (sum, n) => sum + (n.telemetry?.containers?.length ?? 0),
     0
   )
   const showCards = enriched.length <= 6
@@ -297,7 +302,7 @@ export default function ClusterMeshVisualizer({
   return (
     <div ref={containerRef} className={`relative overflow-hidden ${className}`}>
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-line)] bg-[var(--color-ink-950)]">
+      <div className="flex flex-wrap gap-3 items-center justify-between px-5 py-3 border-b border-[var(--color-line)] bg-[var(--color-ink-950)]">
         <div className="flex items-center gap-3">
           <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-fg-muted)] font-medium">
             Cluster Topology
@@ -310,7 +315,7 @@ export default function ClusterMeshVisualizer({
             <Dot tone="ok" size={6} />
             {onlineCount} online
           </span>
-          <span>{totalContainers} container{totalContainers === 1 ? '' : 's'}</span>
+          <span>{enriched.every(n => n.telemetry?.containers != null) ? `${totalContainers} containers` : 'Container count unavailable'}</span>
 
           {/* Zoom controls */}
           <div className="hidden sm:flex items-center gap-1 border-l border-[var(--color-line)] pl-3">
@@ -387,7 +392,7 @@ export default function ClusterMeshVisualizer({
 
           <g transform={`scale(${zoom})`} style={{ transformOrigin: `${cx}px ${cy}px`, transition: 'transform 0.15s ease-out' }}>
             {/* Ambient background glow emanating from Control Plane */}
-            <circle cx={cx} cy={cy} r={Math.max(rx, ry) * 1.4} fill="url(#mesh-bg-radial)" pointerEvents="none" />
+
 
             {/* ── Connection lines ─────────────────────────────── */}
             {positions.map((pos, i) => {
@@ -395,7 +400,6 @@ export default function ClusterMeshVisualizer({
               const isOnline = node.status === 'online'
               const hasTunnel = node.meshConnected || node.tunnelConnected
               const pathD = curvedPath(cx, cy, pos.x, pos.y)
-              const returnPathD = curvedPath(pos.x, pos.y, cx, cy)
               const midX = (cx + pos.x) / 2
               const midY = (cy + pos.y) / 2 - 12
 
@@ -415,10 +419,10 @@ export default function ClusterMeshVisualizer({
                     <path
                       d={pathD}
                       fill="none"
-                      stroke="url(#tunnel-grad)"
+                      stroke="var(--color-signal-dim)"
                       strokeWidth={2.2}
                       strokeDasharray="8 12"
-                      className="animate-dash-flow"
+
                     />
                   )}
                   {!isOnline && (
@@ -431,29 +435,13 @@ export default function ClusterMeshVisualizer({
                     />
                   )}
 
-                  {/* Flowing data particles along the active connection */}
-                  {isOnline && (
-                    <>
-                      {/* Outbound telemetry/sync particle */}
-                      <circle r={2.8} fill="var(--color-signal)">
-                        <animateMotion path={pathD} dur={`${2.2 + (i % 3) * 0.5}s`} repeatCount="indefinite" />
-                        <animate attributeName="opacity" values="0.1;1;1;0.2" dur={`${2.2 + (i % 3) * 0.5}s`} repeatCount="indefinite" />
-                      </circle>
-                      {/* Inbound return heartbeat packet */}
-                      <circle r={2} fill="#5eead4">
-                        <animateMotion path={returnPathD} dur={`${2.7 + (i % 2) * 0.6}s`} repeatCount="indefinite" />
-                        <animate attributeName="opacity" values="0.1;0.9;0.9;0.1" dur={`${2.7 + (i % 2) * 0.6}s`} repeatCount="indefinite" />
-                      </circle>
-                    </>
-                  )}
-
                   {/* Midpoint link status badge */}
                   {isOnline && (
                     <g opacity={active === node.id ? 1 : 0.75} style={{ transition: 'opacity 0.2s ease' }}>
                       <rect
-                        x={midX - 22}
+                        x={midX - 55}
                         y={midY - 7}
-                        width={44}
+                        width={110}
                         height={13}
                         rx={2.5}
                         fill="var(--color-ink-900)"
@@ -468,7 +456,7 @@ export default function ClusterMeshVisualizer({
                         fontSize="7.5"
                         fontFamily="var(--font-mono)"
                       >
-                        {hasTunnel ? '● mesh ok' : '○ direct'}
+                        {node.tunnelConnected ? 'Tunnel connected' : node.meshConnected ? 'Peer mesh reported' : 'Connection unknown'}
                       </text>
                     </g>
                   )}
@@ -480,11 +468,9 @@ export default function ClusterMeshVisualizer({
             <g>
               {/* Outer pulsing radar ring */}
               <circle cx={cx} cy={cy} r={36} fill="none" stroke="var(--color-signal)" strokeWidth={1} opacity={0.25}>
-                <animate attributeName="r" from="30" to="48" dur="2.8s" repeatCount="indefinite" />
-                <animate attributeName="opacity" from="0.35" to="0" dur="2.8s" repeatCount="indefinite" />
               </circle>
               {/* Core Control Plane Orb */}
-              <circle cx={cx} cy={cy} r={28} fill="var(--color-ink-850)" stroke="var(--color-signal)" strokeWidth={1.8} filter="url(#cp-glow)" />
+              <circle cx={cx} cy={cy} r={28} fill="var(--color-ink-850)" stroke="var(--color-signal)" strokeWidth={1.8} />
               <circle cx={cx} cy={cy} r={5} fill="var(--color-signal)" />
               <text x={cx} y={cy - 40} textAnchor="middle" fill="var(--color-fg)" fontSize="10.5" fontFamily="var(--font-mono)" fontWeight="600" letterSpacing="0.08em">
                 CONTROL PLANE
@@ -546,8 +532,6 @@ export default function ClusterMeshVisualizer({
                   {/* Hover ripple */}
                   {isHovered && (
                     <circle cx={pos.x} cy={pos.y} r={nodeRadius + 6} fill="none" stroke={strokeColor} strokeWidth={1} opacity={0.5}>
-                      <animate attributeName="r" from={nodeRadius + 2} to={nodeRadius + 10} dur="1.5s" repeatCount="indefinite" />
-                      <animate attributeName="opacity" from="0.5" to="0" dur="1.5s" repeatCount="indefinite" />
                     </circle>
                   )}
 
@@ -570,14 +554,14 @@ export default function ClusterMeshVisualizer({
                       r={nodeRadius + 3.5}
                       fill="none"
                       stroke={
-                        node.telemetry.cpuPct > 0.85
+                        node.telemetry.cpuPct > 85
                           ? 'var(--color-down)'
-                          : node.telemetry.cpuPct > 0.65
+                          : node.telemetry.cpuPct > 65
                           ? 'var(--color-warn)'
                           : 'var(--color-signal)'
                       }
                       strokeWidth={1.8}
-                      strokeDasharray={`${node.telemetry.cpuPct * 2 * Math.PI * (nodeRadius + 3.5)} ${
+                      strokeDasharray={`${(loadRatio(node.telemetry.cpuPct) ?? 0) * 2 * Math.PI * (nodeRadius + 3.5)} ${
                         2 * Math.PI * (nodeRadius + 3.5)
                       }`}
                       strokeLinecap="round"
@@ -705,9 +689,6 @@ export default function ClusterMeshVisualizer({
                         strokeWidth={1}
                         style={{ transition: 'r 0.2s ease' }}
                       >
-                        {svc.status === 'deploying' && (
-                          <animate attributeName="opacity" values="1;0.35;1" dur="1.6s" repeatCount="indefinite" />
-                        )}
                       </circle>
                       {showServiceLabels && (
                         <text
@@ -757,8 +738,8 @@ export default function ClusterMeshVisualizer({
                 <div className="space-y-1.5 pt-1">
                   <Meter
                     value={hoveredNode.telemetry.cpuPct}
-                    max={1}
-                    label={`CPU ${pct(hoveredNode.telemetry.cpuPct)}`}
+                    max={100}
+                    label={`Normalized load ${pct(loadRatio(hoveredNode.telemetry.cpuPct))}`}
                     warnAt={0.8}
                   />
                   <Meter

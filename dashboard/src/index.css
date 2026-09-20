@@ -243,3 +243,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Operational overview: stable surfaces and motion only when requested. */
+.overview-page .stat-card { background: var(--color-ink-900); backdrop-filter: none; }
+.overview-page .stat-card:hover { transform: none; box-shadow: none; }
+.overview-page .panel-head { font-size: 12px; letter-spacing: .04em; }
+.overview-page .animate-pulse { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .overview-page *, .overview-page *::before, .overview-page *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
