@@ -3,6 +3,7 @@
 package upgrade
 
 import (
+	"errors"
 	"fmt"
 	"golang.org/x/sys/windows"
 	"os"
@@ -49,6 +50,9 @@ func RunHelper(args []string) (bool, error) {
 		return true, fmt.Errorf("invalid parent PID")
 	}
 	process, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+	if err != nil && !errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+		return true, fmt.Errorf("cannot wait for running agent: %w", err)
+	}
 	if err == nil {
 		event, waitErr := windows.WaitForSingleObject(process, 60000)
 		_ = windows.CloseHandle(process)

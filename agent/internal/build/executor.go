@@ -246,8 +246,12 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult stri
 	}
 	// Per-job credentials are isolated from the operator's Docker login/config.
 	host := strings.Split(a.RegistryTarget, "/")[0]
-	auth, _ := json.Marshal(map[string]any{"auths": map[string]any{host: map[string]string{"username": a.RegistryUsername, "password": a.RegistryPassword}}})
+	auth, _ := json.Marshal(map[string]any{"cliPluginsExtraDirs": capability.DockerPluginDirs(), "auths": map[string]any{host: map[string]string{"username": a.RegistryUsername, "password": a.RegistryPassword}}})
 	if err = os.WriteFile(filepath.Join(configDir, "config.json"), auth, 0600); err != nil {
+		return "", err
+	}
+	dockerEnv, err := capability.IsolatedDockerEnv(ctx, configDir)
+	if err != nil {
 		return "", err
 	}
 	cacheID := sha256.Sum256([]byte(a.CacheKey))
@@ -257,7 +261,7 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult stri
 	}
 	run := func(args ...string) error {
 		cmd := capability.DockerCommand(ctx, args...)
-		cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+configDir)
+		cmd.Env = dockerEnv
 		pipe, err := cmd.StdoutPipe()
 		if err != nil {
 			return err
@@ -287,15 +291,22 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult stri
 		defer cancel()
 		if err := pruneCache(func(args ...string) ([]byte, error) {
 			command := capability.DockerCommand(cleanup, args...)
-			command.Env = append(os.Environ(), "DOCKER_CONFIG="+configDir)
+			command.Env = dockerEnv
 			return command.Output()
-		}, builder, e.Config.CacheBytes); err != nil {
+		}, builder, min(e.Config.CacheBytes, a.DiskBytes/2)); err != nil {
 			buildErr = fmt.Errorf("build cache pruning failed: %w", err)
 			digestResult = ""
 		}
 		cmd := capability.DockerCommand(cleanup, "buildx", "rm", "--force", "--keep-state", builder)
-		cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+configDir)
-		_ = cmd.Run()
+		cmd.Env = dockerEnv
+		if err := cmd.Run(); err != nil {
+			buildErr = fmt.Errorf("BuildKit cleanup failed: %w", err)
+			digestResult = ""
+		}
+		if err := pruneDangling(func(args ...string) ([]byte, error) { return capability.DockerCommand(cleanup, args...).Output() }, builder); err != nil {
+			buildErr = fmt.Errorf("Fleet cache cleanup failed: %w", err)
+			digestResult = ""
+		}
 	}()
 	buildCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -347,7 +358,7 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult stri
 	}
 	args = append(args, source)
 	cmd := capability.DockerCommand(buildCtx, args...)
-	cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+configDir)
+	cmd.Env = dockerEnv
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", err

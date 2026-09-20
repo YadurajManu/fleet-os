@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -47,3 +48,25 @@ func pruneCache(run func(...string) ([]byte, error), builder string, budget int6
 	_, err = run("buildx", "prune", "--builder", builder, "--all", "--force", flag, fmt.Sprintf("%dB", budget))
 	return err
 }
+
+// Only Fleet's hashed builder state volumes are eligible. Keep this build's
+// warm state; older detached states are reclaimed so idle caches cannot grow
+// without bound across many applications. Docker refuses removal if another
+// builder attaches a volume between listing and removal.
+func pruneDangling(run func(...string) ([]byte, error), retained string) error {
+	out, err := run("volume", "ls", "--filter", "dangling=true", "--format", "{{.Name}}")
+	if err != nil {
+		return err
+	}
+	for _, name := range strings.Fields(string(out)) {
+		if name == "buildx_buildkit_"+retained+"0_state" || !fleetState.MatchString(name) {
+			continue
+		}
+		// A racing attachment may make a previously dangling volume busy; preserve it.
+		_, _ = run("volume", "rm", name)
+	}
+	_, err = run("image", "prune", "--force", "--filter", "label=io.fleet.builder=true")
+	return err
+}
+
+var fleetState = regexp.MustCompile(`^buildx_buildkit_fleet-[a-f0-9]{24}0_state$`)

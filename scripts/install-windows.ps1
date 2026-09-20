@@ -22,11 +22,15 @@ if (-not (Test-Path $state)) { throw "Pair first: run the agent with --state $st
 $command = '"{0}" --state "{1}" --control-plane "{2}"' -f $destination,$state,$ControlPlane
 if (Get-Service FleetAgent -ErrorAction SilentlyContinue) {
  & sc.exe config FleetAgent binPath= $command | Out-Null
+ if ($LASTEXITCODE -ne 0) { throw "Could not configure FleetAgent service" }
 } else {
  New-Service -Name FleetAgent -BinaryPathName $command -DisplayName 'Fleet OS Agent' -StartupType Automatic -Credential $ServiceCredential | Out-Null
 }
 # Keep state and credentials private to Administrators and the service account.
 & icacls.exe $root /inheritance:r /grant:r 'BUILTIN\Administrators:(OI)(CI)F' "$($ServiceCredential.UserName):(OI)(CI)F" /T | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not restrict FleetOS directory permissions" }
 & sc.exe failure FleetAgent reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not configure FleetAgent service recovery" }
 & sc.exe failureflag FleetAgent 1 | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not enable FleetAgent service recovery" }
 Start-Service FleetAgent

@@ -50,3 +50,23 @@ func TestCacheCapAppliedAfterEveryBuild(t *testing.T) {
 		}
 	}
 }
+
+func TestPruningPreservesUnrelatedAndCurrentVolumes(t *testing.T) {
+	retained := "fleet-aaaaaaaaaaaaaaaaaaaaaaaa"
+	removed := []string{}
+	err := pruneDangling(func(args ...string) ([]byte, error) {
+		if args[0] == "volume" && args[1] == "ls" {
+			return []byte("postgres-data\nbuildx_buildkit_fleet-aaaaaaaaaaaaaaaaaaaaaaaa0_state\nbuildx_buildkit_fleet-bbbbbbbbbbbbbbbbbbbbbbbb0_state\nbuildx_buildkit_user0_state\n"), nil
+		}
+		if args[0] == "volume" && args[1] == "rm" {
+			removed = append(removed, args[2])
+		}
+		if args[0] == "image" && args[len(args)-1] != "label=io.fleet.builder=true" {
+			t.Fatal("unscoped image prune")
+		}
+		return nil, nil
+	}, retained)
+	if err != nil || len(removed) != 1 || removed[0] != "buildx_buildkit_fleet-bbbbbbbbbbbbbbbbbbbbbbbb0_state" {
+		t.Fatal(removed, err)
+	}
+}
