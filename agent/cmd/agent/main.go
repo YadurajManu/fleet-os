@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/fleet-os/fleet-os/agent/internal/backup"
+	"github.com/fleet-os/fleet-os/agent/internal/build"
 	"github.com/fleet-os/fleet-os/agent/internal/capability"
 	"github.com/fleet-os/fleet-os/agent/internal/client"
 	"github.com/fleet-os/fleet-os/agent/internal/diagnostics"
@@ -167,6 +168,10 @@ func run() error {
 		log.Info("container runtime ready")
 	}
 
+	builderConfig, err := capability.LoadBuilderConfig(filepath.Dir(*statePath))
+	if err != nil {
+		return err
+	}
 	hostSampler := sampler.New(Version, engine, reporter)
 	var lastEngineCheck time.Time
 	hostSampler.EngineCapabilities = func(ctx context.Context) *capability.Report {
@@ -179,6 +184,8 @@ func run() error {
 			log.Warn("Docker engine capability unavailable", "err", err)
 			return nil
 		}
+		report.CanBuild = builderConfig.Builder
+		report.MaxConcurrentBuilds = builderConfig.MaxConcurrentBuilds
 		return &report
 	}
 	loop := &heartbeat.Loop{
@@ -195,7 +202,21 @@ func run() error {
 	// Reverse tunnel connects to the control plane and multiplexes incoming
 	// HTTP ingress requests directly to local containers behind NAT/firewalls.
 	tunnelClient := tunnel.New(saved.ControlPlaneURL, saved.AgentToken, log)
+	builder := build.New(filepath.Join(filepath.Dir(*statePath), "builds"), builderConfig, tunnelClient.SendBuild)
+	tunnelClient.Builder = builder
 	go tunnelClient.Run(ctx)
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				builder.Replay()
+			}
+		}
+	}()
 
 	// Self-upgrade. Cancelling runCtx - and only runCtx - is how a staged
 	// build stops the loop without being mistaken for a shutdown: the outer ctx

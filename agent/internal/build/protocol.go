@@ -3,10 +3,13 @@
 package build
 
 type Source struct {
+	Token  string `json:"token,omitempty"`
 	URL    string `json:"url"`
 	SHA256 string `json:"sha256"`
 }
 type Assignment struct {
+	CacheKey         string            `json:"cache_key"`
+	Emulated         bool              `json:"emulated,omitempty"`
 	Type             string            `json:"type"`
 	Version          int               `json:"version"`
 	JobID            string            `json:"job_id"`

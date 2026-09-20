@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/fleet-os/fleet-os/agent/internal/build"
 	"github.com/fleet-os/fleet-os/agent/internal/terminal"
 )
 
@@ -69,6 +70,7 @@ const (
 )
 
 type Client struct {
+	Builder         *build.Executor
 	controlPlaneURL string
 	agentToken      string
 	log             *slog.Logger
@@ -214,6 +216,9 @@ func (c *Client) connectAndServe(ctx context.Context, wsURL string) error {
 	}()
 
 	c.log.Info("reverse tunnel established successfully")
+	if c.Builder != nil {
+		c.Builder.Replay()
+	}
 
 	for {
 		_, message, err := conn.ReadMessage()
@@ -226,6 +231,10 @@ func (c *Client) connectAndServe(ctx context.Context, wsURL string) error {
 			continue
 		}
 
+		if strings.HasPrefix(req.Type, "build.") && c.Builder != nil {
+			c.Builder.Handle(ctx, message)
+			continue
+		}
 		switch req.Type {
 		case "http_request":
 			go c.handleHttpRequest(&req)
@@ -339,4 +348,15 @@ func (c *Client) sendResponse(resp *TunnelResponse) {
 
 	_ = c.conn.SetWriteDeadline(time.Now().Add(dataWriteWait))
 	_ = c.conn.WriteMessage(websocket.TextMessage, payload)
+}
+
+// SendBuild uses the same serialized writer as ingress and terminal traffic.
+func (c *Client) SendBuild(ev build.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil {
+		return
+	}
+	_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	_ = c.conn.WriteJSON(ev)
 }
