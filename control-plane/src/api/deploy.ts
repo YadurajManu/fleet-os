@@ -40,6 +40,7 @@ export async function deployFromPush(
     await ctx.db.update(services).set({imagePlatforms:metadata.platforms}).where(eq(services.id,service.id))
   }
 
+  if (!resolvedImage) service.imagePlatforms = []
   const { nodes: snapshot, placements, antiAffinityBy } = await fleetSnapshot(ctx, fleetId)
   const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
   if (decision.outcome !== 'placed') throw new Error(decision.summary)
@@ -82,6 +83,13 @@ export async function deployFromPush(
       image = built.imageTags[0]!
     }
 
+    if (ctx.config.BUILD_MODE === 'agent') {
+      const fresh = await fleetSnapshot(ctx,fleetId)
+      const [currentService] = await ctx.db.select().from(services).where(eq(services.id,service.id))
+      const current = place(toServiceSpec(currentService!),fresh.nodes,fresh.placements,fresh.antiAffinityBy)
+      if (current.outcome !== 'placed') throw new Error(current.summary)
+      if (current.nodeId !== decision.nodeId) throw new Error('placement changed while building; retry the deployment against current capacity')
+    }
     await phases.set('scheduling')
     const hostPort = await allocateHostPort(ctx, decision.nodeId)
 

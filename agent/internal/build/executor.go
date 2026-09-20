@@ -282,10 +282,6 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult stri
 		}
 		return cmd.Wait()
 	}
-	// BuildKit gets its own cgroup; Dockerfile RUN steps inherit its limits.
-	if err = run("buildx", "create", "--name", builder, "--driver", "docker-container", "--driver-opt", fmt.Sprintf("memory=%d,cpu-period=100000,cpu-quota=%d", a.MemoryBytes, a.CPU*100000), "--buildkitd-flags", fmt.Sprintf("--oci-worker-gc-keepstorage %d", a.DiskBytes/(1<<20)), "--bootstrap"); err != nil {
-		return "", fmt.Errorf("create isolated BuildKit: %w", err)
-	}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -308,6 +304,10 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult stri
 			digestResult = ""
 		}
 	}()
+	// BuildKit gets its own cgroup; Dockerfile RUN steps inherit its limits.
+	if err = run("buildx", "create", "--name", builder, "--driver", "docker-container", "--driver-opt", fmt.Sprintf("memory=%d,cpu-period=100000,cpu-quota=%d", a.MemoryBytes, a.CPU*100000), "--buildkitd-flags", fmt.Sprintf("--oci-worker-gc-keepstorage %d", a.DiskBytes/(1<<20)), "--bootstrap"); err != nil {
+		return "", fmt.Errorf("create isolated BuildKit: %w", err)
+	}
 	buildCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	// Enforce a measured disk budget, including layers produced by RUN. Docker

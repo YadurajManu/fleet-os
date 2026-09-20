@@ -2,8 +2,8 @@ import { resolveSecrets } from '../secrets/store.js'
 import { repositoryBuildToken } from '../github/app.js'
 import { and, asc, desc, eq, gt, inArray, lt, or } from 'drizzle-orm'
 import { createHash, createHmac } from 'node:crypto'
-import { mkdir, readFile, rm, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { mkdir, readFile, rm, stat, realpath } from 'node:fs/promises'
+import { dirname, relative, isAbsolute } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { AppContext } from '../api/context.js'
@@ -482,10 +482,19 @@ export class AgentBuildRunner implements BuildRunner {
       deploymentId = req.deploymentId,
       repo = `fleet-builds/${req.serviceId}`
     const archive = archivePath(this.ctx.config.BUILD_WORKDIR, deploymentId)
-    const context = containedContext(
-      req.contextRoot ?? this.ctx.config.BUILD_WORKDIR,
-      req.buildContext
+    const root = await realpath(
+      req.contextRoot ?? this.ctx.config.BUILD_WORKDIR
     )
+    const context = await realpath(containedContext(root, req.buildContext))
+    const contextRelative = relative(root, context)
+    if (
+      contextRelative === '..' ||
+      contextRelative.startsWith('../') ||
+      isAbsolute(contextRelative)
+    )
+      throw new BuildUnavailableError(
+        'build context escapes the workspace through a symlink'
+      )
     await mkdir(dirname(archive), { recursive: true, mode: 0o700 })
     this.inFlight.add(deploymentId)
     try {
@@ -549,17 +558,15 @@ export class AgentBuildRunner implements BuildRunner {
           .orderBy(desc(buildJobs.finishedAt))
           .limit(1)
         if (cached?.imageDigest) {
-          await this.ctx.db
-            .insert(buildJobs)
-            .values({
-              deploymentId,
-              serviceId: req.serviceId,
-              platform,
-              sourceRef,
-              status: 'succeeded',
-              imageDigest: cached.imageDigest,
-              finishedAt: new Date(),
-            })
+          await this.ctx.db.insert(buildJobs).values({
+            deploymentId,
+            serviceId: req.serviceId,
+            platform,
+            sourceRef,
+            status: 'succeeded',
+            imageDigest: cached.imageDigest,
+            finishedAt: new Date(),
+          })
           req.onProgress?.({
             phase: 'building',
             platform,
@@ -591,6 +598,21 @@ export class AgentBuildRunner implements BuildRunner {
           ).then(
             (value) => ({ status: 'fulfilled', value }) as const,
             async (reason) => {
+              await this.ctx.db
+                .update(buildJobs)
+                .set({
+                  status: 'failed',
+                  error:
+                    reason instanceof Error ? reason.message : 'build failed',
+                  finishedAt: new Date(),
+                  leaseExpiresAt: null,
+                })
+                .where(
+                  and(
+                    eq(buildJobs.id, job!.id),
+                    inArray(buildJobs.status, ['queued', ...ACTIVE])
+                  )
+                )
               await this.cancel(deploymentId)
               return { status: 'rejected', reason } as const
             }

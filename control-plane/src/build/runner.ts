@@ -70,9 +70,8 @@ export type BuildResult = {
 /**
  * Multi-arch image builds (FR-3, tech doc §3).
  *
- * An interface with one honest implementation. Builds run centrally for v1 so
- * a Pi never has to compile anything; offloading to the most capable node in
- * the fleet is the documented later optimisation.
+ * Agent delegation is the default implementation. The original local Buildx
+ * implementation remains available as an explicit development/emergency fallback.
  */
 export interface BuildRunner {
   readonly name: string

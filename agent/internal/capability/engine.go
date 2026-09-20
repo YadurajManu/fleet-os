@@ -48,7 +48,7 @@ func LoadBuilderConfig(dir string) (BuilderConfig, error) {
 	if err = json.Unmarshal(b, &c); err != nil {
 		return c, fmt.Errorf("agent config.json: %w", err)
 	}
-	if c.MaxConcurrentBuilds < 1 || c.MaxConcurrentBuilds > 16 || c.CPU < 1 || c.MemoryBytes < 256<<20 || c.DiskBytes < 1<<30 || c.CacheBytes < 1<<30 || c.ReserveBytes < 1<<30 {
+	if c.MaxConcurrentBuilds < 1 || c.MaxConcurrentBuilds > 16 || c.CPU < 2 || c.MemoryBytes < 2<<30 || c.DiskBytes < 1<<30 || c.CacheBytes < 1<<30 || c.ReserveBytes < 1<<30 {
 		return c, fmt.Errorf("invalid builder resource limits")
 	}
 	return c, nil

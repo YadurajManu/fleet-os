@@ -669,6 +669,7 @@ export async function serviceRoutes(app: FastifyInstance) {
       const { service, fleetId, orgId } = await loadService(app, req.params as { serviceId: string })
       const { nodes: snapshot, placements, antiAffinityBy } = await fleetSnapshot(app.ctx, fleetId)
 
+      if (!body.image && !service.image) service.imagePlatforms = []
       let resolvedImage: string | undefined
       const requestedImage = body.image ?? service.image
       if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
@@ -849,6 +850,13 @@ export async function serviceRoutes(app: FastifyInstance) {
             finalImage = image!
           }
 
+          if (app.ctx.config.BUILD_MODE === 'agent') {
+            const fresh = await fleetSnapshot(app.ctx,fleetId)
+            const [currentService] = await db.select().from(services).where(eq(services.id,service.id))
+            const current = place(toServiceSpec(currentService!),fresh.nodes,fresh.placements,fresh.antiAffinityBy)
+            if (current.outcome !== 'placed') throw new Error(current.summary)
+            if (current.nodeId !== decision.nodeId) throw new Error('placement changed while building; retry the deployment against current capacity')
+          }
           await phases.set('scheduling')
           // Allocated per node, so the ingress proxy has somewhere to send
           // traffic. An internal service gets none on purpose: publishing a port
