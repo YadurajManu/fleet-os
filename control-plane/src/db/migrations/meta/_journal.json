@@ -169,6 +169,13 @@
       "when": 1788795443780,
       "tag": "0023_github_oauth",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788795443781,
+      "tag": "0024_agent_build_jobs",
+      "breakpoints": true
     }
   ]
 }
