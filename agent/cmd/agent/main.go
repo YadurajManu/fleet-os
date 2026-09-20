@@ -43,6 +43,16 @@ var Version = "dev"
 var errUpgradeStaged = errors.New("a verified agent upgrade is staged")
 
 func main() {
+	if handled, err := upgrade.RunHelper(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "agent update:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if dispatchService() {
+		return
+	}
 	err := run()
 	if errors.Is(err, errUpgradeStaged) {
 		// Non-zero on purpose: Restart=on-failure. See ExitUpgradeStaged.
@@ -103,6 +113,7 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	serviceStopHook(stop)
 
 	saved, err := state.Load(*statePath)
 	if err != nil {

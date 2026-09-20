@@ -93,7 +93,7 @@ func FromDockerInfo(body []byte) (EngineReport, string, error) {
 func DockerCommand(ctx context.Context, args ...string) *exec.Cmd {
 	path := "docker"
 	if _, err := exec.LookPath(path); err != nil {
-		for _, candidate := range []string{"/usr/local/bin/docker", "/Applications/Docker.app/Contents/Resources/bin/docker"} {
+		for _, candidate := range []string{"/usr/local/bin/docker", "/Applications/Docker.app/Contents/Resources/bin/docker", `C:\Program Files\Docker\Docker\resources\bin\docker.exe`} {
 			if _, err := os.Stat(candidate); err == nil {
 				path = candidate
 				break
