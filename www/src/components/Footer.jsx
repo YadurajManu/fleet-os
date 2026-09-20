@@ -201,7 +201,7 @@ export default function Footer() {
             ))}
             <span className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--color-fg-dim)]">
               <StatusDot size={5} />
-              fleet-os.dev
+              fleet.plastikworld.xyz
             </span>
             <BackToTop />
           </div>

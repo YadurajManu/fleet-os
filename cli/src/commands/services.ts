@@ -4,7 +4,7 @@ import { request, streamRequest, requireFleet, CliError, EXIT } from '../api.js'
 import { c, table, statusColour, keyValues, relativeTime, mb } from '../render.js'
 import { task, glyph } from '../ui.js'
 import { withLadder } from '../ladder.js'
-import { ask, canPrompt, confirm, selectOrThrow } from '../prompt.js'
+import { confirm } from '../prompt.js'
 import {
   DEPLOY_STEPS,
   follow,
@@ -309,8 +309,6 @@ async function confirmDeploy(): Promise<boolean> {
     rl.close()
   }
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /**
  * The deploy request returns once the image exists and a node has been chosen.
@@ -835,7 +833,15 @@ async function reviewed(
             ...(parts ? { parts } : {}),
           },
         }),
-      { done: () => (answers ? 'done' : 'reviewed') }
+      {
+        done: () => (answers ? 'done' : 'reviewed'),
+        hints: [
+          'the control plane is reading your repo structure',
+          'matching services against known framework patterns',
+          'checking port assignments and health check paths',
+          'validating database connection strings',
+        ],
+      }
     )
 
   let map: string
@@ -1001,7 +1007,15 @@ export const diagnoseCommand = {
           },
         }),
       // What it looked at, so the wait is legible rather than a spinner.
-      { done: (r) => ('calls' in r ? `looked at ${r.calls.length} thing(s)` : 'done') }
+      {
+        done: (r) => ('calls' in r ? `looked at ${r.calls.length} thing(s)` : 'done'),
+        hints: [
+          'reading service logs and deployment history',
+          'checking node health and resource usage',
+          'inspecting network and ingress configuration',
+          'reviewing the manifest for configuration issues',
+        ],
+      }
     )
 
     if (flags.json) return console.log(JSON.stringify(body, null, 2))

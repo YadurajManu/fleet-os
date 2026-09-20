@@ -248,6 +248,14 @@ export const doctorCommand = {
         .filter((service): service is { name: string; hostname: string } => Boolean(service.hostname))
       const ingress = await Promise.all(urls.map(async (service) => ({ ...service, ...(await reach(`https://${service.hostname}`)) })))
       return { identity: identity.body, fleet: fleet.body, nodes: nodes.body.nodes, services: services.body.services, github: github.body, health: health.body, alerts: alerts.body.rules, deploymentHistory, ingress }
+    }, {
+      hints: [
+        'checking node heartbeats and agent versions',
+        'verifying Docker daemon and registry auth on each node',
+        'scanning for failed or unreachable services',
+        'testing ingress reachability for public services',
+        'reviewing recent deployment failures',
+      ],
     })
 
     const checks: Check[] = [

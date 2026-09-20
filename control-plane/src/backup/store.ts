@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
-import { join, resolve, sep } from 'node:path'
+import { resolve, sep } from 'node:path'
 import { and, desc, eq, inArray, lt } from 'drizzle-orm'
 import { backups, deployments, restores, services } from '../db/schema.js'
 import { ApiError } from '../api/errors.js'

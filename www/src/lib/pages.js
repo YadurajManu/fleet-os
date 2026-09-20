@@ -762,7 +762,7 @@ export const PAGES = {
     updated: '10 Aug 2026',
     blocks: [
       H('Reporting a vulnerability'),
-      P('Send details to security@fleet-os.dev. We acknowledge within one business day and aim to have a fix or a mitigation within fourteen days for anything exploitable. We will not pursue legal action against good-faith research that avoids privacy violations, data destruction and service degradation.'),
+      P('Send details to security@fleet.plastikworld.xyz. We acknowledge within one business day and aim to have a fix or a mitigation within fourteen days for anything exploitable. We will not pursue legal action against good-faith research that avoids privacy violations, data destruction and service degradation.'),
 
       H('Credentials'),
       L([
@@ -817,10 +817,10 @@ export const PAGES = {
     updated: '01 Aug 2026',
     blocks: [
       { t: 'kv', rows: [
-        ['support@fleet-os.dev', 'Anything broken, confusing or missing. Include your fleet name and a rough timestamp.'],
-        ['security@fleet-os.dev', 'Vulnerability reports. See the security page for the disclosure process.'],
-        ['hello@fleet-os.dev', 'Partnerships, press, and questions that do not fit anywhere else.'],
-        ['privacy@fleet-os.dev', 'Data access, correction and deletion requests.'],
+        ['support@fleet.plastikworld.xyz', 'Anything broken, confusing or missing. Include your fleet name and a rough timestamp.'],
+        ['security@fleet.plastikworld.xyz', 'Vulnerability reports. See the security page for the disclosure process.'],
+        ['hello@fleet.plastikworld.xyz', 'Partnerships, press, and questions that do not fit anywhere else.'],
+        ['privacy@fleet.plastikworld.xyz', 'Data access, correction and deletion requests.'],
       ]},
       H('Before you write in'),
       L([
@@ -842,11 +842,11 @@ export const PAGES = {
     blocks: [
       { t: 'links', items: [
         ['Discord', 'https://discord.gg/fleet-os', 'Day-to-day help, #placement-help and #show-your-fleet. Fastest route to an answer.'],
-        ['GitHub', 'https://github.com/fleet-os/fleet-os', 'Agent, CLI and the source-available control plane. Issues and discussions live here.'],
+        ['GitHub', 'https://github.com/YadurajManu/fleet-os', 'Agent, CLI and the source-available control plane. Issues and discussions live here.'],
+        ['GitHub Discussions', 'https://github.com/YadurajManu/fleet-os/discussions', 'Architecture ideas, RFCs, and questions with the maintainers.'],
         ['r/selfhosted', 'https://reddit.com/r/selfhosted', 'The broader self-hosting community. Not ours, and better for it.'],
         ['Homelab showcase', '/community', 'Fleet layouts people have posted — what they run, on what, and why.'],
         ['Support forum', '/contact', 'Longer-form troubleshooting threads that outlive a chat scroll.'],
-        ['Bluesky', 'https://bsky.app/profile/fleet-os.dev', 'Release notes and the occasional debugging story.'],
       ]},
       H('House rules'),
       L([
@@ -867,10 +867,10 @@ export const PAGES = {
     updated: '20 Aug 2026',
     blocks: [
       { t: 'links', items: [
-        ['fleet-os/fleet-os', 'https://github.com/fleet-os/fleet-os', 'Monorepo: control plane, agent, dashboard, CLI.'],
-        ['fleet-os/agent', 'https://github.com/fleet-os/fleet-os', 'Go agent. Static binaries for arm64, armv7 and amd64.'],
-        ['fleet-os/cli', 'https://github.com/fleet-os/fleet-os', 'The fleet command.'],
-        ['fleet-os/examples', 'https://github.com/fleet-os/fleet-os', 'Worked fleet.yaml files for common homelab setups.'],
+        ['YadurajManu/fleet-os', 'https://github.com/YadurajManu/fleet-os', 'Monorepo: control plane, agent, dashboard, CLI.'],
+        ['agent', 'https://github.com/YadurajManu/fleet-os/tree/main/agent', 'Go agent. Static binaries for arm64, armv7 and amd64.'],
+        ['cli', 'https://github.com/YadurajManu/fleet-os/tree/main/cli', 'The fleet command.'],
+        ['docs', 'https://github.com/YadurajManu/fleet-os/tree/main/docs', 'Documentation and guides.'],
       ]},
       H('Repository layout'),
       { t: 'code', lang: 'text', lines: [
@@ -934,7 +934,7 @@ export const PAGES = {
         'Portability — export your fleet configuration and event history as JSON at any time from the dashboard.',
         'Objection — object to processing that relies on legitimate interests.',
       ]),
-      P('Write to privacy@fleet-os.dev. We respond within thirty days, and usually much sooner. If you are unhappy with the response you may complain to your local data protection authority.'),
+      P('Write to privacy@fleet.plastikworld.xyz. We respond within thirty days, and usually much sooner. If you are unhappy with the response you may complain to your local data protection authority.'),
 
       H('Cookies'),
       P('One first-party session cookie, required to keep you signed in. One preference cookie for your theme. No analytics cookies, no third-party cookies, and therefore no consent banner to dismiss.'),
@@ -981,7 +981,7 @@ export const PAGES = {
       P('Your fleet configuration, logs and event history remain yours. We process them only to run the service, as described in the privacy notice. You can export them at any time. On cancellation we retain them for thirty days so you can change your mind, then delete them.'),
 
       H('6. Availability'),
-      P('We target 99.9% monthly availability for the hosted control plane and publish status at status.fleet-os.dev. Planned maintenance is announced in advance. A control-plane outage does not stop already-running containers on your nodes — agents keep them running and reconcile when connectivity returns.'),
+      P('We target 99.9% monthly availability for the hosted control plane and publish status at fleet.plastikworld.xyz/#/status. Planned maintenance is announced in advance. A control-plane outage does not stop already-running containers on your nodes — agents keep them running and reconcile when connectivity returns.'),
 
       H('7. Suspension'),
       P('We may suspend an account for non-payment after notice, or immediately where continued operation would be unlawful or would endanger the service for others. We will tell you why, and restore access once the cause is resolved.'),

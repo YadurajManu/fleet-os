@@ -1,137 +1,123 @@
 # Architecture
 
-Fleet OS has a stateful control plane and a deliberately small node agent. The control plane is the source of truth for identity, manifests, deployments, placement decisions, and ingress routes. Agents are execution points: they discover local capabilities, send outbound telemetry, and reconcile the containers assigned to them.
+Fleet OS uses a stateful control plane to coordinate Linux containers on user-owned machines. Agents initiate outbound HTTPS and WSS connections, report Docker engine capabilities, and reconcile assigned workloads. Opted-in agents also execute builds. This document describes the implementation on main; deployment verification and release status are separate in the [handover](delegated-builds-handover.md).
+
+## Components and connections
 
 ```mermaid
-flowchart LR
-  Dev[Developer\ngit push / CLI] --> API[Fastify control plane]
-  API --> DB[(Postgres\nusers fleets services deployments)]
-  API --> Redis[(Redis\nheartbeats progress locks)]
-  API --> Build[Docker Buildx + registry]
-  API --> Ingress[Ingress edge]
-  API <-->|outbound HTTPS| A1[Go agent\nRaspberry Pi]
-  API <-->|outbound HTTPS| A2[Go agent\nlaptop]
-  API <-->|outbound HTTPS| A3[Go agent\nVPS]
-  A1 --> D1[Docker]
-  A2 --> D2[Docker]
-  A3 --> D3[Docker]
-  Ingress --> A1
-  Ingress --> A2
-  Ingress --> A3
+flowchart TB
+  CLI[CLI / dashboard] --> API[Fastify API]
+  GitHub[GitHub App webhook] --> API
+  API --> PG[(Postgres: desired state and build jobs)]
+  API --> Redis[(Redis: heartbeat snapshots, progress and logs)]
+  API --> Planner[Platform planner and scheduler]
+  Agent[Go agent] -->|outbound WSS connection| API
+  Planner -.->|assignment on existing connection| Agent
+  Agent --> BuildKit[Per-job BuildKit worker]
+  BuildKit -->|HTTPS scoped push| Gateway[Direct TLS /v2/ gateway]
+  Gateway --> Registry[Private registry]
+  Agent -->|authenticated digest pull| Registry
+  Agent --> Docker[Docker Engine: Linux containers]
+  Public[Public app request] --> Caddy[Caddy / ingress edge]
+  Caddy --> Proxy[Control-plane ingress proxy]
+  Proxy -.->|request on existing WSS tunnel| Agent
+  Agent --> Docker
 ```
 
-## Control plane
+Dashed arrows are messages carried over the connection the agent already opened, not new inbound connections to the worker. The control plane, ingress, and registry need public or otherwise reachable endpoints. Application ingress uses the reverse tunnel when available; a direct reachable node route remains a fallback. NAT traversal is implemented, not a future mesh feature. The current HTTP tunnel encodes request/response bodies; it should not be assumed to provide arbitrary streaming transport.
 
-The Fastify service exposes the REST API used by the CLI, dashboard, agents,
-and GitHub webhook. Drizzle persists users, organizations, fleets, nodes,
-services, deployments, placement events, secrets, and audit records in
-Postgres. Redis stores short-lived heartbeat payloads and build-progress lines;
-loss of Redis costs a liveness interval, not deployment history.
+| Component | Responsibilities | Source |
+| --- | --- | --- |
+| Control plane | Auth, organizations/fleets, manifests, build orchestration, placement, ingress, audit | `control-plane/src/` |
+| Go agent | Engine discovery, heartbeats, tunnels, Docker reconciliation, opted-in builds | `agent/` |
+| Postgres | Durable nodes, services, deployments, build attempts, encrypted secrets, audit | `control-plane/src/db/` |
+| Redis | Ephemeral heartbeats, progress/log retention and pub/sub | `control-plane/src/api/` |
+| CLI/dashboard | API clients, deployment operations, log consumption | `cli/`, `dashboard/` |
+| Caddy/registry | TLS ingress and container image storage | `deploy/` |
 
-Builds run centrally through Docker Buildx. A build produces tags for every
-architecture represented by eligible nodes, pushes them to the configured
-registry, and only then changes the deployment into the agent-visible
-`deploying` phase.
+## Agent registration and platform model
 
-## Agent and node lifecycle
+Pairing uses a single-use token; the resulting agent identity is persisted locally. Heartbeats report liveness, runtime diagnostics, containers and capabilities; desired-state polling drives reconciliation. Build messages use the persistent WSS tunnel.
 
-1. An authenticated user requests a pairing token. It is single-use and expires
-   after ten minutes; only its hash is stored.
-2. The installer downloads the matching static binary, detects OS and
-   architecture, and calls `/agent/register`.
-3. Registration records capabilities and returns a long-lived agent token. The
-   agent stores that token in its local state file and starts its supervisor.
-4. Every heartbeat reports CPU, RAM, disk, containers, Docker runtime data,
-   registry-pull status, and bounded log tails. The agent also polls
-   `/agent/desired-state` and reconciles Docker to that state.
+Container platforms come from Docker's `OSType`, `Architecture`, `NCPU`, and `MemTotal`, not the host Go runtime architecture. They normalize to `linux/amd64`, `linux/arm64`, or `linux/arm/v7`. Docker Desktop capacity is the Linux VM's allocation. A Docker engine in Windows-container mode is refused with “Switch Docker Desktop to Linux containers”.
 
-Agents make outbound connections only. Ingress can reach a node using its
-advertised address; deployments spanning NAT boundaries require a reachable
-LAN address today (mesh transport is an explicit future extension).
+Host executable targets and container platforms are distinct: a Darwin/arm64 agent controls a Linux/arm64 Docker engine. Builds exist for Darwin arm64/amd64, Linux amd64/arm64/armv7, and Windows amd64. Cross-compilation does not establish runtime verification on every OS.
 
-## Liveness and health
+New capability fields are optional for old agents. Agents without build capabilities cannot become builders; their legacy architecture remains available for workload placement compatibility. The schema changes are additive; see migrations 0024, 0025 and 0026 and the [build guide](agent-delegated-builds.md).
 
-Heartbeat payloads are written to a Redis TTL key and a per-fleet sorted set.
-The sweeper queries the sorted set using the fleet interval and miss threshold.
-Nodes are marked offline only on a state transition; cordoned nodes are not
-swept. A persisted Postgres timestamp is used as a restart-safe fallback when
-one exists, while Redis remains authoritative for fresh heartbeats.
+## Build orchestration
 
-Runtime telemetry is advisory but concrete: Docker availability and version,
-the last image-pull result, disk pressure, and the latest reconciliation error
-are displayed by `fleet doctor` and the dashboard Doctor page. Stale telemetry
-is never presented as a current healthy reading.
+`deploy.ts` calls the existing `BuildRunner` abstraction. `BUILD_MODE=agent` selects the delegated implementation; `BUILD_MODE=local` retains the control-plane Buildx implementation. Changing the mode requires restarting the control plane. Registry-only `imagetools inspect/create` still run on the control plane in agent mode.
 
-## Placement
+1. Resolve requested platforms. `platforms: auto` uses distinct platforms of healthy, placement-eligible nodes; explicit platform lists are also supported.
+2. Create one durable build job per platform. Select an opted-in, connected builder with capacity and a concurrency slot. Native builders are preferred; affinity, capacity, load and reliability influence selection.
+3. Reserve resources and assign the job over WSS. Assignment includes the exact source, platform, resource limits, scoped credentials and attempt identity.
+4. The agent runs BuildKit, streams build logs, pushes its image, and returns a digest. For multiple platforms, reuse the existing manifest assembly path.
+5. Deploy by immutable image digest. Prebuilt `image:` services skip building but still resolve a digest and manifest platforms.
 
-Placement is a pure filter-and-rank decision over a fleet snapshot:
+Uploaded CLI contexts use expiring source-download grants and SHA-256 verification. GitHub sources use an exact commit and a fresh repository-scoped installation token. Build inputs include a keyed secret digest for cache identity; successful matching input/platform jobs can reuse a recorded digest. The cache does not currently revalidate images removed externally from the registry.
 
-1. Filter offline/cordoned nodes, architecture, RAM, GPU, reliability tier,
-   required tags, pinning, volumes, affinity, and anti-affinity.
-2. Return every rejection with a reason instead of hiding the first failure.
-3. Rank survivors by memory headroom, reliability, and load. Ties are
-   deterministic, so repeated decisions do not flap between nodes.
+Jobs carry attempt and node identity, a 45-second lease, renewal every 10 seconds, cancellation and result acknowledgment. Expired attempts can retry up to three attempts total. Node/attempt fencing rejects stale results; restart/orphan handling prevents indefinite running jobs. This uses single-control-plane tunnel ownership, not distributed leader election.
 
-`flexible` services may move, `preferred` services favour a node but can move,
-and `pinned` services never move. A persistent volume anchors a service to its
-node. `fleet where <service>` exposes the same candidates, scores, and
-rejections used by the scheduler.
+`ALLOW_QEMU_FALLBACK` is disabled by default. If enabled, an amd64 builder can be considered when no native builder exists, with QEMU/binfmt configured separately. This differs from an app's `allow_emulation` setting for runtime placement.
 
-## Deployment flow
+## Registry and source trust boundaries
+
+The dedicated `fleetbuilds.<INGRESS_ZONE>` hostname terminates direct TLS and forwards `/v2/*` to the control-plane registry gateway. Its purpose is to avoid the upload-size limits of a proxied application hostname.
+
+The builder receives a signed, short-lived credential bound to one active job attempt, node and repository. The gateway retains upstream registry credentials, validates job liveness, streams uploads, rewrites upload locations and rejects other repositories and cross-repository blob mounts. Source-download grants cannot be used as push credentials. Finished or expired attempts lose access.
+
+These are build-transfer controls, not a claim that Docker builds safely isolate hostile tenants. Agents have Docker access; opt in trusted machines and trusted source. Registry authentication, TLS, agent credentials and control-plane authorization remain part of the security boundary. General application traffic over WSS and streaming registry uploads are separate paths.
+
+## Builder resource and disk policy
+
+Building is opt-in through `config.json` beside `agent.json`. Defaults: one concurrent build, two CPUs, 2 GiB memory, 20 GiB build disk budget and 10 GiB retained cache. Smaller disk budgets are configurable. Selection accounts for reservations alongside ordinary workload placement.
+
+Preflight requires free space for the build budget plus a reserve of at least 5 GiB or 10% of capacity, whichever is larger. Host and engine filesystems are measured independently; the tighter headroom governs eligibility. Heartbeats report budget, free space and reserve for builder selection.
+
+The agent polls disk use every three seconds. A budget or reserve violation cancels the solve and fails it with a disk-related reason, then prunes scoped cache. Cache retention is separately bounded, including after cancellation. This is a monitored budget, not a hard filesystem quota; it can overshoot between polls. Docker Desktop's VM disk file may grow without automatically shrinking. Fleet does not run a global system/volume prune.
+
+## Workload placement
+
+Placement filters offline/cordoned nodes, image platforms, app constraints, effective CPU/RAM, GPU, tags, reliability tier, pinning, volumes, affinity and anti-affinity. Execution on an incompatible architecture is excluded unless emulation is explicitly allowed. Docker Desktop deployments reject host networking and bind mounts; use named volumes.
+
+Surviving nodes are ranked by headroom, reliability and load with deterministic tie-breaking. `flexible` services can move; `preferred` services favour a node but permit alternatives; `pinned` services stay with their node. A local persistent volume anchors its service. `fleet where` exposes placement candidates and rejection reasons.
+
+## Deployment and rollout
 
 ```mermaid
 sequenceDiagram
-  participant C as CLI/dashboard
+  participant C as CLI / GitHub
   participant P as Control plane
-  participant R as Registry
-  participant A as Agent
-  C->>P: POST /services/:id/deploy
-  P->>P: placement preview
-  P->>P: queued → building
-  P->>R: Buildx build and push
-  P->>P: scheduling → deploying
-  P-->>C: deployment id and URL
-  A->>P: heartbeat + desired-state poll
-  A->>R: pull image
-  A->>A: replace/start container
-  A->>P: running heartbeat
+  participant B as Builder agent
+  participant R as Gateway / registry
+  participant A as Runtime agent
+  C->>P: Uploaded context or exact Git commit
+  P->>P: Plan platforms and persist jobs
+  P->>B: Build assignment over agent-opened WSS
+  B->>B: BuildKit solve with resource limits
+  B->>R: Scoped image push
+  B->>P: Digest, logs and result
+  P->>P: Assemble manifest if needed; schedule digest
+  A->>P: Poll desired state
+  A->>R: Pull immutable digest
+  A->>A: Start container and evaluate health
+  A->>P: Heartbeat runtime/health evidence
+  P->>P: Promote rollout and update ingress
 ```
 
-The CLI follows the deployment progress endpoint while the request is active,
-so its ladder reports real server phases rather than guessed spinner labels.
-Failed builds remain as failed deployment rows with a sanitized reason. A
-sweeper marks abandoned pre-deploy rows failed after the configured build
-timeout plus slack.
+Builder and runtime agent may be different nodes. Build logs and bounded container log tails reach Redis/SSE; main's CLI `logs --follow` consumes the stream. One-shot logs read container tails. Published CLI versions may lag this behavior.
 
-## Rollouts
+During a stateless replacement, the old `running` deployment remains routed while the new one is `deploying`. Health evidence promotes the new deployment and supersedes the old in a transaction. A failed build or an unhealthy replacement leaves the previous healthy release serving. Without a configured health check, promotion uses container running state, which is weaker evidence.
 
-A deploy does not take the previous release out of service. Both rows are live
-for the length of the rollout: the old one `running`, the new one `deploying`.
-Ingress prefers the `running` row, so traffic keeps reaching the release that
-has proved it works while its replacement is pulled and started.
+Persistent-volume services replace in place to avoid concurrent writers, so downtime is possible. Rollback is an operational workflow, not a guarantee of instantaneous or zero-downtime replacement. A known CLI issue can report an old running deployment after a new build fails; inspect deployment history for the specific attempt.
 
-Promotion happens in the heartbeat, and only on evidence. Where the service has
-a health check, Docker's own verdict decides — a container whose process
-started and fails every request is not a successful deploy. Promotion is the
-cutover: the new row becomes `running` and the old one is superseded in the
-same transaction, the route is invalidated, and the node removes the old
-container once it drops out of desired state.
+## Liveness, failover and operational limits
 
-A replacement that never reports healthy is failed by the sweeper after the
-rollout window, and the release that works is left running. Nothing has to be
-rolled back, because nothing was taken away.
+Redis holds current heartbeat snapshots; persisted timestamps support restart recovery. Offline transitions trigger placement evaluation: flexible services may move to eligible capacity; pinned services report unavailability and remain associated with their data node. Recovery honors the reclaim policy. Local volumes are not automatically replicated by this process.
 
-Two exceptions, both deliberate. A service with a persistent volume supersedes
-its predecessor immediately and is replaced in place: two processes writing one
-volume corrupt it, and a moment offline is recoverable where that is not. And a
-service with no health check is promoted on the running state, because that is
-the only evidence there is.
+The architecture is a stateful, single-control-plane design. A control-plane outage interrupts new deployments and can interrupt public ingress, even when Docker containers continue running. Back up Postgres, registry state and the secrets master key; retain known-good images before migrations or deployments.
 
-## Failover
+Self-update is governed by fleet policy and the control plane's published binary/checksum source. The updater currently compares checksums, not semantic versions; an older published binary can replace a newer manually installed binary. Windows uses a helper and previous-executable backup flow, but Windows runtime update verification remains outstanding. Do not infer safe upgrade behavior from version labels alone.
 
-When a node transitions offline, the control plane evaluates each live
-deployment there. Flexible services receive a new placement and deployment;
-the old row becomes `superseded`, preserving the timeline. Pinned services
-become `pinned_unavailable`, raise a distinct event, and remain associated with
-their node until it returns. On recovery, the reclaim policy (`eager`, `idle`,
-or `manual`) determines whether preferred workloads move back.
+For operator commands and rollout evidence, use the [handover](delegated-builds-handover.md). For configuration, protocol details and recovery planning, use the [delegated-build guide](agent-delegated-builds.md).

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import QRCode from 'qrcode'
 import { api } from '../lib/api'
-import { Button, Copyable, Dot, ErrorNote, Field, Panel } from './ui'
+import { Button, Copyable, Dot, ErrorNote, Panel } from './ui'
 
 export default function TwoFactorSettings({
   enabled,

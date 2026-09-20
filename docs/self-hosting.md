@@ -1,7 +1,16 @@
 # Self-hosting Fleet OS
 
-Everything runs on one machine you own. Cloudflare Tunnel puts it on the
-internet without forwarding a port or exposing anything on your router.
+The control-plane services can run on one machine you own. Worker agents
+connect outbound and can run elsewhere. Cloudflare Tunnel can expose application
+traffic; delegated build uploads use a separate direct-TLS registry gateway.
+
+> Current main defaults to `BUILD_MODE=agent`. Before source builds, configure
+> the direct build gateway and opt in a builder using the
+> [delegated-build setup guide](agent-delegated-builds.md). That gateway needs a
+> reachable TLS endpoint and DNS-only hostname; the application tunnel alone
+> does not provide it. Set `BUILD_MODE=local` explicitly if you are setting up
+> the existing control-plane Buildx fallback. Prebuilt-image deployments do not
+> require a builder.
 
 ## What you need
 

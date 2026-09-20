@@ -65,7 +65,7 @@ function summarise(reason: string): { head: string; rest: string | null } {
   const rest = lines.length > 1 ? lines.slice(1).join('\n') : null
   return { head: head.length > 200 ? `${head.slice(0, 197)}…` : head, rest }
 }
-import { Button, ConfirmDialog, Copyable, Dot, Empty, ErrorNote, Panel, StatusPill } from '../components/ui'
+import { Button, ConfirmDialog, Dot, Empty, ErrorNote, Panel, StatusPill } from '../components/ui'
 import DeployProgress from '../components/DeployProgress'
 import ExplainFailure from '../components/ExplainFailure'
 import PastFailures from '../components/PastFailures'

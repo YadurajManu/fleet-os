@@ -409,10 +409,10 @@ export default function Founder() {
 
               <Reveal i={3} className="mt-9 flex flex-wrap items-center gap-x-6 gap-y-3">
                 <a
-                  href="mailto:hello@fleet-os.dev"
+                  href="mailto:hello@fleet.plastikworld.xyz"
                   className="group font-mono text-[13.5px] text-[var(--color-signal)]"
                 >
-                  <span className="link-draw">hello@fleet-os.dev</span>
+                  <span className="link-draw">hello@fleet.plastikworld.xyz</span>
                 </a>
                 <a
                   href="https://github.com/YadurajManu"

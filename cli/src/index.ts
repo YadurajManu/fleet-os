@@ -2,8 +2,10 @@
 import { pathToFileURL } from 'node:url'
 import { realpathSync } from 'node:fs'
 import { CliError, EXIT } from './api.js'
-import { c } from './render.js'
+import { loadProfile } from './config.js'
+import { c, unicode, visibleLength } from './render.js'
 import { banner } from './mark.js'
+import { suggest } from './suggestions.js'
 import { commands, type Command } from './commands/index.js'
 import { parseArgs, KNOWN_FLAGS, nearestFlag, type Flags } from './args.js'
 
@@ -103,7 +105,42 @@ const TERM_WIDTH = Math.max(
 const definitions = (rows: Array<[string, string]>): string =>
   rows.map(([term, gloss]) => `  ${term.padEnd(TERM_WIDTH)}   ${c.dim(gloss)}`).join('\n')
 
-const usage = (): string =>
+export function welcomeBox(): string {
+  const tl = unicode ? '┌' : '+'
+  const tr = unicode ? '┐' : '+'
+  const bl = unicode ? '└' : '+'
+  const br = unicode ? '┘' : '+'
+  const h = unicode ? '─' : '-'
+  const v = unicode ? '│' : '|'
+
+  const lines = [
+    '',
+    c.bold('First time? Start here:'),
+    '',
+    `${c.bold(c.signal('1.'))} fleet auth login --api https://your-cp:8080`,
+    `${c.bold(c.signal('2.'))} fleet nodes pair`,
+    `${c.bold(c.signal('3.'))} fleet up`,
+    '',
+    `Docs: ${c.dim('https://fleet.plastikworld.xyz/#/docs')}`,
+    '',
+  ]
+
+  const contentWidth = Math.max(...lines.map((l) => visibleLength(l)), 49)
+  const innerWidth = contentWidth + 4 // 2 spaces padding on left, at least 2 on right
+
+  const top = `  ${c.signal(tl + h.repeat(innerWidth) + tr)}`
+  const bottom = `  ${c.signal(bl + h.repeat(innerWidth) + br)}`
+  const vBorder = c.signal(v)
+
+  const formattedLines = lines.map((line) => {
+    const pad = ' '.repeat(Math.max(0, innerWidth - visibleLength(line) - 2))
+    return `  ${vBorder}  ${line}${pad}${vBorder}`
+  })
+
+  return [top, ...formattedLines, bottom].join('\n')
+}
+
+export const usage = (showWelcome = false): string =>
   [
     banner('deploy to hardware you own'),
     '',
@@ -114,6 +151,7 @@ const usage = (): string =>
     definitions(OPTIONS),
     '',
     c.dim('exit codes  0 ok · 1 failure · 2 usage · 3 no eligible node · 4 health check failed'),
+    ...(showWelcome ? ['', welcomeBox()] : []),
     '',
   ].join('\n')
 
@@ -133,8 +171,11 @@ async function main() {
     process.exit(EXIT.ok)
   }
 
+  const profile = await loadProfile()
+  const isFirstRun = !profile.api && !profile.accessToken
+
   if (!name || flags.help || flags.h) {
-    console.log(usage())
+    console.log(usage(isFirstRun))
     // A bare `fleet` is someone asking what this is, not a malformed command.
     process.exit(EXIT.ok)
   }
@@ -179,21 +220,38 @@ if (invokedDirectly) {
 }
 
 function onError(err: unknown) {
+  const arrow = unicode ? '↳' : '->'
   if (err instanceof CliError) {
     console.error(`${c.red('error')}  ${err.message}`)
+    let fullDetail = err.message
     if (err.detail) {
       const lines = Array.isArray(err.detail) ? err.detail : [err.detail]
       for (const line of lines) {
-        console.error(
-          '  ' +
-            (typeof line === 'string'
-              ? line
-              : `${(line as { path?: string }).path ?? ''} ${(line as { message?: string }).message ?? JSON.stringify(line)}`)
-        )
+        const text =
+          typeof line === 'string'
+            ? line
+            : `${(line as { path?: string }).path ?? ''} ${(line as { message?: string }).message ?? JSON.stringify(line)}`
+        console.error('  ' + text)
+        fullDetail += ' ' + text
+      }
+    }
+    const hints = suggest(fullDetail)
+    if (hints && hints.length > 0) {
+      console.error('')
+      for (const hint of hints) {
+        console.error(`  ${c.dim(arrow)} ${c.dim(hint)}`)
       }
     }
     process.exit(err.exitCode)
   }
-  console.error(`${c.red('error')}  ${err instanceof Error ? err.message : String(err)}`)
+  const msg = err instanceof Error ? err.message : String(err)
+  console.error(`${c.red('error')}  ${msg}`)
+  const hints = suggest(msg)
+  if (hints && hints.length > 0) {
+    console.error('')
+    for (const hint of hints) {
+      console.error(`  ${c.dim(arrow)} ${c.dim(hint)}`)
+    }
+  }
   process.exit(EXIT.failure)
 }

@@ -27,7 +27,7 @@ const SCRIPT = [
   { kind: 'cmd', text: 'git push fleet main' },
   { kind: 'dim', text: 'remote: build 4f1c9ae · buildx · linux/arm64 linux/amd64' },
   { kind: 'dim', text: 'remote: layers cached 11/14 · 38.2s' },
-  { kind: 'dim', text: 'remote: pushed registry.fleet-os.dev/homelab/web:4f1c9ae' },
+  { kind: 'dim', text: 'remote: pushed registry.fleet.plastikworld.xyz/homelab/web:4f1c9ae' },
   { kind: 'ok', text: 'remote: schedule web → node-01 home-server (score 0.92)' },
   { kind: 'ok', text: 'remote: health   GET /healthz  200  1.9s' },
   { kind: 'ok', text: 'remote: live     https://web.yourdomain.dev' },

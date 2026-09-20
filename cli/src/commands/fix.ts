@@ -164,7 +164,16 @@ export const fixCommand = {
             s.update(`[${p.step}/${p.maxSteps}] looking at ${c.bold(p.tool)}${argText} (${Math.round(p.elapsedMs / 1000)}s)`)
           },
         }),
-      { done: () => 'investigation complete' }
+      {
+        done: () => 'investigation complete',
+        hints: [
+          'reading recent deploy logs and container output',
+          'comparing the manifest against live state',
+          'checking node capacity and scheduling constraints',
+          'reviewing health check configuration',
+          'generating a fix hypothesis',
+        ],
+      }
     )
 
     if (found.status !== 'ok') {

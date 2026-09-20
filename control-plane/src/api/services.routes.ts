@@ -8,7 +8,7 @@ import { parseManifest, unresolvedNodes, ManifestError } from '../manifest/parse
 import { syncManifest } from '../manifest/sync.js'
 import { place } from '../scheduler/placement.js'
 import { fleetSnapshot, toServiceSpec } from '../scheduler/snapshot.js'
-import { platformsFor, BuildUnavailableError } from '../build/runner.js'
+import { platformsFor } from '../build/runner.js'
 import {
   extractContext,
   disposeContext,
@@ -17,7 +17,7 @@ import {
   assertValidContextId,
   MAX_CONTEXT_BYTES,
 } from '../build/context.js'
-import { managedHostname, allocateHostPort, invalidateRoutesForService, invalidateRouteHosts } from '../ingress/routes.js'
+import { allocateHostPort, invalidateRoutesForService, invalidateRouteHosts } from '../ingress/routes.js'
 import { recordAudit } from '../lib/audit.js'
 import { resolveSecrets } from '../secrets/store.js'
 import { ApiError } from './errors.js'

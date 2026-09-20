@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/prerender.mjs && node scripts/generate-og.mjs",
+    "build": "vite build && node p/prerender.mjs && node p/generate-og.mjs",
     "preview": "vite preview",
-    "prerender": "node scripts/prerender.mjs",
-    "generate-og": "node scripts/generate-og.mjs",
+    "prerender": "node p/prerender.mjs",
+    "generate-og": "node p/generate-og.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {

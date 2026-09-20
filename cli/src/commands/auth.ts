@@ -163,7 +163,10 @@ async function browserAuth(profile: Profile): Promise<AuthResult> {
   })()
 
   const s = spinner('waiting for browser authentication...')
-  s.hints(['complete sign in in your browser window', 'press Ctrl+C to abort'])
+  s.hints([
+    'complete the sign-in in the browser window that just opened',
+    'if no browser opened, copy the URL above and paste it manually',
+  ])
 
   try {
     const result = await Promise.race([tokenPromise, pollPromise])

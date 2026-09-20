@@ -39,8 +39,6 @@ type Service = {
   current: { status: string } | null
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
 export const upCommand = {
   async run(args: string[], flags: Flags) {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
@@ -53,7 +51,6 @@ export const upCommand = {
         : join(rootDir, 'fleet.yaml')
 
     // ── Step 1: scaffold if needed ────────────────────────────────────
-    let needsApply = false
     try {
       await access(manifestPath)
     } catch {
@@ -76,7 +73,6 @@ export const upCommand = {
       // Write manifest
       await writeFile(manifestPath, manifestTemplate(name, d))
       console.log(`${glyph.ok} ${c.green('created')} ${manifestPath}  ${c.dim(`(${d.label})`)}`)
-      needsApply = true
     }
 
     // ── Step 2: read and apply the manifest ───────────────────────────

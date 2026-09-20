@@ -74,7 +74,13 @@ export const backupCommand = {
             { body: {} }
           )
         ).body.backup,
-      { done: (b) => `queued backup of ${b.volumeRef}` }
+      {
+        done: (b) => `queued backup of ${b.volumeRef}`,
+        hints: [
+          'the node performs the backup on its next poll cycle',
+          'large volumes are streamed in chunks to avoid memory pressure',
+        ],
+      }
     )
 
     console.log(`\n${glyph.ok} ${c.green('queued')}  ${c.bold(created.id.slice(0, 8))}`)
@@ -200,7 +206,13 @@ export const restoreCommand = {
             { body: {} }
           )
         ).body.restore,
-      { done: () => 'queued' }
+      {
+        done: () => 'queued',
+        hints: [
+          'the volume is written back incrementally',
+          'the service must be stopped for the duration of the restore',
+        ],
+      }
     )
 
     console.log(`\n${glyph.ok} ${c.green('queued')}  ${c.bold(started.id.slice(0, 8))}`)

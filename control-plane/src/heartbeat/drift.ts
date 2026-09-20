@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { deployments, services } from '../db/schema.js'
 import { evaluateCanaryHealth } from './watchdog.js'
 import type { AppContext } from '../api/context.js'
