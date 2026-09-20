@@ -1,0 +1,25 @@
+fleet: homelab
+services:
+  medlifecycle:
+    build: ./landing_page
+    placement: flexible
+    placement_constraint: { arch: arm64 }
+    container_port: 80
+    resources: { ram: 256Mi, cpu: 0.25 }
+    domain: medlifecycle.plastikworld.xyz
+  medlifecycle-api:
+    build: ./backend
+    placement: flexible
+    placement_constraint: { arch: arm64 }
+    container_port: 3100
+    resources: { ram: 512Mi, cpu: 0.5 }
+    domain: medlifecycle-api.plastikworld.xyz
+    uses: [medlifecycle-db]
+    env:
+      JWT_SECRET: ${secret:MEDLIFECYCLE_JWT_SECRET}
+      CORS_ALLOWED_ORIGINS: https://medlifecycle.plastikworld.xyz
+      PORT: "3100"
+databases:
+  medlifecycle-db:
+    engine: postgres
+    node: sayyestoheaven
