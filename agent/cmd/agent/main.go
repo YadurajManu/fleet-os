@@ -75,7 +75,11 @@ func run() error {
 	if *showCaps {
 		// Useful on its own: run this before pairing to see what the control
 		// plane is going to be told about the machine.
-		return printJSON(capability.Detect(Version))
+		report, err := capability.DetectEngine(context.Background(), Version)
+		if err != nil {
+			return err
+		}
+		return printJSON(report)
 	}
 
 	// Before anything else: a binary staged by a previous run is installed
@@ -163,9 +167,23 @@ func run() error {
 		log.Info("container runtime ready")
 	}
 
+	hostSampler := sampler.New(Version, engine, reporter)
+	var lastEngineCheck time.Time
+	hostSampler.EngineCapabilities = func(ctx context.Context) *capability.Report {
+		if time.Since(lastEngineCheck) < 30*time.Second {
+			return nil
+		}
+		lastEngineCheck = time.Now()
+		report, err := capability.DetectEngine(ctx, Version)
+		if err != nil {
+			log.Warn("Docker engine capability unavailable", "err", err)
+			return nil
+		}
+		return &report
+	}
 	loop := &heartbeat.Loop{
 		Client:   api,
-		Sampler:  sampler.New(Version, engine, reporter),
+		Sampler:  hostSampler,
 		Interval: interval,
 		Log:      log,
 	}
@@ -236,7 +254,10 @@ func register(ctx context.Context, log *slog.Logger, controlPlane, token, stateP
 			"no saved state and no pairing token: generate one in the dashboard and pass --token (or set FLEET_PAIRING_TOKEN)")
 	}
 
-	report := capability.Detect(Version)
+	report, err := capability.DetectEngine(ctx, Version)
+	if err != nil {
+		return nil, err
+	}
 	log.Info("detected capability",
 		"arch", report.Arch, "cores", report.CPUCores,
 		"ram_mb", report.RAMMb, "disk_mb", report.DiskMb, "gpu", report.GPU)

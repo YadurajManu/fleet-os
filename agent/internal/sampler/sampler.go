@@ -23,13 +23,14 @@ type Diagnostics interface {
 }
 
 type Host struct {
-	Version     string
-	Containers  ContainerLister
-	Diagnostics Diagnostics
+	EngineCapabilities func(context.Context) *capability.Report
+	Version            string
+	Containers         ContainerLister
+	Diagnostics        Diagnostics
 	// Where in-flight deploys have got to. Optional: nil on a node whose
 	// lister is not the reconcile engine.
-	Deploys     func() []client.DeployStage
-	totalRAMMb  int
+	Deploys    func() []client.DeployStage
+	totalRAMMb int
 
 	prevNet netMark
 }
@@ -72,6 +73,9 @@ func (h *Host) Sample(ctx context.Context) (client.Heartbeat, error) {
 		AgentVersion:  h.Version,
 		AdvertiseAddr: capability.AdvertiseAddr(),
 		Containers:    []client.Container{},
+	}
+	if h.EngineCapabilities != nil {
+		hb.Capabilities = h.EngineCapabilities(ctx)
 	}
 	if h.Deploys != nil {
 		hb.Deploys = h.Deploys()

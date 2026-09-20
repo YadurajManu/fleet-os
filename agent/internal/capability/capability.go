@@ -17,6 +17,7 @@ import (
 // Report is the payload sent to POST /agent/register. Field names are the
 // wire contract with the control plane — changing one is a breaking change.
 type Report struct {
+	*EngineReport
 	Arch         string `json:"arch"`
 	OS           string `json:"os"`
 	CPUCores     int    `json:"cpu_cores"`
