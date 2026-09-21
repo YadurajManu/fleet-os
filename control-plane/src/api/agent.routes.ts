@@ -130,7 +130,7 @@ const heartbeat = z.object({
     registry_error: z.string().max(1000).optional(),
     last_reconcile_error: z.string().max(2000).optional(),
   }).default({ docker_available: false, registry_status: 'not_tested' }),
-  logs: z.array(z.object({ service: z.string().max(128), text: z.string().max(32_000) })).max(50).default([]),
+  logs: z.array(z.object({ service: z.string().max(128), service_id: z.string().uuid().optional(), text: z.string().max(32_000) })).max(50).default([]),
 })
 
 /**
@@ -293,6 +293,25 @@ export async function agentRoutes(app: FastifyInstance) {
       await db.update(nodes).set({canBuild:false,platform:null,platforms:[],engineKind:null,variant:null,effectiveCpu:null,effectiveMemBytes:null,buildCacheFreeBytes:0}).where(eq(nodes.id,nodeId))
     }
     const fleetId = req.agentFleetId!
+    const logServiceIds = hb.logs.flatMap((entry) => entry.service_id ? [entry.service_id] : [])
+    const logServiceNames = hb.logs.map((entry) => entry.service)
+    const logServices = (logServiceIds.length || logServiceNames.length)
+      ? await db.select({ id: services.id, name: services.name }).from(services).where(and(
+          eq(services.fleetId, fleetId),
+          or(inArray(services.id, logServiceIds.length ? logServiceIds : ['00000000-0000-0000-0000-000000000000']), inArray(services.name, logServiceNames)),
+        ))
+      : []
+    const serviceById = new Map(logServices.map((service) => [service.id, service]))
+    const servicesByName = new Map<string, typeof logServices>()
+    for (const service of logServices) servicesByName.set(service.name, [...(servicesByName.get(service.name) ?? []), service])
+    // Accept a UUID only after proving it belongs to the authenticated node's
+    // fleet. Name-only logs from older agents are retained solely when unique.
+    const logs = hb.logs.flatMap((entry) => {
+      const byId = entry.service_id ? serviceById.get(entry.service_id) : undefined
+      const byName = servicesByName.get(entry.service) ?? []
+      const service = byId ?? (byName.length === 1 ? byName[0] : undefined)
+      return service ? [{ service: service.name, service_id: service.id, text: entry.text }] : []
+    })
 
     await heartbeats.record({
       nodeId,
@@ -313,15 +332,16 @@ export async function agentRoutes(app: FastifyInstance) {
         registryError: hb.runtime.registry_error,
         lastReconcileError: hb.runtime.last_reconcile_error,
       },
-      logs: hb.logs,
+      logs,
     })
 
     // Publish each log line to the service's Redis channel for
     // real-time streaming. Fire-and-forget: a Redis blip must not
     // fail the heartbeat that carries the node's liveness.
-    for (const entry of hb.logs) {
-      void publishLog(app.ctx.redis, entry.service, {
+    for (const entry of logs) {
+      void publishLog(app.ctx.redis, fleetId, entry.service_id, {
         service: entry.service,
+        serviceId: entry.service_id,
         text: entry.text,
         nodeId,
       }).catch(() => {})
@@ -725,6 +745,7 @@ export async function agentRoutes(app: FastifyInstance) {
       // terms as a secret: over TLS, to a caller that proved it is this node.
       registry_auth: registryAuth(app.ctx.config),
       services: withEnv.map(({ row: r, env }) => ({
+        service_id: r.serviceId,
         name: r.service,
         deployment_id: r.deploymentId,
         image: r.imageTags[0] ?? r.image ?? null,

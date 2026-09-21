@@ -241,7 +241,15 @@ export async function serviceRoutes(app: FastifyInstance) {
         : current[0]?.nodeId ? { id: current[0].nodeId, name: current[0].nodeName ?? 'unknown' } : null
       if (!target) throw ApiError.unprocessable('logs_unavailable', `No active node for "${service.name}"`)
       const hb = await app.ctx.heartbeats.last(target.id)
-      const log = hb?.logs?.find((entry) => entry.service === service.name)
+      const [sameNamed] = await db
+        .select({ count: count() })
+        .from(services)
+        .where(and(eq(services.fleetId, service.fleetId), eq(services.name, service.name)))
+      // A name-only tail is from an old agent. It is usable only while the
+      // name resolves to this single service; otherwise returning no tail is
+      // safer than returning another project's output.
+      const legacyNameIsUnique = Number(sameNamed?.count ?? 0) === 1
+      const log = hb?.logs?.find((entry) => entry.service_id === service.id || (!entry.service_id && legacyNameIsUnique && entry.service === service.name))
       return {
         service: service.name,
         node: { id: target.id, name: target.name },

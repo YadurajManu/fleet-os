@@ -18,11 +18,11 @@ type Reporter struct {
 	registryStatus     string
 	registryError      string
 	lastReconcileError string
-	logs               map[string]string
+	logs               map[string]client.LogTail
 }
 
 func New(d *docker.Client) *Reporter {
-	return &Reporter{docker: d, registryStatus: "not_tested", logs: map[string]string{}}
+	return &Reporter{docker: d, registryStatus: "not_tested", logs: map[string]client.LogTail{}}
 }
 
 func (r *Reporter) Snapshot(ctx context.Context) client.Runtime {
@@ -68,14 +68,18 @@ func (r *Reporter) ObserveReconcile(actions []reconcile.Action, reconcileErr err
 }
 
 func (r *Reporter) CaptureLogs(ctx context.Context, desired *client.DesiredState) {
-	next := make(map[string]string, len(desired.Services))
+	next := make(map[string]client.LogTail, len(desired.Services))
 	for _, svc := range desired.Services {
 		text, err := r.docker.Logs(ctx, docker.ContainerName(svc.Name, svc.DeploymentID), 160)
 		if err == nil && text != "" {
 			// During a rollout both releases are listed. The newer one is later
 			// in the slice and wins, which is the tail an operator watching a
 			// deploy actually wants to read.
-			next[svc.Name] = text
+			key := svc.ServiceID
+			if key == "" {
+				key = svc.Name
+			} // Compatibility with an older control plane.
+			next[key] = client.LogTail{Service: svc.Name, ServiceID: svc.ServiceID, Text: text}
 		}
 	}
 	r.mu.Lock()
@@ -87,8 +91,8 @@ func (r *Reporter) Logs() []client.LogTail {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]client.LogTail, 0, len(r.logs))
-	for service, text := range r.logs {
-		out = append(out, client.LogTail{Service: service, Text: text})
+	for _, log := range r.logs {
+		out = append(out, log)
 	}
 	return out
 }
