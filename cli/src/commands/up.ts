@@ -13,23 +13,11 @@ import { request, requireFleet, CliError, EXIT } from '../api.js'
 import { c } from '../render.js'
 import { task, glyph } from '../ui.js'
 import { withLadder } from '../ladder.js'
-import { DEPLOY_STEPS, follow, phaseWalker } from '../progress.js'
+import { DEPLOY_STEPS, phaseWalker } from '../progress.js'
 import { requireRunning } from '../deploy-wait.js'
 import { planFromManifest, deployOrder, projectNameFor } from '../plan.js'
 import { uploadContext, humanBytes } from '../archive.js'
 import type { Flags } from '../args.js'
-
-/** The live build line the control plane already publishes. */
-type DeployProgress = {
-  status: string
-  /** The agent's stage — pulling, creating, starting, waiting_health. */
-  phase?: string
-  detail?: string
-  step?: number
-  ofSteps?: number
-  platform?: string
-  emulated?: boolean
-}
 
 type Service = {
   id: string
@@ -167,7 +155,7 @@ export const upCommand = {
       const target = url ?? service.domain ?? service.hostname
       if (!target) continue
       const fullUrl = target.startsWith('http') ? target : `https://${target}`
-      console.log(`\n${glyph.ok} ${c.green('live')}  ${c.bold(c.cyan(fullUrl))}`)
+      console.log(`\n${flags['no-wait'] ? glyph.info : glyph.ok} ${flags['no-wait'] ? 'scheduled URL (readiness unverified)' : c.green('live')}  ${c.bold(c.cyan(fullUrl))}`)
     }
 
     const last = deployed[deployed.length - 1]?.service
@@ -210,12 +198,10 @@ async function deployOne(
     DEPLOY_STEPS,
     async (ladder) => {
       const walker = phaseWalker(ladder)
-      const progress = follow(service.id, (p) => walker.apply(p), {
-        onUnavailable: () => ladder.note(c.dim('live progress unavailable; continuing with the deploy request')),
-      })
-      try {
+      {
         const result = (
           await request<{
+            deployment: { id: string }
             placedOn: { name: string }
             score: number
             url: string | null
@@ -233,16 +219,19 @@ async function deployOne(
         // counter that reads as a hang. The steps are real; only the reply is
         // early. Progress keeps driving the ladder until the phases are
         // genuinely done.
-        walker.advance(2, `scheduled onto ${result.placedOn.name}`)
-        await progress.untilSettled({ deadlineMs: 45 * 60_000 })
-        walker.finish()
+        if (opts.wait) {
+          if (!result.deployment?.id) throw new CliError('The control plane did not return a deployment ID. Upgrade it before relying on deploy success.', EXIT.failure)
+          await requireRunning(opts.fleetId, service.id, service.name, {
+            deploymentId: result.deployment.id,
+            onProgress: p => walker.apply(p),
+          })
+          walker.finish()
+        } else ladder.note('Deployment accepted; readiness has not been verified.')
         return result
-      } finally {
-        await progress.stop()
       }
     },
     {
-      mark: true,
+      mark: false,
       title: `deploying ${service.name}`,
       onCancel: `deploy is still running on the control plane; inspect with fleet deployments ${service.name}`,
     }
@@ -250,49 +239,6 @@ async function deployOne(
 
   for (const w of deployResult.warnings ?? []) {
     console.log(`${glyph.warn} ${c.yellow('warning')}  ${w}`)
-  }
-
-  if (opts.wait) {
-    await task(
-      `waiting for ${c.bold(service.name)} to come up`,
-      async (s) => {
-        s.hints([
-          'the image is built on the control plane, for every architecture in the fleet',
-          'building for a different architecture than the control plane is emulated, and slow',
-          'the agent picks up desired state on its next poll',
-          "a cold image pull takes as long as the node's uplink does",
-          'a service with a health check goes running once it passes, not before',
-        ])
-        // Long, because this now covers the build as well as the rollout.
-        // The control plane answers as soon as a node is chosen and keeps
-        // building afterwards, so this is the window in which a multi-arch
-        // build has to finish - and an arm64 build emulated on an amd64 host
-        // is measured in tens of minutes, not minutes.
-        // The same waiter `fleet deploy` uses, on the same deadline. Two
-        // commands watching the same thing in two loops is how one of them
-        // ended up giving up at three minutes.
-        await requireRunning(opts.fleetId, service.id, service.name, {
-          onPoll: async () => {
-            // What the builder is doing, rather than a hint about what it
-            // might be doing. Every field here has been reaching /progress
-            // since the phase writer was added and nothing asked for it.
-            // Failures are swallowed: this is a label, and losing it must not
-            // end a deploy that is going fine.
-            const line = await request<DeployProgress>('GET', `/services/${service.id}/progress`)
-              .then((r) => r.body)
-              .catch(() => null)
-            if (!line || !['queued', 'building', 'pushing', 'deploying'].includes(line.status)) return
-            const parts = [line.phase ?? line.status]
-            if (line.step && line.ofSteps) parts.push(`${line.step}/${line.ofSteps}`)
-            if (line.platform) parts.push(line.platform)
-            if (line.emulated) parts.push('emulated')
-            s.update(`${c.bold(service.name)} · ${parts.join(' · ')}`)
-            if (line.detail) s.hints([line.detail])
-          },
-        })
-      },
-      { done: () => `${c.bold(service.name)} is running` }
-    )
   }
 
   return deployResult.url

@@ -26,6 +26,7 @@ export async function request<T = any>(
     raw?: { data: Uint8Array; contentType: string }
     auth?: boolean
     profile?: Profile
+    timeoutMs?: number
   } = {}
 ): Promise<ApiResult<T>> {
   const profile = opts.profile ?? (await loadProfile())
@@ -62,7 +63,7 @@ export async function request<T = any>(
             : {}),
       },
       body: payload,
-      signal: AbortSignal.timeout(20 * 60_000),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 20 * 60_000),
     })
 
   let res: Response

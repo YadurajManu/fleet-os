@@ -1,5 +1,7 @@
 /** Terminal rendering. Colour is dropped when output is piped or NO_COLOR is set. */
-const useColour = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR
+const colorArg = process.argv.indexOf('--color')
+const colorMode = colorArg < 0 ? 'auto' : process.argv[colorArg + 1]
+const useColour = colorMode === 'always' || (colorMode !== 'never' && Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined)
 
 /**
  * 0 none, 1 the sixteen ANSI colours, 2 twenty-four bit. The brand palette only
@@ -20,7 +22,7 @@ export const colourDepth: 0 | 1 | 2 = !useColour
  * directions — `FLEET_ASCII=1` forces the fallback, `FLEET_UNICODE=1` forces the
  * glyphs on for the many Linux shells that simply never set a locale.
  */
-export const unicode: boolean = process.env.FLEET_ASCII
+export const unicode: boolean = process.env.FLEET_ASCII || process.argv.includes('--ascii')
   ? false
   : process.env.FLEET_UNICODE
     ? true
@@ -81,10 +83,10 @@ export const rgb =
 export const c = {
   dim: wrap('2'),
   bold: wrap('1'),
-  green: wrap('32'),
-  yellow: wrap('33'),
-  red: wrap('31'),
-  cyan: wrap('36'),
+  green: rgb(0x3f, 0xe0, 0x8b, wrap('32')),
+  yellow: rgb(0xf2, 0xc6, 0x6d, wrap('33')),
+  red: rgb(0xff, 0x6b, 0x6b, wrap('31')),
+  cyan: rgb(0x56, 0xcf, 0xe1, wrap('36')),
   /** The one accent from the marketing site, reserved for live things. */
   signal: rgb(0x3f, 0xe0, 0x8b, wrap('32')),
   grey: rgb(0x6b, 0x72, 0x80, wrap('2')),
@@ -184,6 +186,10 @@ export function table(headers: string[], rows: string[][]): string {
   const widths = headers.map((h, i) =>
     Math.max(visibleLength(h), ...rows.map((r) => visibleLength(r[i] ?? '')))
   )
+  const available = process.stdout.columns || 80
+  if (widths.reduce((a, b) => a + b, 0) + (headers.length - 1) * 2 > available) {
+    return rows.map(row => headers.map((header, i) => `${c.bold(header)}: ${row[i] ?? ''}`).join('\n')).join('\n\n')
+  }
   const pad = (s: string, width: number) => s + ' '.repeat(Math.max(0, width - visibleLength(s)))
 
   const head = headers.map((h, i) => c.dim(pad(h.toUpperCase(), widths[i]!))).join('  ')

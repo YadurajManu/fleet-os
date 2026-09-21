@@ -91,6 +91,7 @@ export function ladder(steps: Step[], opts: LadderOptions = {}): Ladder {
   // The mark is the first thing to go when the terminal is short: the steps carry
   // the information, the mesh only carries the brand.
   const withMark = Boolean(opts.mark) && screenRows() >= MARK_HEIGHT + rows.length + 5
+  if (!withMark && opts.title && !isQuiet()) err.write(`${c.bold(opts.title)}\n\n`)
   // One spare row for the detail line that appears under the active step.
   const height = (withMark ? MARK_HEIGHT + 1 : 0) + rows.length + 1
   const indent = withMark ? '  ' : ''

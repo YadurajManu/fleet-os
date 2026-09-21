@@ -16,6 +16,10 @@ export function parseArgs(argv: string[]): { positional: string[]; flags: Flags 
       continue
     }
     const name = arg.replace(/^--?/, '')
+    if (name === 'no-animation' || name === 'ascii') {
+      flags[name] = true
+      continue
+    }
     const next = argv[i + 1]
     // A flag followed by a non-flag takes it as a value; otherwise boolean.
     if (next !== undefined && !next.startsWith('-')) {
@@ -51,6 +55,7 @@ export const KNOWN_FLAGS = new Set([
   'ai', 'all', 'apply', 'channel', 'deploy', 'email', 'events', 'f', 'fix', 'follow', 'limit',
   'name', 'node', 'only', 'out', 'password', 'project', 'secret', 'service', 'sha',
   'since', 'terminal', 'to', 'token', 'url',
+  'target', 'shell', 'timeout', 'no-animation', 'color', 'ascii',
 ])
 
 /** The closest known flag to a mistyped one, or null when nothing is close. */

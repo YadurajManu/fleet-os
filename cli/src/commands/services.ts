@@ -7,7 +7,6 @@ import { withLadder } from '../ladder.js'
 import { confirm } from '../prompt.js'
 import {
   DEPLOY_STEPS,
-  follow,
   phaseWalker,
 } from '../progress.js'
 import { planFromDiscovery, renderPlan, toAssistPlan, type AssistPlan } from '../deployment-plan.js'
@@ -415,12 +414,10 @@ export const deployCommand = {
       DEPLOY_STEPS,
       async (ladder) => {
         const walker = phaseWalker(ladder)
-        const progress = follow(service.id, (p) => walker.apply(p), {
-          onUnavailable: () => ladder.note(c.dim('live progress unavailable; continuing with the deploy request')),
-        })
-        try {
+        {
           const result = (
             await request<{
+              deployment: { id: string }
               placedOn: { name: string }
               score: number
               url: string | null
@@ -436,14 +433,19 @@ export const deployCommand = {
               },
             })
           ).body
-          walker.finish(`scheduled onto ${result.placedOn.name}`)
+          if (!flags['no-wait'] && !flags.json) {
+            if (!result.deployment?.id) throw new CliError('The control plane did not return a deployment ID. Upgrade it before relying on deploy success.', EXIT.failure)
+            await requireRunning(fleetId, service.id, service.name, {
+              deploymentId: result.deployment.id,
+              onProgress: p => walker.apply(p),
+            })
+            walker.finish(`running on ${result.placedOn.name}`)
+          } else ladder.note('Deployment accepted; readiness has not been verified.')
           return result
-        } finally {
-          await progress.stop()
         }
       },
       {
-        mark: true,
+        mark: false,
         title: `deploying ${service.name}${gitSha ? ` at ${gitSha.slice(0, 7)}` : ''}`,
         onCancel: `deploy is still running on the control plane; inspect with fleet deployments ${service.name}`,
       }
@@ -454,7 +456,7 @@ export const deployCommand = {
     for (const w of body.warnings ?? []) console.log(`${glyph.warn} ${c.yellow('warning')}  ${w}`)
     if (body.url) console.log(`${glyph.info} ${c.cyan(body.url)}`)
 
-    if (!flags['no-wait']) await waitUntilRunning(fleetId, service.name, service.project)
+    if (!flags['no-wait']) console.log(`${glyph.ok} ${service.name} deployed\nView logs: fleet logs ${service.name}`)
   },
 }
 

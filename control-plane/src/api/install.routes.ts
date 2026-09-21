@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Config } from '../config.js'
 import { ApiError } from './errors.js'
@@ -33,6 +33,14 @@ export function publicApiOrigin(req: FastifyRequest, config: Pick<Config, 'PUBLI
 }
 
 export async function installRoutes(app: FastifyInstance) {
+  app.get('/install/windows.ps1', async (_req, reply) => {
+    try {
+      const script = await readFile(join(dirname(app.ctx.config.INSTALL_SCRIPT_PATH), 'install-windows.ps1'), 'utf8')
+      return reply.type('text/plain; charset=utf-8').header('Cache-Control', 'no-store').send(script)
+    } catch {
+      throw new ApiError(503, 'installer_unavailable', 'Mount scripts/install-windows.ps1 beside install.sh on the control plane.')
+    }
+  })
   const scriptPath = app.ctx.config.INSTALL_SCRIPT_PATH
   const binDir = app.ctx.config.AGENT_BIN_DIR
 

@@ -1085,6 +1085,16 @@ export async function serviceRoutes(app: FastifyInstance) {
     }
   )
 
+  app.get('/services/:serviceId/deployments/:deploymentId', { preHandler: requireServicePermission('service.read') }, async req => {
+    const { service } = await loadService(app, req.params as { serviceId: string })
+    const { deploymentId } = req.params as { deploymentId: string }
+    if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(deploymentId)) throw ApiError.notFound('Deployment')
+    const [deployment] = await db.select().from(deployments).where(and(eq(deployments.id, deploymentId), eq(deployments.serviceId, service.id))).limit(1)
+    if (!deployment) throw ApiError.notFound('Deployment')
+    const progress = await readProgress(app.ctx, service.id).catch(() => null)
+    return { deployment, progress: progress?.deploymentId === deploymentId ? progress : null }
+  })
+
   app.get(
     '/services/:serviceId/deployments',
     { preHandler: requireServicePermission('service.read') },

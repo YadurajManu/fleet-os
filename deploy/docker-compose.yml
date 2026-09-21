@@ -157,6 +157,7 @@ services:
       # The installer and the cross-compiled agents, served at /install so a
       # self-hosted control plane needs no CDN behind it.
       - ../scripts/install.sh:/app/install/install.sh:ro
+      - ../scripts/install-windows.ps1:/app/install/install-windows.ps1:ro
       - ../agent/dist:/app/install/bin:ro
       # Optional GitHub App key. Only mounted when configured; it is never
       # exposed to the dashboard or to an agent.
