@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { ServerResponse } from 'http'
 import type { Redis } from 'ioredis'
@@ -6,6 +6,14 @@ import type { AppContext } from './context.js'
 import { services, nodes } from '../db/schema.js'
 
 const CHANNEL_PREFIX = 'fleet:logs:'
+
+/**
+ * Runtime log channels are an authorization boundary. Service names are only
+ * unique within a project and were previously enough to leak live log lines
+ * between fleets (or same-named projects in one fleet).
+ */
+export const logChannel = (fleetId: string, serviceId: string) =>
+  `${CHANNEL_PREFIX}${fleetId}:${serviceId}`
 
 interface LogEntry {
   serviceId?: string
@@ -68,8 +76,16 @@ export async function logStreamHandler(
   }
 
   const { name: serviceName, fleetId } = service
-  const channel = `${CHANNEL_PREFIX}${serviceName}`
+  const channel = logChannel(fleetId, serviceId)
   const redis = ctx.redis
+  const sameNamed = await ctx.db
+    .select({ id: services.id })
+    .from(services)
+    .where(and(eq(services.fleetId, fleetId), eq(services.name, serviceName)))
+  // Old agents did not report a service UUID. Preserve their tails only when
+  // the name identifies exactly one service; otherwise omitting a tail is
+  // safer than attributing another service's output to this one.
+  const allowLegacyName = sameNamed.length === 1
 
   // Seed: pull recent logs from each node's heartbeat snapshot.
   let seed: LogEntry[] = []
@@ -84,10 +100,10 @@ export async function logStreamHandler(
       const raw = await redis.get(`node:${node.id}:hb`).catch(() => null)
       if (!raw) continue
       try {
-        const payload = JSON.parse(raw) as { logs?: Array<{ service: string; text: string }>; at?: number }
+        const payload = JSON.parse(raw) as { logs?: Array<{ service: string; service_id?: string; text: string }>; at?: number }
         const logs = payload.logs ?? []
         for (const entry of logs) {
-          if (entry.service === serviceName) {
+          if (entry.service_id === serviceId || (!entry.service_id && allowLegacyName && entry.service === serviceName)) {
             seed.push({
               service: entry.service,
               text: entry.text,
@@ -175,10 +191,11 @@ export function registerLogStream(app: FastifyInstance): void {
  */
 export async function publishLog(
   redis: Redis,
-  serviceName: string,
+  fleetId: string,
+  serviceId: string,
   entry: Omit<LogEntry, 'at'> & { at?: number }
 ): Promise<void> {
-  const channel = `${CHANNEL_PREFIX}${serviceName}`
+  const channel = logChannel(fleetId, serviceId)
   const fullEntry: LogEntry = {
     ...entry,
     at: entry.at ?? Date.now(),

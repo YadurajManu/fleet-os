@@ -146,8 +146,9 @@ type Runtime struct {
 // the control plane offer live tails without making inbound connections to a
 // private node or storing application output indefinitely.
 type LogTail struct {
-	Service string `json:"service"`
-	Text    string `json:"text"`
+	Service   string `json:"service"`
+	ServiceID string `json:"service_id,omitempty"`
+	Text      string `json:"text"`
 }
 
 type HeartbeatResponse struct {
@@ -157,6 +158,7 @@ type HeartbeatResponse struct {
 
 type DesiredService struct {
 	Platform        string `json:"platform,omitempty"`
+	ServiceID       string `json:"service_id,omitempty"`
 	Name            string `json:"name"`
 	DeploymentID    string `json:"deployment_id"`
 	Image           string `json:"image"`

@@ -68,7 +68,12 @@ export class AgentBuildRunner implements BuildRunner {
       .ltrim(`build:logs:${req.serviceId}`, 0, 199)
       .expire(`build:logs:${req.serviceId}`, 86400)
       .exec()
-    await publishLog(this.ctx.redis, req.serviceName, entry)
+    // The local runner may call the common progress hook without persisted
+    // identities. A delegated build always has both; only it can publish to
+    // the fleet/service-scoped live channel.
+    if (req.fleetId && req.serviceId) {
+      await publishLog(this.ctx.redis, req.fleetId, req.serviceId, entry)
+    }
   }
   async handleMessage(nodeId: string, raw: unknown) {
     const parsed = buildEvent.safeParse(raw)
@@ -135,7 +140,7 @@ export class AgentBuildRunner implements BuildRunner {
         .ltrim(`build:logs:${service.id}`, 0, 199)
         .expire(`build:logs:${service.id}`, 86400)
         .exec()
-      await publishLog(this.ctx.redis, service.name, entry)
+      await publishLog(this.ctx.redis, service.fleetId, service.id, entry)
     } else if (event.type === 'build.result') {
       const status =
         event.status === 'succeeded' && event.digest

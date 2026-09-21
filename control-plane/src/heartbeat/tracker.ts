@@ -36,7 +36,7 @@ export type HeartbeatPayload = {
     registryError?: string
     lastReconcileError?: string
   }
-  logs?: Array<{ service: string; text: string }>
+  logs?: Array<{ service: string; service_id?: string; text: string }>
 }
 
 /**
