@@ -15,6 +15,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse installer in Windows PowerShell and PowerShell 7
+        shell: pwsh
+        run: |
+          $check = '$tokens = $null; $errors = $null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/install-windows.ps1), [ref]$tokens, [ref]$errors) | Out-Null; if ($errors.Count) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }'
+          & powershell.exe -NoProfile -Command $check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & pwsh -NoProfile -Command $check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   control-plane:
     runs-on: ubuntu-latest
     timeout-minutes: 15

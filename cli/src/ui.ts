@@ -31,6 +31,7 @@ export const isQuiet = (): boolean => quiet
  */
 export const animated = (): boolean => {
   if (quiet) return false
+  if (!err.isTTY || !process.stdout.isTTY || process.env.CI || process.env.TERM === 'dumb' || process.argv.includes('--no-animation')) return false
   if (process.env.FLEET_ANIMATION === '0') return false
   if (process.env.FLEET_ANIMATION === '1') return true
   return Boolean(err.isTTY) && !process.env.CI && !process.env.FLEET_NO_ANIMATION
@@ -190,7 +191,7 @@ export function spinner(label: string): Spinner {
       cursor.clearLine() +
         truncate(
           `${c.signal(FRAMES[frame % FRAMES.length]!)} ${text}${elapsed(startedAt)}` +
-            (hint ? c.dim(`  ${hint}`) : ''),
+            (hint ? c.dim(`  Tip: ${hint}`) : ''),
           width()
         )
     )

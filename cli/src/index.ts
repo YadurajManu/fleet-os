@@ -6,6 +6,8 @@ import { loadProfile } from './config.js'
 import { c, unicode, visibleLength } from './render.js'
 import { banner } from './mark.js'
 import { suggest } from './suggestions.js'
+import { compactWelcome, descriptionRows, operationHeader, pairingHelp } from './presentation.js'
+import { setQuiet } from './ui.js'
 import { commands, type Command } from './commands/index.js'
 import { parseArgs, KNOWN_FLAGS, nearestFlag, type Flags } from './args.js'
 
@@ -92,20 +94,21 @@ const OPTIONS: Array<[string, string]> = [
   ['--plan, --dry-run', 'Show the deploy placement plan without changing anything'],
   ['--yes', 'Skip the interactive deploy confirmation'],
   ['--no-wait', 'Return once scheduled, without following the rollout'],
+  ['--color auto|always|never', 'Control colors; NO_COLOR disables automatic colors'],
+  ['--no-animation', 'Use static progress lines'],
+  ['--ascii', 'Use symbols supported by basic terminals'],
   ['-h, --help', 'Show help'],
 ]
 
 // One column width across every group, so the glosses form a single edge down
 // the page rather than stepping in and out per section.
-const TERM_WIDTH = Math.max(
-  ...GROUPS.flatMap(([, rows]) => rows.map(([term]) => term.length)),
-  ...OPTIONS.map(([term]) => term.length)
-)
-
 const definitions = (rows: Array<[string, string]>): string =>
-  rows.map(([term, gloss]) => `  ${term.padEnd(TERM_WIDTH)}   ${c.dim(gloss)}`).join('\n')
+  descriptionRows(rows)
 
 export function welcomeBox(): string {
+  if ((process.stdout.columns || 80) < 70) return `First time? Start here:\n${descriptionRows([
+    ['fleet auth login', 'Sign in'], ['fleet nodes pair', 'Connect a machine'], ['fleet up', 'Deploy a project'],
+  ])}\nDocs: https://fleet.plastikworld.xyz/#/docs`
   const tl = unicode ? '┌' : '+'
   const tr = unicode ? '┐' : '+'
   const bl = unicode ? '└' : '+'
@@ -142,7 +145,7 @@ export function welcomeBox(): string {
 
 export const usage = (showWelcome = false): string =>
   [
-    banner('deploy to hardware you own'),
+    (process.stdout.columns || 80) < 70 ? `${c.signal(unicode ? '○─●─○' : 'o-@-o')} FLEET` : banner('deploy to hardware you own'),
     '',
     `${c.dim('usage')}  fleet <command> [options]`,
     ...GROUPS.flatMap(([title, rows]) => ['', c.bold(title), definitions(rows)]),
@@ -165,6 +168,7 @@ async function version(): Promise<string> {
 async function main() {
   const { positional, flags } = parseArgs(process.argv.slice(2))
   const [name, ...rest] = positional
+  setQuiet(Boolean(flags.json))
 
   if (flags.version || flags.v) {
     console.log(await version())
@@ -175,7 +179,11 @@ async function main() {
   const isFirstRun = !profile.api && !profile.accessToken
 
   if (!name || flags.help || flags.h) {
-    console.log(usage(isFirstRun))
+    if (name === 'nodes' && rest[0] === 'pair') console.log(pairingHelp())
+    else if (name && (flags.help || flags.h)) {
+      const rows = GROUPS.flatMap(([, entries]) => entries).filter(([command]) => command.split(/[ \[]/)[0] === name)
+      console.log(rows.length ? `${operationHeader('help', name)}\n${definitions(rows)}\n\n${definitions(OPTIONS)}` : usage(isFirstRun))
+    } else console.log(!name && !flags.help && !flags.h ? compactWelcome() : usage(isFirstRun))
     // A bare `fleet` is someone asking what this is, not a malformed command.
     process.exit(EXIT.ok)
   }
@@ -202,6 +210,8 @@ async function main() {
     process.exit(EXIT.usage)
   }
 
+  if (flags.color && !['auto', 'always', 'never'].includes(String(flags.color))) throw new CliError('--color must be auto, always or never.', EXIT.usage)
+  if (!flags.json) process.stderr.write(operationHeader(profile.fleetName || profile.fleetId || 'no fleet selected', name))
   await command.run(rest, flags)
 }
 

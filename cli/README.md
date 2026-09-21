@@ -112,3 +112,25 @@ fleet logs web --follow
 ## License
 
 MIT License.
+# Pairing and terminal presentation
+
+Run `fleet` for compact onboarding, `fleet --help` for the full reference, and
+`fleet nodes pair --help` for target-machine setup. Native Windows pairing uses
+PowerShell rather than requiring Git Bash:
+
+```sh
+fleet nodes pair --target windows --shell powershell
+fleet nodes pair --target macos
+fleet nodes pair --target linux
+```
+
+Run the generated Windows command as Administrator under the Docker Desktop
+account, with Docker Desktop in Linux-container mode. The installer verifies the
+download checksum and installs a Windows Service; the originating CLI confirms
+the paired node's fresh heartbeat. This requires the matching control-plane
+release and published Windows agent binary/checksum. See
+[installation details](https://github.com/YadurajManu/fleet-os/blob/main/docs/cli-experience.md).
+
+Use `--no-animation`, `--ascii`, and `--color auto|always|never` to adapt output.
+Automatic colors respect `NO_COLOR`; CI and redirected output never animate.
+Terminal fonts and backgrounds stay under your control.

@@ -1,6 +1,7 @@
 import { request, requireFleet, CliError, EXIT } from '../api.js'
 import { c, table, statusColour, relativeTime, mb } from '../render.js'
 import type { Flags } from '../args.js'
+import { pairNode } from '../pairing.js'
 
 type Node = {
   id: string
@@ -46,19 +47,7 @@ export const nodesCommand = {
     }
 
     if (sub === 'pair') {
-      const { body } = await request<{ token: string; expires_at: string; install_command: string }>(
-        'POST',
-        `/fleets/${fleetId}/nodes/pair-token`,
-        // Fastify requires a recognised media type for a POST. Supplying an
-        // explicit empty JSON object keeps this body-less operation portable
-        // through proxies and avoids Node fetch's implicit text/plain type.
-        { body: {} }
-      )
-      console.log(`Run this on the machine you want to add:\n`)
-      console.log(`  ${c.cyan(body.install_command)}\n`)
-      console.log(c.dim(`  Or with npm:   npx @yadurajfleetos/cli nodes pair\n`))
-      console.log(c.dim(`The token is single-use and expires ${relativeTime(body.expires_at)}.`))
-      return
+      return pairNode(fleetId, flags)
     }
 
     if (sub === 'cordon' || sub === 'uncordon') {

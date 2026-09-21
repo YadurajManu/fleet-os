@@ -15,7 +15,6 @@
  */
 import { request, CliError, EXIT } from './api.js'
 import type { Ladder, Step } from './ladder.js'
-import { bar } from './ui.js'
 
 /** The shape of `GET /services/:id/progress`. Mirrors `DeployProgress` server-side. */
 export type DeployProgress = {
@@ -95,13 +94,12 @@ export function etaLine(p: DeployProgress, now = Date.now()): string | undefined
   const elapsed = now - new Date(p.since).getTime()
   if (elapsed < 0) return undefined
 
-  const fraction = Math.min(1, elapsed / p.typicalMs)
   const left = p.typicalMs - elapsed
   const tail =
     left > 0
       ? `~${human(left)} left`
       : `${human(-left)} over the usual ${human(p.typicalMs)}`
-  return `${bar(fraction)} ${human(elapsed)} · ${tail}`
+  return `${human(elapsed)} elapsed · ${tail} (historical estimate)`
 }
 
 /**
@@ -249,7 +247,7 @@ export function phaseWalker(l: Ladder, steps: Step[] = DEPLOY_STEPS): PhaseWalke
     if (target <= at) return
     for (let i = at; i < target; i++) {
       if (i === at) l.done(steps[i]!.key, summary)
-      else l.skip(steps[i]!.key, 'not needed')
+      else l.skip(steps[i]!.key, 'not observed')
     }
     at = target
     if (target < steps.length) l.begin(steps[target]!.key)

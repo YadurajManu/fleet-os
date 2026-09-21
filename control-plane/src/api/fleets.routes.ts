@@ -219,13 +219,13 @@ export async function fleetRoutes(app: FastifyInstance) {
       const token = newPairingToken()
       const expiresAt = new Date(Date.now() + PAIRING_TTL_MIN * 60_000)
 
-      await db.transaction(async (tx) => {
-        await tx.insert(pairingTokens).values({
+      const pairingId = await db.transaction(async (tx) => {
+        const [pairing] = await tx.insert(pairingTokens).values({
           fleetId,
           tokenHash: hashToken(token),
           issuedByUserId: req.userId!,
           expiresAt,
-        })
+        }).returning({ id: pairingTokens.id })
         await recordAudit(tx, {
           orgId: req.orgId!,
           actorUserId: req.userId,
@@ -234,11 +234,14 @@ export async function fleetRoutes(app: FastifyInstance) {
           targetId: fleetId,
           metadata: { expiresAt: expiresAt.toISOString() },
         })
+        return pairing!.id
       })
 
       return reply.code(201).send({
         // Returned once. Only the hash is stored.
         token,
+        pairing_id: pairingId,
+        api_url: publicApiOrigin(req, config),
         expires_at: expiresAt.toISOString(),
         // Built from the address the caller actually reached us on. Hardcoding
         // a domain here handed self-hosters a command pointing at a host that

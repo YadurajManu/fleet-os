@@ -17,6 +17,7 @@
  * sharing the constant without sharing the loop would only slow it down.
  */
 import { request, CliError, EXIT } from './api.js'
+import type { DeployProgress } from './progress.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -82,6 +83,8 @@ export async function waitForRunning(
   fleetId: string,
   serviceId: string,
   opts: {
+    deploymentId?: string
+    onProgress?: (progress: DeployProgress) => void
     timeoutMs?: number
     /** Called with each poll, for the caller's own progress display. */
     onPoll?: (status: string | null, elapsedMs: number) => void | Promise<void>
@@ -91,7 +94,19 @@ export async function waitForRunning(
 ): Promise<DeployOutcome> {
   const timeoutMs = opts.timeoutMs ?? DEPLOY_READY_TIMEOUT_MS
   const pollMs = opts.pollMs ?? 2000
-  const currentOf = opts.read ?? liveStatus
+  const currentOf = opts.read ?? (opts.deploymentId ? async (_fleetId: string, id: string) => {
+    try {
+      const { body } = await request<{ deployment: { id: string; startedAt: string; gitSha: string | null; status: string; failureReason: string | null }; progress: DeployProgress | null }>(
+        'GET', `/services/${id}/deployments/${opts.deploymentId}`, { timeoutMs: Math.min(10000, timeoutMs) })
+      opts.onProgress?.(body.progress ?? { deploymentId: body.deployment.id, status: body.deployment.status,
+        failureReason: body.deployment.failureReason, since: body.deployment.startedAt, gitSha: body.deployment.gitSha, nodeName: null })
+      return body.deployment
+    } catch (err) {
+      // Authentication and unsupported API errors are actionable, not transient silence.
+      if (err instanceof CliError && /not found|no route|unauthorized|forbidden|sign in/i.test(err.message)) throw err
+      return null
+    }
+  } : liveStatus)
   const startedAt = Date.now()
   const deadline = startedAt + timeoutMs
   let last: string | null = null
@@ -107,7 +122,7 @@ export async function waitForRunning(
     const current = await currentOf(fleetId, serviceId)
     last = current?.status ?? last
     if (current?.status === 'running') return { state: 'running' }
-    if (current?.status === 'failed') {
+    if (current && ['failed', 'cancelled', 'stopped'].includes(current.status ?? '')) {
       return { state: 'failed', reason: current.failureReason ?? null }
     }
 
@@ -118,7 +133,7 @@ export async function waitForRunning(
   // about the service, and the two are only ever a poll interval apart.
   const settled = await currentOf(fleetId, serviceId)
   if (settled?.status === 'running') return { state: 'running' }
-  if (settled?.status === 'failed') {
+  if (settled && ['failed', 'cancelled', 'stopped'].includes(settled.status ?? '')) {
     return { state: 'failed', reason: settled.failureReason ?? null }
   }
 
@@ -142,7 +157,7 @@ export async function requireRunning(
 
   if (outcome.state === 'failed') {
     throw new CliError(
-      `"${name}" did not start${outcome.reason ? `: ${outcome.reason}` : '.'} ` +
+      `"${name}"${opts.deploymentId ? ` deployment ${opts.deploymentId}` : ''} did not start${outcome.reason ? `: ${outcome.reason}` : '.'} ` +
         `\`fleet deployments ${name}\` has the reason.`,
       EXIT.healthCheckFailed
     )
