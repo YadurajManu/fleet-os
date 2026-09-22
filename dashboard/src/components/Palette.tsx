@@ -29,6 +29,7 @@ const PAGES: Item[] = [
   { label: 'Alerts', hint: 'page', to: '/alerts' },
   { label: 'Secrets', hint: 'page', to: '/secrets' },
   { label: 'Settings', hint: 'page', to: '/settings' },
+  { label: 'Audit history', hint: 'page', to: '/audit' },
 ]
 
 export default function Palette() {

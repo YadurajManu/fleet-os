@@ -297,8 +297,16 @@ export type AuditEntry = {
   id: string
   action: string
   actorKind: string
+  actorUserId: string | null
+  actorEmail: string | null
   targetType: string
   targetId: string | null
+  targetName: string | null
   metadata: Record<string, unknown> | null
   createdAt: string
+}
+
+export type AuditPage = {
+  entries: AuditEntry[]
+  nextCursor: { before: string; beforeId: string } | null
 }

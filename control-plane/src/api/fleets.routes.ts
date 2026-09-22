@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, or } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, ilike, lt, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
 import {
@@ -11,6 +11,7 @@ import {
   pairingTokens,
   placementEvents,
   services,
+  users,
 } from '../db/schema.js'
 import { newPairingToken, hashToken } from '../lib/tokens.js'
 import { recordAudit } from '../lib/audit.js'
@@ -472,14 +473,55 @@ export async function fleetRoutes(app: FastifyInstance) {
     '/fleets/:fleetId/audit',
     { preHandler: requireFleetPermission('audit.read') },
     async (req) => {
-      const q = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }).parse(req.query ?? {})
+      const q = z.object({
+        limit: z.coerce.number().int().min(1).max(100).default(25),
+        before: z.iso.datetime({ offset: true }).optional(),
+        beforeId: z.uuid().optional(),
+        action: z.string().max(100).optional(),
+        actor: z.enum(['user', 'agent', 'system']).optional(),
+        targetType: z.string().max(50).optional(),
+        target: z.string().max(100).optional(),
+        from: z.iso.datetime({ offset: true }).optional(),
+        to: z.iso.datetime({ offset: true }).optional(),
+      }).refine((value) => Boolean(value.before) === Boolean(value.beforeId), 'before and beforeId must be supplied together').parse(req.query ?? {})
+      const filters = [eq(auditLog.orgId, req.orgId!)]
+      if (q.action) filters.push(eq(auditLog.action, q.action))
+      if (q.actor) filters.push(eq(auditLog.actorKind, q.actor))
+      if (q.targetType) filters.push(eq(auditLog.targetType, q.targetType))
+      if (q.target) {
+        const match = `%${q.target.replace(/[\\%_]/g, '\\$&')}%`
+        filters.push(or(
+          ilike(services.name, match),
+          ilike(auditLog.targetId, match),
+          sql`${auditLog.metadata}->>'name' ILIKE ${match}`,
+        )!)
+      }
+      if (q.from) filters.push(gte(auditLog.createdAt, new Date(q.from)))
+      if (q.to) filters.push(lt(auditLog.createdAt, new Date(q.to)))
+      if (q.before && q.beforeId) filters.push(or(lt(auditLog.createdAt, new Date(q.before)), and(eq(auditLog.createdAt, new Date(q.before)), lt(auditLog.id, q.beforeId)))!)
       const rows = await db
-        .select()
+        .select({
+          id: auditLog.id,
+          orgId: auditLog.orgId,
+          action: auditLog.action,
+          actorKind: auditLog.actorKind,
+          actorUserId: auditLog.actorUserId,
+          actorEmail: users.email,
+          targetType: auditLog.targetType,
+          targetId: auditLog.targetId,
+          targetName: services.name,
+          metadata: auditLog.metadata,
+          createdAt: auditLog.createdAt,
+        })
         .from(auditLog)
-        .where(eq(auditLog.orgId, req.orgId!))
-        .orderBy(desc(auditLog.createdAt))
-        .limit(q.limit)
-      return { entries: rows }
+        .leftJoin(users, eq(users.id, auditLog.actorUserId))
+        .leftJoin(services, sql`${services.id}::text = ${auditLog.targetId}`)
+        .where(and(...filters))
+        .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+        .limit(q.limit + 1)
+      const entries = rows.slice(0, q.limit)
+      const last = entries.at(-1)
+      return { entries, nextCursor: rows.length > q.limit && last ? { before: last.createdAt.toISOString(), beforeId: last.id } : null }
     }
   )
 

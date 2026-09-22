@@ -1,8 +1,8 @@
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
-import { api, type AuditEntry } from '../lib/api'
+import { api, type AuditPage } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
-import { since } from '../lib/format'
+import AuditEntries from '../components/AuditEntries'
 import { Button, Copyable, ErrorNote, Field, Panel } from '../components/ui'
 import CloseAccount from '../components/CloseAccount'
 import TwoFactorSettings from '../components/TwoFactorSettings'
@@ -618,8 +618,8 @@ export default function Settings() {
   const isAdmin = fleet?.role === 'owner' || fleet?.role === 'admin'
 
   const audit = usePoll(
-    () => api<{ entries: AuditEntry[] }>(`/fleets/${fleet?.id}/audit?limit=40`),
-    isAdmin ? `/fleets/${fleet?.id}/audit?limit=40` : null,
+    () => api<AuditPage>(`/fleets/${fleet?.id}/audit?limit=5`),
+    isAdmin ? `/fleets/${fleet?.id}/audit?limit=5` : null,
     20000
   )
 
@@ -650,30 +650,13 @@ export default function Settings() {
       {isAdmin && fleet && <GitHubWorkspace fleet={fleet} />}
 
       {isAdmin && (
-        <Panel title="audit log" right={<span className="normal-case">written with the action, not after it</span>}>
+        <Panel title="recent audit activity" right={<Link to="/audit" className="normal-case text-[var(--color-signal)] hover:underline">View audit history →</Link>}>
           {audit.error ? (
             <div className="p-5">
               <ErrorNote error={audit.error} />
             </div>
           ) : (
-            <div className="divide-y divide-[var(--color-line)]">
-              {(audit.data?.entries ?? []).map((e) => (
-                <div key={e.id} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-5 py-2.5">
-                  <span className="min-w-[92px] font-mono text-[10.5px] text-[var(--color-fg-dim)]">
-                    {since(e.createdAt)}
-                  </span>
-                  <span className="min-w-[190px] font-mono text-[11.5px]">{e.action}</span>
-                  <span className="font-mono text-[10.5px] text-[var(--color-fg-dim)]">
-                    {e.actorKind} · {e.targetType}
-                  </span>
-                </div>
-              ))}
-              {!(audit.data?.entries ?? []).length && (
-                <p className="px-5 py-8 text-center font-mono text-[11px] text-[var(--color-fg-dim)]">
-                  no entries yet
-                </p>
-              )}
-            </div>
+            <AuditEntries entries={audit.data?.entries ?? []} />
           )}
         </Panel>
       )}
@@ -833,4 +816,3 @@ function AccountSession({
     </Panel>
   )
 }
-

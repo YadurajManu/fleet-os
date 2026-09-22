@@ -15,6 +15,7 @@ import Secrets from './pages/Secrets'
 import Settings from './pages/Settings'
 import Doctor from './pages/Doctor'
 import Logs from './pages/Logs'
+import AuditHistory from './pages/AuditHistory'
 import CliAuth from './pages/CliAuth'
 import ResetPassword from './pages/ResetPassword'
 import VerifyEmail from './pages/VerifyEmail'
@@ -77,6 +78,7 @@ function Gate() {
         <Route path="doctor" element={<Doctor />} />
         <Route path="logs" element={<Logs />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="audit" element={<AuditHistory />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
