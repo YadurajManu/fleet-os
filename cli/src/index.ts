@@ -43,7 +43,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
     'looking around',
     [
       ['open [service]', 'Open the live service in your default browser'],
-      ['status', 'One-screen view of the whole fleet'],
+      ['status [--watch]', 'Live fleet health, affected services, recent activity, and recovery actions'],
       ['services', 'List services and where they are running'],
       ['nodes', 'List nodes'],
       ['where <service>', 'Explain where a service would be placed, and why'],
@@ -94,6 +94,9 @@ const OPTIONS: Array<[string, string]> = [
   ['--plan, --dry-run', 'Show the deploy placement plan without changing anything'],
   ['--yes', 'Skip the interactive deploy confirmation'],
   ['--no-wait', 'Return once scheduled, without following the rollout'],
+  ['--watch', 'Refresh fleet status every five seconds'],
+  ['--nodes, --services, --failures', 'Focus fleet status on one operational view'],
+  ['--since <30m|24h|7d>', 'Limit status activity to a recent time window'],
   ['--color auto|always|never', 'Control colors; NO_COLOR disables automatic colors'],
   ['--no-animation', 'Use static progress lines'],
   ['--ascii', 'Use symbols supported by basic terminals'],
@@ -211,7 +214,10 @@ async function main() {
   }
 
   if (flags.color && !['auto', 'always', 'never'].includes(String(flags.color))) throw new CliError('--color must be auto, always or never.', EXIT.usage)
-  if (!flags.json) process.stderr.write(operationHeader(profile.fleetName || profile.fleetId || 'no fleet selected', name))
+  // Status resolves and verifies the fleet before drawing its own header. A
+  // profile without a cached fleet name used to print "no fleet selected"
+  // immediately above a successfully loaded fleet.
+  if (!flags.json && name !== 'status') process.stderr.write(operationHeader(profile.fleetName || profile.fleetId || 'no fleet selected', name))
   await command.run(rest, flags)
 }
 

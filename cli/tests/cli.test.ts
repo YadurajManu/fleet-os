@@ -15,6 +15,7 @@ import { execFileSync } from 'node:child_process'
 import { packContext } from '../src/archive.js'
 import { table, relativeTime, mb, visibleLength, truncate, c } from '../src/render.js'
 import { readFileSync, readdirSync } from 'node:fs'
+import { affectedServices, fleetHealth, renderStatus, type StatusSnapshot } from '../src/commands/status.js'
 
 describe('argument parsing', () => {
   test('separates positionals from flags', () => {
@@ -90,6 +91,74 @@ describe('rendering', () => {
     // acquire a control sequence just because it was shortened.
     assert.equal(visibleLength('e\u0301'), 1)
     assert.equal(truncate('abcdefgh', 4), 'abc…')
+  })
+})
+
+describe('fleet status', () => {
+  const degraded: StatusSnapshot = {
+    fleet: { id: 'f1', name: 'homelab', heartbeatIntervalSec: 5, heartbeatMissThreshold: 3 },
+    nodes: [{
+      id: 'n1', name: 'sayyestoheaven', arch: 'arm64', platform: 'linux/arm64', engineKind: 'docker-desktop',
+      status: 'offline', reliabilityTier: 'standard', ramMb: 8192, effectiveCpu: 4,
+      effectiveMemBytes: 8192 * 1048576, agentVersion: '0.3.0', canBuild: true, live: false,
+      lastHeartbeatAt: new Date(Date.now() - 120_000).toISOString(),
+      telemetry: { cpuPct: 99, ramUsedMb: 8000, containers: [{ name: 'api' }], ageMs: 120_000 },
+    }],
+    mapNodes: [],
+    services: [{
+      id: 's1', name: 'api', current: { nodeId: 'n1', nodeName: 'sayyestoheaven', status: 'running' },
+      last: { status: 'running', failureReason: null, startedAt: new Date(Date.now() - 180_000).toISOString(), nodeName: 'sayyestoheaven' },
+      recentFailures: 0,
+    }],
+    unplaced: [],
+    events: [{ at: new Date(Date.now() - 180_000).toISOString(), service: 'api', reason: 'manual', from: null, to: 'sayyestoheaven' }],
+    fetchedAt: new Date().toISOString(),
+  }
+
+  test('uses the verified fleet name and explains degraded state', () => {
+    const out = renderStatus(degraded)
+    assert.match(out, /Fleet . homelab/)
+    assert.doesNotMatch(out, /no fleet selected/)
+    assert.match(out, /Why degraded/)
+    assert.match(out, /sayyestoheaven stopped reporting/)
+    assert.match(out, /api running/)
+    assert.match(out, /fleet doctor/)
+  })
+
+  test('never presents stale resource readings as current', () => {
+    const out = renderStatus(degraded, { nodes: true })
+    assert.match(out, /unavailable/)
+    assert.doesNotMatch(out, /99%/)
+    assert.doesNotMatch(out, /192MB/)
+    assert.match(out, /linux\/arm64/)
+    assert.match(out, /docker-desktop . agent v0\.3\.0 . builder . 4 CPU/)
+  })
+
+  test('counts a running service on an offline node as affected', () => {
+    assert.equal(fleetHealth(degraded), 'degraded')
+    assert.deepEqual(affectedServices(degraded).map((service) => service.name), ['api'])
+  })
+
+  test('healthy output stays concise and recommends exploration', () => {
+    const healthy = structuredClone(degraded)
+    healthy.nodes[0]!.live = true
+    healthy.nodes[0]!.status = 'online'
+    const out = renderStatus(healthy)
+    assert.equal(fleetHealth(healthy), 'healthy')
+    assert.match(out, /1 node\(s\) reporting . 1 service\(s\) available/)
+    assert.match(out, /192MB\/8\.0GB/, 'memory uses Docker capacity, not stale registration capacity')
+    assert.doesNotMatch(out, /Why degraded/)
+    assert.doesNotMatch(out, /Next actions/)
+  })
+
+  test('rejects impossible host-used versus engine-capacity memory readings', () => {
+    const mixed = structuredClone(degraded)
+    mixed.nodes[0]!.live = true
+    mixed.nodes[0]!.status = 'online'
+    mixed.nodes[0]!.telemetry!.ramUsedMb = 17_000
+    const out = renderStatus(mixed, { nodes: true })
+    assert.match(out, /unavailable . 8\.0GB total/)
+    assert.doesNotMatch(out, /0MB\/8\.0GB/)
   })
 })
 
@@ -706,7 +775,4 @@ describe('how full a disk is', () => {
     assert.ok(!diskUse(79, 100).remedy, 'but not when there is nothing to do')
   })
 })
-
-
-
 
