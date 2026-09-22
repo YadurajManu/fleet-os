@@ -17,7 +17,9 @@ export default function CopyLine({ command, className = '' }) {
 
   return (
     <button
+      type="button"
       onClick={copy}
+      aria-label={`Copy command: ${command}`}
       className={`group flex w-full items-center gap-3 rounded-[3px] border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3.5 py-2.5 text-left transition-colors duration-300 hover:border-[var(--color-line-2)] ${className}`}
     >
       <span className="select-none font-mono text-[12px] text-[var(--color-signal)]">$</span>
@@ -36,7 +38,7 @@ export default function CopyLine({ command, className = '' }) {
               copied ? 'text-[var(--color-signal)]' : 'text-[var(--color-fg-dim)]'
             }`}
           >
-            {copied ? 'copied' : 'copy'}
+            {copied ? '✓ copied' : 'copy'}
           </motion.span>
         </AnimatePresence>
       </span>

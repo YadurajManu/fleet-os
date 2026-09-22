@@ -5,7 +5,7 @@ import { EASE } from '../lib/motion'
 import { useCanRender3D } from '../lib/useCapability'
 import MeshStatic from './MeshStatic'
 import MagneticButton from './ui/MagneticButton'
-import CopyLine from './ui/CopyLine'
+import InstallCommand from './ui/InstallCommand'
 import StatusDot from './ui/StatusDot'
 import NodeHUD from './NodeHUD'
 
@@ -145,9 +145,9 @@ export default function Hero() {
               transition={{ duration: 0.9, ease: EASE.expo, delay: 0.75 }}
               className="mt-5 max-w-[440px]"
             >
-              <CopyLine command="fleet up" />
+              <InstallCommand />
               <p className="mt-2.5 font-mono text-[10px] tracking-[0.06em] text-[var(--color-fg-dim)]">
-                pair → push → live. that's it.
+                install → pair → push → live.
               </p>
             </motion.div>
           </motion.div>
