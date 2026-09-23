@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api, type Node, type Service } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { mb, since } from '../lib/format'
+import { dockerState, memoryUse, nodePlatformLabel } from '../lib/nodePresentation'
 import { Dot, ErrorNote, Panel, StatusPill } from '../components/ui'
 import TimeSeriesChart, { type ChartSeries, type Marker } from '../components/TimeSeriesChart'
 import { HeartbeatStrip, projectFull } from '../components/viz'
@@ -500,13 +501,13 @@ export default function NodeDetail() {
     const list: ChartDef[] = [
       {
         key: 'cpu',
-        title: 'normalized load',
+        title: 'normalized host load',
         note: 'band is min to max, line is the mean',
         ceiling: 100,
         format: (v) => `${Math.round(v)}%`,
         emptyHint: 'No CPU history in this window yet. It fills in as the node reports.',
         series: [{
-          label: 'normalized load', colour: SERIES.cpu,
+          label: 'normalized host load', colour: SERIES.cpu,
           avg: pt((s) => s.cpuPct),
           min: pt((s) => s.cpuMin ?? s.cpuPct),
           max: pt((s) => s.cpuMax ?? s.cpuPct),
@@ -514,12 +515,12 @@ export default function NodeDetail() {
       },
       {
         key: 'memory',
-        title: 'memory',
-        ceiling: node.ramMb,
+        title: node.engineKind === 'docker-desktop' ? 'host memory used' : 'memory',
+        ceiling: node.engineKind === 'docker-desktop' ? undefined : node.ramMb,
         format: (v) => mb(v),
         emptyHint: 'No memory history in this window yet.',
         series: [{
-          label: 'memory', colour: SERIES.ram,
+          label: node.engineKind === 'docker-desktop' ? 'host memory used' : 'memory', colour: SERIES.ram,
           avg: pt((s) => s.ramUsedMb),
           min: pt((s) => s.ramUsedMb),
           max: pt((s) => s.ramMaxMb ?? s.ramUsedMb),
@@ -659,8 +660,9 @@ export default function NodeDetail() {
   // Live real-time gauge values
   const currentLoad = loadRatio(t?.cpuPct)
   const liveCpu = currentLoad === null ? 0 : Math.round(currentLoad * 100)
-  const liveRamMb = t?.ramUsedMb ?? 0
-  const liveRamPct = node.ramMb ? Math.round((liveRamMb / node.ramMb) * 100) : 0
+  const ram = t ? memoryUse(node) : null
+  const liveRamMb = ram?.usedMb ?? 0
+  const liveRamPct = ram ? Math.round(ram.ratio * 100) : 0
   const liveDiskMb = t?.diskUsedMb ?? 0
   const liveDiskPct = diskTotal ? Math.round((liveDiskMb / diskTotal) * 100) : 0
 
@@ -678,9 +680,9 @@ export default function NodeDetail() {
         <div className="mt-2.5 flex flex-wrap items-center justify-between gap-y-3 gap-x-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <h1 className="text-[26px] font-semibold tracking-[-0.03em]">{node.name}</h1>
-            <StatusPill status={node.status} />
+            <StatusPill status={node.live ? node.status : 'offline'} />
             <span className="font-mono text-[11.5px] text-[var(--color-fg-dim)]">
-              {node.os} ({node.arch}) · {node.cpuCores} cores · {mb(node.ramMb)} RAM
+              {nodePlatformLabel(node)} · {node.cpuCores} cores · {mb(node.ramMb)} {node.engineKind === 'docker-desktop' ? 'Docker VM limit' : 'RAM'}
             </span>
           </div>
 
@@ -726,29 +728,39 @@ export default function NodeDetail() {
 
             {/* Heartbeat status */}
             <span className="flex items-center gap-1.5 font-mono text-[11px] text-[var(--color-fg-dim)] pl-2 border-l border-white/[0.08]">
-              <Dot tone={node.status === 'online' ? 'ok' : 'down'} size={6} />
-              {since(node.lastHeartbeatAt)}
+              <Dot tone={node.live ? 'ok' : 'down'} size={6} />
+              {node.live ? 'Agent connected' : 'Agent not reporting'} · {since(node.lastHeartbeatAt)}
             </span>
           </div>
         </div>
       </div>
 
+      {dockerState(node) === 'unavailable' && <div className="rounded-lg border border-[color-mix(in_oklab,var(--color-down)_35%,transparent)] bg-[color-mix(in_oklab,var(--color-down)_8%,transparent)] px-4 py-3">
+        <p className="text-[13px] font-semibold text-[var(--color-down)]">Docker engine unavailable</p>
+        <p className="mt-1 text-[11.5px] text-[var(--color-fg-muted)]">The agent is connected, but new deployments are blocked and container state cannot be verified. Start Docker Desktop on this machine, then check again.</p>
+        <Link to="/doctor" className="mt-2 inline-block font-mono text-[11px] text-[var(--color-fg)] hover:underline">Open Doctor →</Link>
+      </div>}
+
       {/* ─── Real-Time Live Resource Gauges ─── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <CircularGauge
-          label="Normalized load"
+          label="Host load"
           pct={liveCpu}
           valueText={currentLoad === null ? '—' : `${liveCpu}%`}
           subText={t?.load1 != null ? `1m load: ${t.load1.toFixed(2)}` : `${node.cpuCores} cores online`}
           colour={currentLoad === null ? 'var(--color-fg-dim)' : cpuColor}
         />
-        <CircularGauge
+        {node.engineKind === 'docker-desktop' ? <Tile
+          label="Docker VM memory limit"
+          value={mb(node.ramMb)}
+          sub="Docker usage unavailable · host samples are separate"
+        /> : <CircularGauge
           label="RAM Usage"
           pct={liveRamPct}
-          valueText={t ? `${liveRamPct}%` : '—'}
-          subText={t ? `${mb(liveRamMb)} of ${mb(node.ramMb)}` : 'Unavailable or stale'}
-          colour={t ? ramColor : 'var(--color-fg-dim)'}
-        />
+          valueText={ram ? `${liveRamPct}%` : '—'}
+          subText={ram ? `${mb(liveRamMb)} of ${mb(node.ramMb)}` : 'Unavailable or stale'}
+          colour={ram ? ramColor : 'var(--color-fg-dim)'}
+        />}
         <CircularGauge
           label="Storage"
           pct={liveDiskPct}
@@ -773,7 +785,7 @@ export default function NodeDetail() {
             <div className="flex items-center justify-between font-mono text-[11px]">
               <span className="text-white/40">Containers</span>
               <span className="text-white/80 font-bold text-[#3fe08b]">
-                {Array.isArray(t?.containers)
+                {dockerState(node) !== 'ready' ? 'Unverified' : Array.isArray(t?.containers)
                   ? `${t.containers.length} active`
                   : typeof t?.containers === 'number'
                   ? `${t.containers} active`
@@ -810,14 +822,14 @@ export default function NodeDetail() {
       )}
 
       {/* ─── Per-Container Live Resource Breakdown & Process Explorer ─── */}
-      <ContainerExplorer
+      {dockerState(node) === 'ready' ? <ContainerExplorer
         containers={containerItems}
         totalNodeRamMb={node.ramMb}
         nodeName={node.name}
         onViewLogs={(c) => setSelectedLogContainer(c)}
         onRestart={handleRestartContainer}
         onExec={handleExecContainer}
-      />
+      /> : <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-ink-950)] p-4 text-[12px] text-[var(--color-fg-muted)]">Container inventory is unavailable until Docker reconnects.</div>}
 
       {/* ─── Range Selector & Live Mode Controls ─── */}
       <div className="flex flex-wrap items-center gap-2">
@@ -952,10 +964,10 @@ export default function NodeDetail() {
           sparkColor={SERIES.cpu}
         />
         <Tile
-          label={`memory peak · ${windowLabel}`}
+          label={`${node.engineKind === 'docker-desktop' ? 'host memory peak' : 'memory peak'} · ${windowLabel}`}
           value={peaks?.ramMaxMb != null ? mb(peaks.ramMaxMb) : '—'}
-          sub={`of ${mb(node.ramMb)}`}
-          tone={peaks?.ramMaxMb != null && peaks.ramMaxMb / node.ramMb > 0.9 ? 'var(--color-warn)' : undefined}
+          sub={node.engineKind === 'docker-desktop' ? 'Host sample · Docker VM limit is separate' : `of ${mb(node.ramMb)}`}
+          tone={node.engineKind !== 'docker-desktop' && peaks?.ramMaxMb != null && peaks.ramMaxMb / node.ramMb > 0.9 ? 'var(--color-warn)' : undefined}
           sparkline={ramSparkData}
           sparkColor={SERIES.ram}
         />
@@ -1171,9 +1183,9 @@ export default function NodeDetail() {
                 {hoveredSample.ramUsedMb != null ? mb(hoveredSample.ramUsedMb) : '—'}
               </div>
               <div className="font-mono text-[9px] text-white/40 truncate">
-                {node.ramMb && hoveredSample.ramUsedMb != null
+                {node.engineKind !== 'docker-desktop' && node.ramMb && hoveredSample.ramUsedMb != null
                   ? `${Math.round((hoveredSample.ramUsedMb / node.ramMb) * 100)}% used`
-                  : 'used'}
+                  : node.engineKind === 'docker-desktop' ? 'host sample' : 'used'}
               </div>
             </div>
 

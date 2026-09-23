@@ -126,6 +126,10 @@ export type Node = {
   cpuCores: number
   ramMb: number
   diskMb: number
+  /** Docker Engine capacity may differ from host capacity on Docker Desktop. */
+  engineKind?: 'native' | 'docker-desktop' | null
+  platform?: string | null
+  effectiveMemBytes?: number | null
   hasGpu: boolean
   reliabilityTier: 'opportunistic' | 'standard' | 'high'
   tags: string[]

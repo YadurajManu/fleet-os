@@ -5,6 +5,7 @@ import { useAuth, usePoll } from '../lib/auth'
 import { mb, since } from '../lib/format'
 import { Button, ConfirmDialog, Dot, Empty, ErrorNote, Panel, StatusPill } from '../components/ui'
 import NodeTelemetry from '../components/NodeTelemetry'
+import { diskUse, dockerState, memoryUse, nodePlatformLabel } from '../lib/nodePresentation'
 import { TableSkeleton } from '../components/Skeleton'
 import WebTerminal from '../components/WebTerminal'
 
@@ -99,7 +100,6 @@ export default function Nodes() {
   const [pairing, setPairing] = useState<{ token: string; install_command: string; expires_at: string } | null>(null)
   const [activePlatformTab, setActivePlatformTab] = useState<PlatformTab>('unix')
   const [copiedCmd, setCopiedCmd] = useState(false)
-  const [copiedIp, setCopiedIp] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [actionError, setActionError] = useState<unknown>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
@@ -132,7 +132,7 @@ export default function Nodes() {
       return a.name.localeCompare(b.name)
     })
   }, [data])
-  const liveNodes = useMemo(() => nodes.filter((n) => n.live || n.status === 'online'), [nodes])
+  const liveNodes = useMemo(() => nodes.filter((n) => n.live), [nodes])
 
   // Cluster aggregate compute metrics
   const clusterMetrics = useMemo(() => {
@@ -140,8 +140,8 @@ export default function Nodes() {
     const onlineCount = liveNodes.length
     const totalCores = nodes.reduce((sum, n) => sum + (n.cpuCores || 0), 0)
     const totalRamMb = nodes.reduce((sum, n) => sum + (n.ramMb || 0), 0)
-    const totalTunnels = nodes.filter((n) => n.telemetry?.meshConnected).length
-    const totalWorkloads = nodes.reduce((sum, n) => sum + (n.telemetry?.containers?.length || 0), 0)
+    const totalTunnels = nodes.filter((n) => n.tunnelConnected).length
+    const totalWorkloads = nodes.reduce((sum, n) => sum + (dockerState(n) === 'ready' ? n.telemetry?.containers?.length ?? 0 : 0), 0)
     return { totalNodes, onlineCount, totalCores, totalRamMb, totalTunnels, totalWorkloads }
   }, [nodes, liveNodes])
 
@@ -149,8 +149,8 @@ export default function Nodes() {
   const filteredNodes = useMemo(() => {
     const res = nodes.filter((n) => {
       // Status & Platform filters
-      if (filter === 'ONLINE' && n.status !== 'online') return false
-      if (filter === 'OFFLINE' && n.status !== 'offline') return false
+      if (filter === 'ONLINE' && !n.live) return false
+      if (filter === 'OFFLINE' && n.live) return false
       if (filter === 'CORDONED' && n.status !== 'cordoned') return false
       if (filter === 'DARWIN' && !n.os.toLowerCase().includes('darwin')) return false
       if (filter === 'LINUX' && !n.os.toLowerCase().includes('linux')) return false
@@ -163,6 +163,7 @@ export default function Nodes() {
         n.name.toLowerCase().includes(q) ||
         n.os.toLowerCase().includes(q) ||
         n.arch.toLowerCase().includes(q) ||
+        nodePlatformLabel(n).toLowerCase().includes(q) ||
         (n.advertiseAddr ?? '').toLowerCase().includes(q) ||
         (n.agentVersion ?? '').toLowerCase().includes(q) ||
         n.tags.some((t) => t.toLowerCase().includes(q)) ||
@@ -292,8 +293,8 @@ export default function Nodes() {
         {[
           ['Total Machines', String(clusterMetrics.totalNodes), 'idle'],
           ['Online Nodes', `${clusterMetrics.onlineCount} / ${clusterMetrics.totalNodes}`, clusterMetrics.onlineCount > 0 ? 'ok' : 'down'],
-          ['Cluster Cores', `${clusterMetrics.totalCores} Cores`, 'idle'],
-          ['Cluster RAM', mb(clusterMetrics.totalRamMb), 'idle'],
+          ['Container Cores', `${clusterMetrics.totalCores} Cores`, 'idle'],
+          ['Container RAM Limit', mb(clusterMetrics.totalRamMb), 'idle'],
           ['Active Tunnels', `${clusterMetrics.totalTunnels} Connected`, clusterMetrics.totalTunnels > 0 ? 'ok' : 'idle'],
         ].map(([label, value, tone]) => (
           <div key={label} className="bg-[var(--color-ink-950)] px-5 py-3.5">
@@ -558,16 +559,11 @@ export default function Nodes() {
             </thead>
             <tbody className="divide-y divide-[var(--color-line)]">
               {filteredNodes.map((n) => {
-                const isOnline = n.status === 'online'
+                const isOnline = n.live
                 const osInfo = getOsIcon(n.os)
-                const ramUsed = n.telemetry?.ramUsedMb ?? 0
-                const ramRatio = n.ramMb > 0 ? ramUsed / n.ramMb : 0
-                const diskTotal =
-                  n.telemetry?.diskTotalMb ??
-                  (n.telemetry?.diskUsedMb != null && n.diskMb ? n.telemetry.diskUsedMb + n.diskMb : 0)
-                const diskUsed = n.telemetry?.diskUsedMb ?? 0
-                const diskRatio = diskTotal > 0 ? diskUsed / diskTotal : 0
-                const hasTunnel = n.telemetry?.meshConnected ?? false
+                const ram = memoryUse(n)
+                const disk = diskUse(n)
+                const hasTunnel = n.tunnelConnected
                 const isCordoning = busy === `cordon-${n.id}`
                 const isRemoving = busy === `remove-${n.id}`
 
@@ -588,53 +584,53 @@ export default function Nodes() {
                       </Link>
                     </td>
                     <td className="py-3 px-3">
-                      <StatusPill status={n.status} />
+                      <StatusPill status={isOnline ? n.status : 'offline'} />
                     </td>
                     <td className="py-3 px-3 text-[var(--color-fg-muted)]">
-                      {osInfo.name} ({n.arch})
+                      {nodePlatformLabel(n)}
                     </td>
                     <td className="py-3 px-3">
-                      <div className="text-[var(--color-fg)] tabular-nums">{n.cpuCores}c · {mb(n.ramMb)}</div>
-                      {n.telemetry && (
+                      <div className="text-[var(--color-fg)] tabular-nums">{n.cpuCores}c · {mb(n.ramMb)} {n.engineKind === 'docker-desktop' ? 'Docker limit' : 'RAM'}</div>
+                      {ram && (
                         <div className="mt-1 flex items-center gap-2">
                           <div className="h-1.5 w-16 overflow-hidden rounded-full bg-[var(--color-line-2)]">
                             <div
                               className="h-full rounded-full transition-all"
                               style={{
-                                width: `${ramRatio * 100}%`,
-                                backgroundColor: ramRatio > 0.85 ? 'var(--color-warn)' : 'var(--color-signal)',
+                                width: `${ram.ratio * 100}%`,
+                                backgroundColor: ram.ratio > 0.85 ? 'var(--color-warn)' : 'var(--color-signal)',
                               }}
                             />
                           </div>
                           <span className="text-[9.5px] tabular-nums text-[var(--color-fg-dim)]">
-                            {Math.round(ramRatio * 100)}%
+                            {Math.round(ram.ratio * 100)}%
                           </span>
                         </div>
                       )}
                     </td>
                     <td className="py-3 px-3">
-                      {diskTotal > 0 ? (
+                      {disk ? (
                         <div>
                           <div className="tabular-nums text-[var(--color-fg-muted)]">
-                            {mb(diskUsed)} / {mb(diskTotal)}
+                            {mb(disk.usedMb)} / {mb(disk.totalMb)}
                           </div>
                           <div className="mt-1 flex items-center gap-2">
                             <div className="h-1.5 w-16 overflow-hidden rounded-full bg-[var(--color-line-2)]">
                               <div
                                 className="h-full rounded-full transition-all"
                                 style={{
-                                  width: `${diskRatio * 100}%`,
+                                  width: `${disk.ratio * 100}%`,
                                   backgroundColor:
-                                    diskRatio > 0.9
+                                    disk.ratio > 0.9
                                       ? 'var(--color-down)'
-                                      : diskRatio > 0.8
+                                      : disk.ratio > 0.8
                                       ? 'var(--color-warn)'
                                       : 'var(--color-signal)',
                                 }}
                               />
                             </div>
                             <span className="text-[9.5px] tabular-nums text-[var(--color-fg-dim)]">
-                              {Math.round(diskRatio * 100)}%
+                              {Math.round(disk.ratio * 100)}%
                             </span>
                           </div>
                         </div>
@@ -643,7 +639,9 @@ export default function Nodes() {
                       )}
                     </td>
                     <td className="py-3 px-3">
-                      {(n.telemetry?.containers ?? []).length > 0 ? (
+                      {dockerState(n) !== 'ready' ? (
+                        <span className="text-[var(--color-fg-dim)]">Unknown</span>
+                      ) : (n.telemetry?.containers ?? []).length > 0 ? (
                         <span className="rounded-[4px] border border-[var(--color-line-2)] bg-[var(--color-ink-850)] px-2 py-0.5 text-[10px] text-[var(--color-fg)]">
                           {n.telemetry?.containers.length} container{n.telemetry?.containers.length === 1 ? '' : 's'}
                         </span>
@@ -664,7 +662,7 @@ export default function Nodes() {
                                 : 'border border-[var(--color-line-2)] text-[var(--color-fg-dim)]'
                             }`}
                           >
-                            {hasTunnel ? 'Tunnel' : 'Direct'}
+                            {hasTunnel ? 'Tunnel connected' : 'No tunnel'}
                           </span>
                         )}
                       </div>
@@ -715,11 +713,12 @@ export default function Nodes() {
         /* ── Modern SaaS Cards Grid ── */
         <div className={gridClass}>
           {filteredNodes.map((n) => {
-            const isOnline = n.status === 'online'
-            const osInfo = getOsIcon(n.os)
+            const isOnline = n.live
+            const osInfo = n.engineKind === 'docker-desktop' ? { icon: <ServerIcon />, name: 'Docker Desktop' } : getOsIcon(n.os)
             const isCordoning = busy === `cordon-${n.id}`
             const isRemoving = busy === `remove-${n.id}`
-            const hasTunnel = n.telemetry?.meshConnected ?? false
+            const hasTunnel = n.tunnelConnected
+            const docker = dockerState(n)
 
             return (
               <div
@@ -753,22 +752,6 @@ export default function Nodes() {
                           </span>
                         </Link>
 
-                        {/* Reverse Tunnel Status Badge */}
-                        {isOnline && (
-                          <span
-                            className={`inline-flex items-center gap-1.5 rounded-[4px] border px-2 py-0.5 font-mono text-[10px] ${
-                              hasTunnel
-                                ? 'border-[var(--color-signal-dim)] bg-[color-mix(in_oklab,var(--color-signal)_10%,transparent)] text-[var(--color-signal)]'
-                                : 'border-[var(--color-line-2)] bg-[var(--color-ink-850)] text-[var(--color-fg-dim)]'
-                            }`}
-                          >
-                            <span
-                              className={`h-1.5 w-1.5 rounded-full ${hasTunnel ? 'bg-[var(--color-signal)]' : 'bg-[var(--color-fg-dim)]'}`}
-                            />
-                            {hasTunnel ? 'Tunnel Active' : 'Direct'}
-                          </span>
-                        )}
-
                         {/* Reliability Tier */}
                         <span className="rounded-[4px] border border-[var(--color-line-2)] bg-[var(--color-ink-850)] px-2 py-0.5 font-mono text-[10px] text-[var(--color-fg-muted)]">
                           {n.reliabilityTier}
@@ -784,29 +767,37 @@ export default function Nodes() {
 
                       {/* Specs Subtitle */}
                       <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-[var(--color-fg-dim)]">
-                        <span className="text-[var(--color-fg-muted)]">{osInfo.name} ({n.arch})</span>
+                        <span className="text-[var(--color-fg-muted)]">{nodePlatformLabel(n)}</span>
                         <span>·</span>
                         <span>{n.cpuCores} cores</span>
                         <span>·</span>
-                        <span>{mb(n.ramMb)} physical RAM</span>
+                        <span>{mb(n.ramMb)} {n.engineKind === 'docker-desktop' ? 'Docker VM limit' : 'RAM'}</span>
                       </div>
                     </div>
 
                     {/* Status Pill */}
                     <div className="shrink-0">
-                      <StatusPill status={n.status} />
+                      <StatusPill status={isOnline ? n.status : 'offline'} />
                     </div>
                   </div>
 
-                  {/* Live numbers with the hour behind them */}
-                  <NodeTelemetry node={n} fleetId={fleet?.id} />
+                  <p className="mt-2 font-mono text-[10.5px] text-[var(--color-fg-muted)]">{isOnline ? 'Agent connected' : 'Agent not reporting'} · heartbeat {since(n.lastHeartbeatAt)} · reverse tunnel {hasTunnel ? 'connected' : 'disconnected'}</p>
+
+                  {docker === 'unavailable' && <div className="relative z-10 mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-[color-mix(in_oklab,var(--color-down)_35%,transparent)] bg-[color-mix(in_oklab,var(--color-down)_8%,transparent)] px-3 py-2.5">
+                    <div><p className="text-[12px] font-medium text-[var(--color-down)]">Docker engine unavailable</p><p className="mt-0.5 text-[10.5px] text-[var(--color-fg-muted)]">New deployments are blocked; container health cannot be verified.</p></div>
+                    <Link to="/doctor" className="font-mono text-[10.5px] text-[var(--color-fg)] hover:underline">Investigate →</Link>
+                  </div>}
+
+                  <NodeTelemetry node={n} />
 
                   {/* ── Workloads Section ─────────────────────────── */}
                   <div className="mt-3.5">
                     <div className="mono-label mb-1.5 text-[9px] text-[var(--color-fg-dim)]">
-                      ACTIVE WORKLOADS ({(n.telemetry?.containers ?? []).length})
+                      WORKLOADS {docker === 'ready' ? `(${(n.telemetry?.containers ?? []).length})` : '(unverified)'}
                     </div>
-                    {(n.telemetry?.containers ?? []).length > 0 ? (
+                    {docker !== 'ready' ? (
+                      <span className="text-[10.5px] text-[var(--color-fg-muted)]">Container state is unknown until Docker reconnects.</span>
+                    ) : (n.telemetry?.containers ?? []).length > 0 ? (
                       <div className="relative z-10 flex flex-wrap gap-1.5">
                         {n.telemetry?.containers.map((c) => (
                           <Link
@@ -833,12 +824,14 @@ export default function Nodes() {
                     <div>
                       <span className="block mono-label text-[9px] text-[var(--color-fg-dim)]">DOCKER ENGINE</span>
                       <span className="text-[var(--color-fg)]">
-                        {n.telemetry?.runtime?.dockerAvailable ? (
+                        {docker === 'ready' ? (
                           <span className="text-[var(--color-signal)]">
-                            ✓ {n.telemetry.runtime.dockerVersion || 'v27+'}
+                            ✓ {n.telemetry?.runtime?.dockerVersion || 'Ready'}
                           </span>
-                        ) : (
+                        ) : docker === 'unavailable' ? (
                           <span className="text-[var(--color-down)]">✖ Unavailable</span>
+                        ) : (
+                          <span className="text-[var(--color-fg-dim)]">Unknown</span>
                         )}
                       </span>
                     </div>
@@ -846,33 +839,13 @@ export default function Nodes() {
                     <div>
                       <span className="block mono-label text-[9px] text-[var(--color-fg-dim)]">REGISTRY ACCESS</span>
                       <span className="text-[var(--color-fg-muted)]">
-                        {n.telemetry?.runtime?.registryStatus === 'ok' ? (
-                          <span className="text-[var(--color-signal)]">✓ OK</span>
-                        ) : (
-                          <span>{n.telemetry?.runtime?.registryStatus || 'checked on pull'}</span>
-                        )}
+                        {docker !== 'ready' ? 'Cannot verify now' : n.telemetry?.runtime?.registryStatus === 'ok' ? 'Last pull succeeded · time unknown' : n.telemetry?.runtime?.registryStatus === 'failed' ? 'Last pull failed' : 'Not tested'}
                       </span>
                     </div>
 
                     <div>
-                      <span className="block mono-label text-[9px] text-[var(--color-fg-dim)]">IP ADDRESS</span>
-                      <span className="group/ip relative z-10 flex items-center gap-1.5 truncate text-[var(--color-fg-muted)]">
-                        <span>{n.advertiseAddr || 'private network'}</span>
-                        {n.advertiseAddr && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              void navigator.clipboard?.writeText(n.advertiseAddr ?? '')
-                              setCopiedIp(n.id)
-                              setTimeout(() => setCopiedIp(null), 1500)
-                            }}
-                            className="rounded p-0.5 text-[10px] text-[var(--color-fg-dim)] opacity-0 transition-opacity group-hover/ip:opacity-100 hover:text-[var(--color-fg)]"
-                            title="Copy IP address"
-                          >
-                            {copiedIp === n.id ? '✓' : '📋'}
-                          </button>
-                        )}
-                      </span>
+                      <span className="block mono-label text-[9px] text-[var(--color-fg-dim)]">REVERSE TUNNEL</span>
+                      <span className={hasTunnel ? 'text-[var(--color-signal)]' : 'text-[var(--color-fg-muted)]'}>{hasTunnel ? 'Connected' : 'Disconnected'}</span>
                     </div>
 
                     <div>
@@ -887,7 +860,7 @@ export default function Nodes() {
                 {/* ── Action Bar Footer ──────────────────────────── */}
                 <div className="relative z-10 mt-4 flex items-center justify-between border-t border-[var(--color-line)] pt-3">
                   <span className="font-mono text-[10px] text-[var(--color-fg-dim)]">
-                    Agent {n.agentVersion ? `v${n.agentVersion}` : 'v0.1.0'}
+                    Agent {n.agentVersion ? `v${n.agentVersion}` : 'version unknown'}
                   </span>
 
                   {canManage && (
@@ -915,17 +888,12 @@ export default function Nodes() {
                         {isCordoning ? 'Saving…' : n.status === 'cordoned' ? 'Uncordon' : 'Cordon'}
                       </Button>
 
-                      {fleet?.role === 'owner' && (
-                        <Button
-                          variant="danger"
-                          onClick={() => setConfirmRemove(n)}
-                          disabled={busy !== null}
-                          className="h-[28px] px-2.5 text-[10.5px]"
-                          title="Revoke pairing credentials and remove from cluster"
-                        >
-                          {isRemoving ? 'Removing…' : 'Remove'}
-                        </Button>
-                      )}
+                      {fleet?.role === 'owner' && <details className="relative">
+                        <summary aria-label="More node actions" className="flex h-[28px] cursor-pointer list-none items-center rounded border border-[var(--color-line-2)] px-2.5 font-mono text-[12px] text-[var(--color-fg-muted)]">More ▾</summary>
+                        <div className="absolute bottom-full right-0 z-20 mb-1 min-w-36 rounded border border-[var(--color-line-2)] bg-[var(--color-ink-900)] p-1 shadow-xl">
+                          <button type="button" onClick={() => setConfirmRemove(n)} disabled={busy !== null} className="w-full rounded px-2 py-1.5 text-left font-mono text-[10.5px] text-[var(--color-down)] hover:bg-[var(--color-ink-800)]">{isRemoving ? 'Removing…' : 'Remove node'}</button>
+                        </div>
+                      </details>}
                     </div>
                   )}
                 </div>
