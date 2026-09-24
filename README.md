@@ -141,9 +141,17 @@ Try it on a machine you own and tell us what worked—or where setup stopped. Us
 
 Maintained by [Yaduraj Singh](https://github.com/YadurajManu).
 
-If Fleet OS is useful to you, consider starring the repository and watching releases to follow its progress.
+If Fleet is useful to you, ⭐ star the repository or watch releases to follow its progress.
 
-[![GitHub Stars](https://img.shields.io/github/stars/YadurajManu/fleet-os?style=for-the-badge&logo=github&label=Stars)](https://github.com/YadurajManu/fleet-os/stargazers)
+## ⭐ Star History
+
+<a href="https://www.star-history.com/?repos=YadurajManu%2Ffleet-os&type=date&legend=bottom-right">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=YadurajManu/fleet-os&type=date&theme=dark&legend=bottom-right" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=YadurajManu/fleet-os&type=date&legend=bottom-right" />
+    <img alt="Fleet OS Star History Chart" src="https://api.star-history.com/chart?repos=YadurajManu/fleet-os&type=date&legend=bottom-right" />
+  </picture>
+</a>
 
 ## License
 
