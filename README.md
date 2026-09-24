@@ -143,8 +143,6 @@ Maintained by [Yaduraj Singh](https://github.com/YadurajManu).
 
 If Fleet is useful to you, ⭐ star the repository or watch releases to follow its progress.
 
-## ⭐ Star History
-
 <a href="https://www.star-history.com/?repos=YadurajManu%2Ffleet-os&type=date&legend=bottom-right">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=YadurajManu/fleet-os&type=date&theme=dark&legend=bottom-right" />
