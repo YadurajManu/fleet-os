@@ -139,8 +139,12 @@ Try it on a machine you own and tell us what worked—or where setup stopped. Us
 - [Report hardware compatibility](https://github.com/YadurajManu/fleet-os/issues/new?template=hardware_support.yml)
 - [Read contribution guidelines](CONTRIBUTING.md)
 
-Maintained by [Yaduraj Singh](https://github.com/YadurajManu). If Fleet is useful to you, star the repository or watch releases to follow its progress.
+Maintained by [Yaduraj Singh](https://github.com/YadurajManu).
+
+If Fleet OS is useful to you, consider starring the repository and watching releases to follow its progress.
+
+[![GitHub Stars](https://img.shields.io/github/stars/YadurajManu/fleet-os?style=for-the-badge&logo=github&label=Stars)](https://github.com/YadurajManu/fleet-os/stargazers)
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)
