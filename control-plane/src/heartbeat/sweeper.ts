@@ -345,6 +345,7 @@ export async function sweepOnce(ctx: AppContext, opts: SweepOptions = {}): Promi
             at: new Date().toISOString(),
             subject: node.name,
             detail: {
+              nodeId: node.id,
               missedThreshold: fleet.threshold,
               intervalSec: fleet.intervalSec,
               silentForMs: ctx.heartbeats.downAfterMs(fleet.intervalSec, fleet.threshold),

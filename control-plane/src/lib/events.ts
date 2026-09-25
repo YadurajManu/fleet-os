@@ -17,6 +17,7 @@ export const FLEET_EVENTS = [
   'service.rescheduled',
   'service.pinned_unavailable',
   'service.crash_looping',
+  'service.down',
   'service.auto_rolled_back',
   'volume.flexible_warning',
   'drift.detected',

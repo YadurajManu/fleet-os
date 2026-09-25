@@ -284,6 +284,7 @@ export type AlertRule = {
   eventTypes: string[]
   enabled: boolean
   target: string
+  nodeDownCooldownMinutes: number
 }
 
 export type Deployment = {

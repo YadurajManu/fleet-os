@@ -21,6 +21,7 @@ const SEVERITY: Record<FleetEvent, Severity> = {
   'service.rescheduled': 'info',
   'service.pinned_unavailable': 'critical',
   'service.crash_looping': 'critical',
+  'service.down': 'critical',
   'service.auto_rolled_back': 'critical',
   'volume.flexible_warning': 'warning',
   'drift.detected': 'warning',
@@ -54,6 +55,8 @@ export function headline(event: FleetEventPayload): string {
       return `${event.subject} is DOWN and was not moved — it is pinned to a node that went offline.`
     case 'service.crash_looping':
       return `${event.subject} is crash-looping.`
+    case 'service.down':
+      return `${event.subject} is missing from its assigned node.`
     case 'service.auto_rolled_back':
       return `${event.subject} was automatically rolled back to a previous release after failing during the canary window.`
     case 'deploy.failed':
@@ -79,6 +82,19 @@ export function fields(event: FleetEventPayload): Array<[string, string]> {
     case 'node.down':
       add('Silent for', d.silentForMs ? `${Math.round(Number(d.silentForMs) / 1000)}s` : undefined)
       add('Heartbeat interval', d.intervalSec ? `${d.intervalSec}s` : undefined)
+      break
+    case 'node.online':
+      add('Node', d.nodeId)
+      break
+    case 'service.crash_looping':
+    case 'service.down':
+      add('Node', d.nodeId)
+      add('Container state', d.actual)
+      add('Deployment', d.deploymentId)
+      break
+    case 'deploy.failed':
+      add('Commit', d.sha)
+      add('Ref', d.ref)
       break
     case 'service.rescheduled':
       add('From', d.from)

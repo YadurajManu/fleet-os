@@ -17,6 +17,7 @@ import {
   verifyEmail,
   passwordChangedEmail,
   newSignInEmail,
+  signedOutEmail,
   deletionConfirmEmail,
   deletionScheduledEmail,
   deletionCancelledEmail,
@@ -140,7 +141,7 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     const rows = await db
-      .select({ id: users.id, email: users.email, passwordHash: users.passwordHash, totpSecret: users.totpSecret })
+      .select({ id: users.id, email: users.email, passwordHash: users.passwordHash, totpSecret: users.totpSecret, emailEveryLogin: users.emailEveryLogin })
       .from(users)
       .where(eq(users.email, parsed.data.email))
       .limit(1)
@@ -183,13 +184,14 @@ export async function authRoutes(app: FastifyInstance) {
         { userId: user.id, reason: verdict.reason, country: login.country },
         'sign-in recorded'
       )
-      if (verdict.isNew) {
+      if (verdict.isNew || user.emailEveryLogin) {
         const { subject, body } = newSignInEmail({
           device: describeDevice(verdict.device),
           ip: login.ip,
           country: login.country,
           at: new Date(),
           reason: verdict.reason,
+          method: 'password',
           dashboardUrl: app.ctx.config.PUBLIC_DASHBOARD_URL || undefined,
         })
         await app.ctx.email.send(user.email, subject, body)
@@ -230,7 +232,29 @@ export async function authRoutes(app: FastifyInstance) {
     return tokens
   })
 
-  app.post('/auth/logout', async (_req, reply) => {
+  app.post('/auth/logout', async (req, reply) => {
+    // An expired access cookie must still be able to log out. Consume the
+    // refresh token so the browser session cannot silently renew after this.
+    const token = req.cookies?.fleet_refresh_token
+    if (token) {
+      try {
+        const claims = app.jwt.verify<{ sub: string; typ: string; jti?: string }>(token)
+        if (claims.typ === 'refresh' && claims.jti && await consumeRefresh(redis, claims.jti) === claims.sub) {
+          const [owner] = await db.select({ email: users.email, emailOnLogout: users.emailOnLogout })
+            .from(users).where(eq(users.id, claims.sub)).limit(1)
+          if (owner?.emailOnLogout) {
+            const login = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
+            const { subject, body } = signedOutEmail({
+              device: describeDevice(parseDevice(login.userAgent)), ip: login.ip,
+              country: login.country, at: new Date(),
+            })
+            await app.ctx.email.send(owner.email, subject, body)
+          }
+        }
+      } catch (err) {
+        req.log.warn({ err }, 'logout notification skipped')
+      }
+    }
     clearTokenCookies(reply)
     return { ok: true }
   })
@@ -449,7 +473,19 @@ export async function authRoutes(app: FastifyInstance) {
     // Record sign in device
     try {
       const login = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
-      await recordSignIn(app.ctx, user.id, login)
+      const verdict = await recordSignIn(app.ctx, user.id, login)
+      if (verdict.isNew || user.emailEveryLogin) {
+        const { subject, body } = newSignInEmail({
+          device: describeDevice(verdict.device),
+          ip: login.ip,
+          country: login.country,
+          at: new Date(),
+          reason: verdict.reason,
+          method: 'GitHub',
+          dashboardUrl: app.ctx.config.PUBLIC_DASHBOARD_URL || undefined,
+        })
+        await app.ctx.email.send(user.email, subject, body)
+      }
     } catch (err) {
       req.log.warn({ err, userId: user.id }, 'oauth sign-in recording failed')
     }
@@ -480,6 +516,8 @@ export async function authRoutes(app: FastifyInstance) {
         githubUsername: users.githubUsername,
         avatarUrl: users.avatarUrl,
         totpSecret: users.totpSecret,
+        emailEveryLogin: users.emailEveryLogin,
+        emailOnLogout: users.emailOnLogout,
       })
       .from(users)
       .where(eq(users.id, req.userId!))
@@ -500,6 +538,19 @@ export async function authRoutes(app: FastifyInstance) {
       },
       orgs: memberships,
     }
+  })
+
+  app.patch('/auth/email-preferences', { preHandler: requireUser }, async (req) => {
+    const parsed = z.object({
+      emailEveryLogin: z.boolean(),
+      emailOnLogout: z.boolean(),
+    }).safeParse(req.body)
+    if (!parsed.success) throw ApiError.unprocessable('invalid_email_preferences', 'Choose which routine account emails to receive')
+    const [updated] = await db.update(users).set(parsed.data)
+      .where(eq(users.id, req.userId!))
+      .returning({ emailEveryLogin: users.emailEveryLogin, emailOnLogout: users.emailOnLogout })
+    if (!updated) throw ApiError.notFound('User')
+    return { preferences: updated }
   })
 
   /* ── 2FA / TOTP ─────────────────────────────────────────────────── */
@@ -531,7 +582,7 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     const [user] = await db
-      .select({ id: users.id, email: users.email, totpSecret: users.totpSecret })
+      .select({ id: users.id, email: users.email, totpSecret: users.totpSecret, emailEveryLogin: users.emailEveryLogin })
       .from(users)
       .where(eq(users.id, challenge.userId))
       .limit(1)
@@ -565,13 +616,14 @@ export async function authRoutes(app: FastifyInstance) {
       const login = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
       const verdict = await recordSignIn(app.ctx, user.id, login)
       req.log.info({ userId: user.id, reason: verdict.reason, country: login.country }, 'sign-in recorded via 2fa')
-      if (verdict.isNew) {
+      if (verdict.isNew || user.emailEveryLogin) {
         const { subject, body } = newSignInEmail({
           device: describeDevice(verdict.device),
           ip: login.ip,
           country: login.country,
           at: new Date(),
           reason: verdict.reason,
+          method: 'two-factor',
           dashboardUrl: app.ctx.config.PUBLIC_DASHBOARD_URL || undefined,
         })
         await app.ctx.email.send(user.email, subject, body)

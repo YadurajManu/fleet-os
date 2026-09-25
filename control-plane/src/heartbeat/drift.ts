@@ -72,13 +72,14 @@ export async function detectDrift(
   for (const d of drifted) {
     // "restarting" repeatedly is the signature of a crash loop, and deserves
     // its own event rather than being filed as generic drift.
-    const type = d.actual === 'restarting' ? 'service.crash_looping' : 'drift.detected'
+    const type = d.actual === 'restarting' ? 'service.crash_looping'
+      : d.actual === 'missing' ? 'service.down' : 'drift.detected'
     await opts.onEvent?.({
       type,
       fleetId,
       at: new Date().toISOString(),
       subject: d.service,
-      detail: { nodeId, expected: d.expected, actual: d.actual },
+      detail: { nodeId, serviceId: d.serviceId, deploymentId: d.deploymentId, expected: d.expected, actual: d.actual },
     })
 
     // Proactive canary watchdog: if a newly rolled out deployment is crash looping,

@@ -624,7 +624,7 @@ export default function Settings() {
   )
 
   const me = usePoll(
-    () => api<{ user: { id: string; email: string; githubUsername?: string | null; avatarUrl?: string | null; createdAt: string; emailVerifiedAt?: string | null; totpEnabled?: boolean }; orgs: Array<{ orgName: string; role: string; plan: string }> }>('/auth/me'),
+    () => api<{ user: { id: string; email: string; githubUsername?: string | null; avatarUrl?: string | null; createdAt: string; emailVerifiedAt?: string | null; totpEnabled?: boolean; emailEveryLogin: boolean; emailOnLogout: boolean }; orgs: Array<{ orgName: string; role: string; plan: string }> }>('/auth/me'),
     '/auth/me',
     60_000
   )
@@ -637,6 +637,8 @@ export default function Settings() {
       </div>
 
       <AccountSession me={me.data} email={email} fleet={fleet} signOut={signOut} />
+
+      {me.data?.user && <EmailPreferences user={me.data.user} onSaved={() => me.refetch()} />}
 
       <TwoFactorSettings
         enabled={Boolean(me.data?.user?.totpEnabled)}
@@ -665,6 +667,43 @@ export default function Settings() {
           sit next to routine settings where it can be reached by accident. */}
       <CloseAccount />
     </div>
+  )
+}
+
+function EmailPreferences({ user, onSaved }: {
+  user: { emailEveryLogin: boolean; emailOnLogout: boolean }
+  onSaved: () => void
+}) {
+  const [everyLogin, setEveryLogin] = useState(user.emailEveryLogin)
+  const [onLogout, setOnLogout] = useState(user.emailOnLogout)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+
+  async function save() {
+    setBusy(true)
+    setError(null)
+    try {
+      await api('/auth/email-preferences', {
+        method: 'PATCH', body: { emailEveryLogin: everyLogin, emailOnLogout: onLogout },
+      })
+      onSaved()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Panel title="account email notifications">
+      <div className="space-y-4 p-5 text-[13px]">
+        <p className="text-[var(--color-fg-muted)]">Password reset, password change, and unfamiliar sign-in notices always stay on. Routine activity emails are optional.</p>
+        <label className="flex items-center gap-3"><input type="checkbox" checked={everyLogin} onChange={(e) => setEveryLogin(e.target.checked)} /> Email me after every successful sign-in</label>
+        <label className="flex items-center gap-3"><input type="checkbox" checked={onLogout} onChange={(e) => setOnLogout(e.target.checked)} /> Email me after signing out in the browser</label>
+        <ErrorNote error={error} />
+        <Button variant="primary" onClick={() => void save()} disabled={busy || (everyLogin === user.emailEveryLogin && onLogout === user.emailOnLogout)}>{busy ? 'saving…' : 'Save preferences'}</Button>
+      </div>
+    </Panel>
   )
 }
 

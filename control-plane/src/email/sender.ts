@@ -20,11 +20,12 @@ type Logger = { info: (o: unknown, m: string) => void; warn: (o: unknown, m: str
  * from the logs instead of by reading this file.
  */
 export class LoggingEmailSender implements EmailSender {
+  readonly available = false
   constructor(private readonly log?: Logger) {}
 
   async send(to: string, subject: string, _body: string): Promise<void> {
     this.log?.warn(
-      { to, subject },
+      { recipientConfigured: Boolean(to), subject },
       'email not sent: no RESEND_API_KEY configured on this control plane'
     )
   }

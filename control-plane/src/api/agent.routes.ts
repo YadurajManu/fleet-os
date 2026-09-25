@@ -625,6 +625,12 @@ export async function agentRoutes(app: FastifyInstance) {
     if (recovered) {
       await redis.del(`node:${nodeId}:down`)
       req.log.info({ nodeId }, 'node recovered')
+      await dispatchEvent(app.ctx, {
+        type: 'node.online', fleetId, at: new Date().toISOString(),
+        subject: recovered.name, detail: { nodeId },
+      }, { log: req.log, email: app.ctx.email }).catch((err) => {
+        req.log.warn({ err, nodeId }, 'node recovery alert failed')
+      })
 
       // FR-9: apply the reclaim policy now that it is back. Failures here
       // must not fail the heartbeat — the node is alive either way.

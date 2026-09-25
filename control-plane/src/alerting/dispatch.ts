@@ -12,6 +12,7 @@ export type DeliveryResult = {
   status?: number
   error?: string
   attempts: number
+  suppressed?: boolean
 }
 
 const MAX_ATTEMPTS = 3
@@ -36,6 +37,7 @@ type Channel = 'webhook' | 'discord' | 'slack' | 'email' | 'push'
 
 /** Pluggable so email can be wired to a real provider without touching this. */
 export interface EmailSender {
+  available?: boolean
   send(to: string, subject: string, body: string): Promise<void>
 }
 
@@ -69,7 +71,7 @@ export async function dispatchEvent(
 
   const results = await Promise.all(
     matching.map((rule) =>
-      deliver(rule.id, rule.channelType as Channel, rule.channelConfig, event, opts).catch(
+      deliverWithCooldown(ctx, rule.id, rule.channelType as Channel, rule.channelConfig, event, opts).catch(
         (err): DeliveryResult => ({
           ruleId: rule.id,
           channel: rule.channelType,
@@ -82,10 +84,62 @@ export async function dispatchEvent(
   )
 
   for (const r of results) {
-    if (r.ok) opts.log?.info({ event: event.type, channel: r.channel }, 'alert delivered')
+    if (r.suppressed) opts.log?.info({ event: event.type, channel: r.channel }, 'repeat node-down alert suppressed')
+    else if (r.ok) opts.log?.info({ event: event.type, channel: r.channel }, 'alert delivered')
     else opts.log?.warn({ event: event.type, channel: r.channel, error: r.error }, 'alert delivery failed')
   }
   return results
+}
+
+/**
+ * A flapping node can transition online/offline several times in an hour.
+ * Keep one cooldown per rule and node, in Redis so it survives a control-plane
+ * restart. Reserve it atomically before sending; release it if delivery fails.
+ * Test alerts deliberately bypass this path and never silence a real incident.
+ */
+async function deliverWithCooldown(
+  ctx: AppContext,
+  ruleId: string,
+  channel: Channel,
+  config: Record<string, unknown>,
+  event: FleetEventPayload,
+  opts: { email?: EmailSender; fetchImpl?: typeof fetch }
+): Promise<DeliveryResult> {
+  const minutes = typeof config.nodeDownCooldownMinutes === 'number'
+    ? config.nodeDownCooldownMinutes : 360
+  if (channel !== 'email' || event.detail?.test || !['node.down', 'node.online'].includes(event.type)) {
+    return deliver(ruleId, channel, config, event, opts)
+  }
+
+  const subject = String(event.detail?.nodeId ?? event.subject)
+  const key = `alert:node-down:${ruleId}:${encodeURIComponent(subject)}`
+  const recoveryKey = `alert:node-down-recovery:${ruleId}:${encodeURIComponent(subject)}`
+  if (event.type === 'node.online') {
+    // Only announce recovery when this rule actually notified about the outage.
+    if (!(await ctx.redis.get(recoveryKey))) {
+      return { ruleId, channel, ok: false, attempts: 0, suppressed: true }
+    }
+    const result = await deliver(ruleId, channel, config, event, opts)
+    if (result.ok) await ctx.redis.del(recoveryKey)
+    return result
+  }
+  if (minutes <= 0) {
+    const result = await deliver(ruleId, channel, config, event, opts)
+    if (result.ok) await ctx.redis.set(recoveryKey, '1', 'EX', 24 * 60 * 60)
+    return result
+  }
+  const claimed = await ctx.redis.set(key, '1', 'EX', minutes * 60, 'NX')
+  if (!claimed) return { ruleId, channel, ok: false, attempts: 0, suppressed: true }
+
+  try {
+    const result = await deliver(ruleId, channel, config, event, opts)
+    if (!result.ok) await ctx.redis.del(key)
+    else await ctx.redis.set(recoveryKey, '1', 'EX', Math.max(minutes * 60, 24 * 60 * 60))
+    return result
+  } catch (err) {
+    await ctx.redis.del(key)
+    throw err
+  }
 }
 
 async function deliver(
@@ -97,7 +151,7 @@ async function deliver(
 ): Promise<DeliveryResult> {
   if (channel === 'email') {
     const to = String(config.to ?? '')
-    if (!opts.email) {
+    if (!opts.email || opts.email.available === false) {
       return { ruleId, channel, ok: false, error: 'no email sender configured', attempts: 0 }
     }
     const { subject, body } = toEmail(event)

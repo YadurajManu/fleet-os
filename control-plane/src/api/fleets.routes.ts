@@ -535,6 +535,9 @@ export async function fleetRoutes(app: FastifyInstance) {
     url: z.string().url().optional(),
     to: z.string().email().optional(),
     secret: z.string().min(16).max(256).optional(),
+    // Applies to repeated node-down emails for the same node. Zero disables
+    // suppression; other channels keep their existing delivery behavior.
+    nodeDownCooldownMinutes: z.number().int().min(0).max(7 * 24 * 60).default(360),
     enabled: z.boolean().default(true),
   })
 
@@ -547,7 +550,7 @@ export async function fleetRoutes(app: FastifyInstance) {
         throw ApiError.unprocessable('invalid_alert_rule', 'Check the submitted fields', parsed.error.issues)
       }
       const { fleetId } = req.params as { fleetId: string }
-      const { channelType, eventTypes, enabled, ...channel } = parsed.data
+      const { channelType, eventTypes, enabled, nodeDownCooldownMinutes, ...channel } = parsed.data
 
       if (channelType === 'email' && !channel.to) {
         throw ApiError.unprocessable('missing_recipient', 'An email rule needs "to"')
@@ -559,7 +562,7 @@ export async function fleetRoutes(app: FastifyInstance) {
       const created = await db.transaction(async (tx) => {
         const [row] = await tx
           .insert(alertRules)
-          .values({ fleetId, channelType, eventTypes, enabled, channelConfig: channel })
+          .values({ fleetId, channelType, eventTypes, enabled, channelConfig: { ...channel, nodeDownCooldownMinutes } })
           .returning()
         await recordAudit(tx, {
           orgId: req.orgId!,
@@ -567,7 +570,7 @@ export async function fleetRoutes(app: FastifyInstance) {
           action: 'alert.rule_created',
           targetType: 'fleet',
           targetId: fleetId,
-          metadata: { channelType, eventTypes },
+          metadata: { channelType, eventTypes, nodeDownCooldownMinutes },
         })
         return row!
       })
@@ -590,6 +593,8 @@ export async function fleetRoutes(app: FastifyInstance) {
           ...r,
           // Enough to identify the destination, not enough to reuse it.
           target: redactTarget(channelConfig),
+          nodeDownCooldownMinutes: typeof channelConfig.nodeDownCooldownMinutes === 'number'
+            ? channelConfig.nodeDownCooldownMinutes : 360,
         })),
       }
     }
@@ -606,6 +611,31 @@ export async function fleetRoutes(app: FastifyInstance) {
         .returning({ id: alertRules.id })
       if (!deleted.length) throw ApiError.notFound('Alert rule')
       return { removed: deleted[0]!.id }
+    }
+  )
+
+  app.patch(
+    '/fleets/:fleetId/alert-rules/:ruleId',
+    { preHandler: requireFleetPermission('alert.write') },
+    async (req) => {
+      const { fleetId, ruleId } = req.params as { fleetId: string; ruleId: string }
+      const parsed = z.object({ nodeDownCooldownMinutes: z.number().int().min(0).max(7 * 24 * 60) }).safeParse(req.body)
+      if (!parsed.success) throw ApiError.unprocessable('invalid_alert_rule', 'Choose a cooldown between 0 and 10080 minutes')
+      const [rule] = await db.select().from(alertRules)
+        .where(and(eq(alertRules.id, ruleId), eq(alertRules.fleetId, fleetId)))
+      if (!rule) throw ApiError.notFound('Alert rule')
+      if (rule.channelType !== 'email') throw ApiError.unprocessable('invalid_alert_rule', 'Cooldown applies to email rules only')
+      await db.transaction(async (tx) => {
+        await tx.update(alertRules)
+          .set({ channelConfig: { ...rule.channelConfig, nodeDownCooldownMinutes: parsed.data.nodeDownCooldownMinutes } })
+          .where(and(eq(alertRules.id, ruleId), eq(alertRules.fleetId, fleetId)))
+        await recordAudit(tx, {
+          orgId: req.orgId!, actorUserId: req.userId,
+          action: 'alert.rule_updated', targetType: 'fleet', targetId: fleetId,
+          metadata: { ruleId, nodeDownCooldownMinutes: parsed.data.nodeDownCooldownMinutes },
+        })
+      })
+      return { updated: ruleId, nodeDownCooldownMinutes: parsed.data.nodeDownCooldownMinutes }
     }
   )
 

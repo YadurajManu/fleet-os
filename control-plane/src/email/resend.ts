@@ -65,6 +65,7 @@ function render(body: string): { text: string; html: string } {
 }
 
 export class ResendEmailSender implements EmailSender {
+  readonly available = true
   constructor(
     private readonly apiKey: string,
     private readonly from: string,

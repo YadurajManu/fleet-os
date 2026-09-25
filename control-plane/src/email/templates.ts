@@ -149,6 +149,7 @@ export function newSignInEmail(opts: {
   country: string | null
   at: Date
   reason: 'first_device' | 'new_country' | 'known'
+  method?: 'password' | 'two-factor' | 'GitHub'
   dashboardUrl?: string
 }) {
   const where = countryName(opts.country)
@@ -159,7 +160,8 @@ export function newSignInEmail(opts: {
 
   const rows: Array<[string, string]> = [
     ['device', opts.device],
-    ['location', opts.country ? where : 'Could not be determined'],
+    ...(opts.method ? [['sign-in method', opts.method] as [string, string]] : []),
+    ['approximate location', opts.country ? where : 'Could not be determined'],
     ['ip address', opts.ip ?? 'Not recorded'],
     ['when', `${opts.at.toISOString().replace('T', ' ').slice(0, 19)} UTC`],
   ]
@@ -171,7 +173,9 @@ export function newSignInEmail(opts: {
       lines: [
         opts.reason === 'new_country'
           ? 'Your account was used from a country it has not been used from before.'
-          : 'Your account was signed in to from a device we have not seen before.',
+          : opts.reason === 'known'
+            ? 'A successful sign-in was recorded. You chose to receive an email for every sign-in.'
+            : 'Your account was signed in to from a device we have not seen before.',
       ],
       table: factTable(rows),
       lines2: [
@@ -181,8 +185,28 @@ export function newSignInEmail(opts: {
           : 'If it was not you, sign in and change your password immediately.',
       ],
       footer:
-        'Sent by Fleet OS because a sign-in did not match a device or location on file. ' +
+        (opts.reason === 'known'
+          ? 'Sent by Fleet OS because you enabled email for every sign-in. '
+          : 'Sent by Fleet OS because a sign-in did not match a device or location on file. ') +
         'We will never ask you to confirm a password by email.',
+    }),
+  }
+}
+
+export function signedOutEmail(opts: { device: string; ip: string | null; country: string | null; at: Date }) {
+  return {
+    subject: '[fleet-os] Signed out of Fleet OS',
+    body: shell({
+      heading: 'You signed out',
+      lines: ['A browser session was signed out. You chose to receive these notices.'],
+      table: factTable([
+        ['device', opts.device],
+        ['approximate location', countryName(opts.country)],
+        ['ip address', opts.ip ?? 'Not recorded'],
+        ['when', `${opts.at.toISOString().replace('T', ' ').slice(0, 19)} UTC`],
+      ]),
+      lines2: ['If this was not you, open your Fleet OS dashboard yourself and review your active sessions.'],
+      footer: 'Fleet OS account activity notice. We never ask for your password by email.',
     }),
   }
 }

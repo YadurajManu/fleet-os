@@ -33,11 +33,13 @@ describe('alert formatting', () => {
     assert.equal(severityOf('service.rescheduled'), 'info')
     assert.equal(severityOf('service.pinned_unavailable'), 'critical')
     assert.equal(severityOf('node.down'), 'warning')
+    assert.equal(severityOf('service.down'), 'critical')
   })
 
   test('the headline says what happened and what was done about it', () => {
     assert.match(headline(nodeDown('f')), /thinkpad stopped responding after 3 missed heartbeats/)
     assert.match(headline(pinnedDown('f')), /DOWN and was not moved/)
+    assert.match(headline({ type: 'service.down', fleetId: 'f', at: new Date().toISOString(), subject: 'api' }), /api is missing/)
   })
 
   test('a successful reschedule names the destination', () => {
@@ -161,6 +163,56 @@ describe('delivery', () => {
     assert.equal(results[0]!.ok, true)
     assert.equal(received.length, 1)
     await ctx.db.delete(alertRules).where(eq(alertRules.id, rule!.id))
+  })
+
+  test('repeated node-down emails are suppressed during the configured cooldown', async () => {
+    const sent: string[] = []
+    const [rule] = await addRule({
+      channelType: 'email', channelConfig: { to: 'operator@example.test', nodeDownCooldownMinutes: 360 },
+    })
+    try {
+      const email = { send: async (_to: string, subject: string) => { sent.push(subject) } }
+      const first = await dispatchEvent(ctx, nodeDown(fleetId), { email })
+      const repeat = await dispatchEvent(ctx, nodeDown(fleetId), { email })
+      assert.equal(first[0]!.ok, true)
+      assert.equal(repeat[0]!.suppressed, true)
+      assert.equal(repeat[0]!.ok, false, 'a suppressed email must not count as delivered')
+      assert.equal(sent.length, 1)
+      const recovery = await dispatchEvent(ctx, {
+        type: 'node.online', fleetId, at: new Date().toISOString(), subject: 'thinkpad',
+      }, { email })
+      assert.equal(recovery[0]!.ok, true)
+      assert.equal(sent.length, 2)
+      const duplicateRecovery = await dispatchEvent(ctx, {
+        type: 'node.online', fleetId, at: new Date().toISOString(), subject: 'thinkpad',
+      }, { email })
+      assert.equal(duplicateRecovery[0]!.suppressed, true)
+    } finally {
+      await ctx.redis.del(`alert:node-down:${rule!.id}:thinkpad`)
+      await ctx.redis.del(`alert:node-down-recovery:${rule!.id}:thinkpad`)
+      await ctx.db.delete(alertRules).where(eq(alertRules.id, rule!.id))
+    }
+  })
+
+  test('a failed email does not consume the node-down cooldown', async () => {
+    const [rule] = await addRule({
+      channelType: 'email', channelConfig: { to: 'operator@example.test', nodeDownCooldownMinutes: 720 },
+    })
+    try {
+      const failed = await dispatchEvent(ctx, nodeDown(fleetId), {
+        email: { send: async () => { throw new Error('provider unavailable') } },
+      })
+      assert.equal(failed[0]!.ok, false)
+      const retried = await dispatchEvent(ctx, nodeDown(fleetId), {
+        email: { send: async () => {} },
+      })
+      assert.equal(retried[0]!.ok, true)
+      assert.equal(retried[0]!.suppressed, undefined)
+    } finally {
+      await ctx.redis.del(`alert:node-down:${rule!.id}:thinkpad`)
+      await ctx.redis.del(`alert:node-down-recovery:${rule!.id}:thinkpad`)
+      await ctx.db.delete(alertRules).where(eq(alertRules.id, rule!.id))
+    }
   })
 
   test('a rule only fires for the events it subscribed to', async () => {

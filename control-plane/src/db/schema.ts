@@ -68,6 +68,8 @@ export const users = pgTable(
     avatarUrl: text('avatar_url'),
     /** Null until the address is confirmed. Accounts predating this are backfilled. */
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
+    emailEveryLogin: boolean('email_every_login').notNull().default(false),
+    emailOnLogout: boolean('email_on_logout').notNull().default(false),
     /** When the owner asked. Kept separate so "requested but not confirmed" is visible. */
     deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true }),
     /** Set once confirmed. Until this passes, the account works normally and can be reclaimed. */

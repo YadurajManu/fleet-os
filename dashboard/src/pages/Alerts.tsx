@@ -19,6 +19,8 @@ export default function Alerts() {
   const [channel, setChannel] = useState<(typeof CHANNELS)[number]>('webhook')
   const [target, setTarget] = useState('')
   const [secret, setSecret] = useState('')
+  const [cooldownMinutes, setCooldownMinutes] = useState(360)
+  const [cooldownOverrides, setCooldownOverrides] = useState<Record<string, number>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [actionError, setActionError] = useState<unknown>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
@@ -34,6 +36,7 @@ export default function Alerts() {
           ...(channel === 'email' ? { to: target } : { url: target }),
           ...(secret ? { secret } : {}),
           eventTypes: [],
+          ...(channel === 'email' ? { nodeDownCooldownMinutes: cooldownMinutes } : {}),
         },
       })
       setTarget('')
@@ -70,6 +73,21 @@ export default function Alerts() {
     setBusy(rule.id)
     try {
       await api(`/fleets/${id}/alert-rules/${rule.id}`, { method: 'DELETE' })
+    } catch (err) {
+      setActionError(err)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function updateCooldown(rule: AlertRule, minutes: number) {
+    setBusy(rule.id)
+    setActionError(null)
+    try {
+      await api(`/fleets/${id}/alert-rules/${rule.id}`, {
+        method: 'PATCH', body: { nodeDownCooldownMinutes: minutes },
+      })
+      setCooldownOverrides((prev) => ({ ...prev, [rule.id]: minutes }))
     } catch (err) {
       setActionError(err)
     } finally {
@@ -126,6 +144,25 @@ export default function Alerts() {
                 <span className="font-mono text-[10.5px] text-[var(--color-fg-dim)]">
                   {r.eventTypes.length ? r.eventTypes.join(', ') : 'all events'}
                 </span>
+                {r.channelType === 'email' && (
+                  <label className="flex items-center gap-2 font-mono text-[10.5px] text-[var(--color-fg-dim)]">
+                    node-down cooldown
+                    <input
+                      aria-label="Node-down email cooldown"
+                      type="number"
+                      min={0}
+                      max={168}
+                      step={0.5}
+                      value={(cooldownOverrides[r.id] ?? r.nodeDownCooldownMinutes) / 60}
+                      disabled={!canEdit || busy !== null}
+                      onChange={(e) => setCooldownOverrides((prev) => ({ ...prev, [r.id]: Math.round(Number(e.target.value) * 60) }))}
+                      className="w-[65px] rounded-[3px] border border-[var(--color-line)] bg-[var(--color-ink-950)] px-2 py-1 text-[11px]"
+                    /> h
+                    {cooldownOverrides[r.id] !== undefined && cooldownOverrides[r.id] !== r.nodeDownCooldownMinutes && (
+                      <Button onClick={() => void updateCooldown(r, cooldownOverrides[r.id]!)} disabled={busy !== null}>Save</Button>
+                    )}
+                  </label>
+                )}
                 {canEdit && (
                   <Button variant="danger" onClick={() => void remove(r)} disabled={busy === r.id}>
                     remove
@@ -180,6 +217,34 @@ export default function Alerts() {
                   hint="Payloads are signed with HMAC-SHA256 in x-fleet-signature, so your receiver can verify the alert really came from your control plane."
                 />
               </div>
+            )}
+            {channel === 'email' && (
+              <label className="block sm:col-span-3">
+                <span className="mono-label">repeat node-down email cooldown</span>
+                <select
+                  value={cooldownMinutes}
+                  onChange={(e) => setCooldownMinutes(Number(e.target.value))}
+                  className="mt-2 w-full cursor-pointer rounded-[3px] border border-[var(--color-line)] bg-[var(--color-ink-950)] px-3 py-2.5 font-mono text-[13px] outline-none sm:max-w-[300px]"
+                >
+                  <option value={0}>Every transition</option>
+                  <option value={360}>6 hours</option>
+                  <option value={720}>12 hours</option>
+                  <option value={1440}>24 hours</option>
+                  {!([0, 360, 720, 1440].includes(cooldownMinutes)) && (
+                    <option value={cooldownMinutes}>Custom</option>
+                  )}
+                </select>
+                <input
+                  aria-label="Custom node-down cooldown in hours"
+                  type="number" min={0} max={168} step={0.5}
+                  value={cooldownMinutes / 60}
+                  onChange={(e) => setCooldownMinutes(Math.round(Number(e.target.value) * 60))}
+                  className="ml-2 w-[75px] rounded-[3px] border border-[var(--color-line)] bg-[var(--color-ink-950)] px-2 py-2.5 font-mono text-[13px]"
+                /> h
+                <p className="mt-2 text-[12px] text-[var(--color-fg-muted)]">
+                  Repeated offline events for the same node are quiet during this window. Other alerts still arrive.
+                </p>
+              </label>
             )}
           </div>
         </Panel>
