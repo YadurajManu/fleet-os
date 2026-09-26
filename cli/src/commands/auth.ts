@@ -189,17 +189,12 @@ export const authCommand = {
     switch (sub) {
       case 'login': {
         const hasDirectCreds = Boolean(flags.email || flags.password || flags.terminal)
+        // A fresh install signs in to hosted Fleet. Saved profiles, FLEET_API,
+        // and --api still select a self-hosted control plane.
+        profile.api = validApi(profile.api || 'https://fleetapi.plastikworld.xyz')
         
         console.log(banner('secure control-plane sign in'))
         console.log(`\n${rule('sign in')}`)
-
-        if (!profile.api) {
-          profile.api = validApi(
-            await requiredPrompt('control plane URL', {
-              hint: 'Example: https://fleetapi.yourdomain.com',
-            })
-          )
-        }
 
         console.log(`${c.dim('  control plane      ')}${c.cyan(profile.api)}\n`)
 

@@ -32,7 +32,7 @@ export async function request<T = any>(
   const profile = opts.profile ?? (await loadProfile())
   if (!profile.api) {
     throw new CliError(
-      'No control plane URL is configured. Run `fleet auth login --api https://your-api-host` or set FLEET_API.',
+      'No control plane URL is configured. Run `fleet auth login` (or use --api for a self-hosted control plane).',
       EXIT.usage
     )
   }
@@ -182,7 +182,7 @@ export async function streamRequest<TProgress = any, TResult = any>(
   const profile = opts.profile ?? (await loadProfile())
   if (!profile.api) {
     throw new CliError(
-      'No control plane URL is configured. Run `fleet auth login --api https://your-api-host` or set FLEET_API.',
+      'No control plane URL is configured. Run `fleet auth login` (or use --api for a self-hosted control plane).',
       EXIT.usage
     )
   }

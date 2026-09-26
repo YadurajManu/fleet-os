@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.20.1
+
+- `fleet auth login` now connects to the hosted Fleet control plane on a fresh install without asking for its URL. Saved self-hosted profiles, `FLEET_API`, and `--api` still take precedence.
+- First-run help and sign-in guidance now show the one-command hosted login.
+
 ## 0.20.0
 
 - `fleet status` now resolves the selected fleet before drawing its header, explains degraded state, hides stale resource readings, and shows OCI platform, heartbeat age, agent/runtime capabilities, affected services, recent activity, and state-aware recovery commands.

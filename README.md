@@ -37,11 +37,11 @@ You need a reachable Fleet control plane, a configured registry/ingress, and at 
 
 ```sh
 npm install -g @yadurajfleetos/cli
-fleet auth login --api https://fleetapi.example.com
+fleet auth login
 fleet nodes pair
 ```
 
-Replace the example API URL with your control plane. Run the pairing command's generated installer on your node, then confirm it appears with `fleet nodes`. For Windows service installation, follow [agent setup](docs/agent-delegated-builds.md#enable-a-node-as-a-builder).
+The login command uses Fleet's hosted control plane by default. For a self-hosted control plane, run `fleet auth login --api https://fleetapi.example.com` instead. Run the pairing command's generated installer on your node, then confirm it appears with `fleet nodes`. For Windows service installation, follow [agent setup](docs/agent-delegated-builds.md#enable-a-node-as-a-builder).
 
 ### 2. Deploy a small app
 

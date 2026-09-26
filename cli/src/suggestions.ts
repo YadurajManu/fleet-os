@@ -56,7 +56,7 @@ export const RULES: SuggestionRule[] = [
   {
     pattern: /not signed in|authentication required|unauthorized|bearer token required/i,
     suggestions: [
-      'sign in to the control plane with "fleet auth login --api <url>"',
+      'sign in with "fleet auth login" (or add --api <url> for a self-hosted control plane)',
     ],
   },
   {

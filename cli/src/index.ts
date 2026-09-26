@@ -89,7 +89,7 @@ const OPTIONS: Array<[string, string]> = [
   // both have a "backend", and picking the first match silently acts on
   // somebody else's.
   ['--project <name>', 'Disambiguate when two projects have a service of the same name'],
-  ['--api <url>', 'Control plane URL (default: saved profile)'],
+  ['--api <url>', 'Control plane URL (default: hosted Fleet, or saved profile)'],
   ['--json', 'Machine-readable output on stdout'],
   ['--plan, --dry-run', 'Show the deploy placement plan without changing anything'],
   ['--yes', 'Skip the interactive deploy confirmation'],
@@ -123,7 +123,7 @@ export function welcomeBox(): string {
     '',
     c.bold('First time? Start here:'),
     '',
-    `${c.bold(c.signal('1.'))} fleet auth login --api https://your-cp:8080`,
+    `${c.bold(c.signal('1.'))} fleet auth login`,
     `${c.bold(c.signal('2.'))} fleet nodes pair`,
     `${c.bold(c.signal('3.'))} fleet up`,
     '',
