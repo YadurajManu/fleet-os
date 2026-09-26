@@ -1,5 +1,6 @@
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
 import { resolveRoute } from './routes.js'
+import { recordTraffic } from './traffic.js'
 import type { AppContext } from '../api/context.js'
 
 export type IngressServer = { close: () => Promise<void>; port: number }
@@ -82,6 +83,12 @@ async function handle(
         `and that a deployment is running.`
     )
   }
+
+  const started = Date.now()
+  res.once('finish', () => {
+    void recordTraffic(ctx.redis, route.fleetId, res.statusCode, Date.now() - started)
+      .catch((err) => log?.warn({ err, fleetId: route.fleetId, serviceId: route.serviceId }, 'ingress metric write failed'))
+  })
 
   const [upstreamHost, upstreamPort] = route.upstream.split(':')
   const targetPort = Number(upstreamPort)

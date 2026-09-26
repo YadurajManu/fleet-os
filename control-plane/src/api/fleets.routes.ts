@@ -22,6 +22,7 @@ import { samplesFor, peaksFor, grainFor, RETAIN_MS } from '../heartbeat/samples.
 import { rescheduleFromNode } from '../scheduler/reschedule.js'
 import { publicApiOrigin } from './install.routes.js'
 import { FLEET_EVENTS } from '../lib/events.js'
+import { trafficForFleet } from '../ingress/traffic.js'
 
 const PAIRING_TTL_MIN = 10
 
@@ -68,6 +69,16 @@ export async function fleetRoutes(app: FastifyInstance) {
       const rows = await db.select().from(fleets).where(eq(fleets.id, fleetId)).limit(1)
       if (!rows[0]) throw ApiError.notFound('Fleet')
       return { fleet: rows[0], role: req.orgRole }
+    }
+  )
+
+  app.get(
+    '/fleets/:fleetId/traffic',
+    { preHandler: requireFleetPermission('fleet.read') },
+    async (req) => {
+      const { fleetId } = req.params as { fleetId: string }
+      const { minutes } = z.object({ minutes: z.coerce.number().int().min(1).max(60).default(60) }).parse(req.query ?? {})
+      return trafficForFleet(redis, fleetId, minutes)
     }
   )
 
@@ -208,6 +219,35 @@ export async function fleetRoutes(app: FastifyInstance) {
       )
 
       return { nodes: withTelemetry }
+    }
+  )
+
+  /** Coarse, owner-supplied location for Mission Control. Never infer a home address from IP. */
+  app.patch(
+    '/fleets/:fleetId/nodes/:nodeId/region',
+    { preHandler: requireFleetPermission('node.cordon') },
+    async (req) => {
+      const { fleetId, nodeId } = req.params as { fleetId: string; nodeId: string }
+      const body = z.object({ region: z.enum([
+        'north-america', 'south-america', 'europe', 'africa',
+        'middle-east', 'south-asia', 'east-asia', 'oceania',
+      ]).nullable() }).safeParse(req.body)
+      if (!body.success) throw ApiError.unprocessable('invalid_region', 'Choose a supported region or clear it')
+
+      const [node] = await db.select({ tags: nodes.tags }).from(nodes)
+        .where(and(eq(nodes.id, nodeId), eq(nodes.fleetId, fleetId))).limit(1)
+      if (!node) throw ApiError.notFound('Node')
+
+      const tags = node.tags.filter((tag) => !tag.startsWith('region:'))
+      if (body.data.region) tags.push(`region:${body.data.region}`)
+      await db.transaction(async (tx) => {
+        await tx.update(nodes).set({ tags }).where(and(eq(nodes.id, nodeId), eq(nodes.fleetId, fleetId)))
+        await recordAudit(tx, {
+          orgId: req.orgId!, actorUserId: req.userId!, action: 'node.region_updated',
+          targetType: 'node', targetId: nodeId, metadata: { region: body.data.region },
+        })
+      })
+      return { region: body.data.region }
     }
   )
 
