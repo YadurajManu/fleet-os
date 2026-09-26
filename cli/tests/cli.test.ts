@@ -16,8 +16,16 @@ import { packContext } from '../src/archive.js'
 import { table, relativeTime, mb, visibleLength, truncate, c } from '../src/render.js'
 import { readFileSync, readdirSync } from 'node:fs'
 import { affectedServices, fleetHealth, renderStatus, type StatusSnapshot } from '../src/commands/status.js'
+import { namedVolumes, stateDirs } from '../src/commands/uninstall.js'
 
 describe('argument parsing', () => {
+  test('uninstall flags remain separate and opt-in', () => {
+    const { positional, flags } = parseArgs(['uninstall', '--force', '--purge-data', '--stop-docker'])
+    assert.deepEqual(positional, ['uninstall'])
+    assert.equal(flags.force, true)
+    assert.equal(flags['purge-data'], true)
+    assert.equal(flags['stop-docker'], true)
+  })
   test('separates positionals from flags', () => {
     const { positional, flags } = parseArgs(['deploy', 'web', '--sha', '4f1c9ae'])
     assert.deepEqual(positional, ['deploy', 'web'])
@@ -43,6 +51,22 @@ describe('argument parsing', () => {
   test('a flag value that looks like a path is kept', () => {
     assert.equal(parseArgs(['apply', '--fleet', 'abc-123']).flags.fleet, 'abc-123')
   })
+})
+
+test('uninstall only considers named Docker volumes', () => {
+  assert.deepEqual(namedVolumes([
+    { Type: 'bind', Name: 'host-data' },
+    { Type: 'volume', Name: 'app-db' },
+    { Type: 'tmpfs' },
+  ]), ['app-db'])
+})
+
+test('uninstall finds the standard Unix agent state directory', () => {
+  if (process.platform === 'win32') return
+  const dir = stateDirs('/home/fleet')
+  assert.deepEqual(dir, [process.platform === 'darwin'
+    ? '/home/fleet/Library/Application Support/fleet-os'
+    : '/var/lib/fleet-os'])
 })
 
 describe('rendering', () => {
@@ -775,4 +799,3 @@ describe('how full a disk is', () => {
     assert.ok(!diskUse(79, 100).remedy, 'but not when there is nothing to do')
   })
 })
-

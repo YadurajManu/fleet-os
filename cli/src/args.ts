@@ -51,6 +51,7 @@ export const KNOWN_FLAGS = new Set([
   // global
   'fleet', 'api', 'json', 'yes', 'y', 'help', 'h', 'version', 'v', 'no-wait',
   'plan', 'dry-run', 'force', 'dir', 'file', 'manifest',
+  'purge-data', 'stop-docker',
   // per command
   'ai', 'all', 'apply', 'channel', 'deploy', 'email', 'events', 'f', 'fix', 'follow', 'limit',
   'name', 'node', 'only', 'out', 'password', 'project', 'secret', 'service', 'sha',

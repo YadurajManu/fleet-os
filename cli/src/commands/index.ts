@@ -11,6 +11,7 @@ import { fixCommand } from './fix.js'
 import { openCommand } from './open.js'
 import { downCommand } from './down.js'
 import { unpairCommand, agentCommand } from './unpair.js'
+import { uninstallCommand } from './uninstall.js'
 import { secretsCommand } from './secrets.js'
 import { backupCommand, backupsCommand, restoreCommand } from './backups.js'
 import {
@@ -67,6 +68,6 @@ export const commands: Record<string, Command> = {
   backups: backupsCommand,
   restore: restoreCommand,
   unpair: unpairCommand,
+  uninstall: uninstallCommand,
   agent: agentCommand,
 }
-
