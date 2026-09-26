@@ -5,7 +5,6 @@ import { AuthProvider, useAuth } from './lib/auth'
 import Shell from './components/Shell'
 import SignIn from './pages/SignIn'
 import Overview from './pages/Overview'
-import MissionControl from './pages/MissionControl'
 import Nodes from './pages/Nodes'
 import NodeDetail from './pages/NodeDetail'
 import Services from './pages/Services'
@@ -69,7 +68,6 @@ function Gate() {
       <Route path="account/close" element={<CloseAccountConfirm />} />
       <Route element={<Shell />}>
         <Route index element={<Overview />} />
-        <Route path="mission" element={<MissionControl />} />
         <Route path="nodes" element={<Nodes />} />
         <Route path="nodes/:nodeId" element={<NodeDetail />} />
         <Route path="services" element={<Services />} />

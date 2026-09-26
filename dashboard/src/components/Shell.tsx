@@ -9,9 +9,6 @@ const NAV = [
   { label: 'Overview', to: '/', icon: (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
   )},
-  { label: 'Mission', to: '/mission', icon: (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c-3 3-3 15 0 18M12 3c3 3 3 15 0 18"/></svg>
-  )},
   { label: 'Nodes', to: '/nodes', icon: (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
   )},
@@ -38,8 +35,8 @@ const NAV = [
   )},
 ] as const
 
-const PRIMARY = NAV.filter(({ label }) => ['Overview', 'Mission', 'Services', 'Nodes'].includes(label))
-const MORE = NAV.filter(({ label }) => !['Overview', 'Mission', 'Services', 'Nodes'].includes(label))
+const PRIMARY = NAV.filter(({ label }) => ['Overview', 'Services', 'Nodes', 'Doctor'].includes(label))
+const MORE = NAV.filter(({ label }) => !['Overview', 'Services', 'Nodes', 'Doctor'].includes(label))
 
 export default function Shell() {
   const { email, fleets, fleet, selectFleet, signOut } = useAuth()
