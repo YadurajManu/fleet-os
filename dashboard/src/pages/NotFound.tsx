@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from '../lib/auth'
 
 export default function NotFound() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
+  const { email } = useAuth()
   const [rerouting, setRerouting] = useState(false)
   const timeout = useRef<number | undefined>(undefined)
 
@@ -29,7 +31,7 @@ export default function NotFound() {
           <button type="button" onClick={reroute} disabled={rerouting} className="lost-route-primary">
             {rerouting ? 'Rerouting…' : 'Reroute me home'} <span aria-hidden="true">↗</span>
           </button>
-          <Link to="/services" className="lost-route-secondary">View services <span aria-hidden="true">→</span></Link>
+          <Link to={email ? '/services' : '/'} className="lost-route-secondary">{email ? 'View services' : 'Sign in'} <span aria-hidden="true">→</span></Link>
         </div>
         <p className="lost-route-hint">Check the address, or let us reroute you.</p>
       </div>
