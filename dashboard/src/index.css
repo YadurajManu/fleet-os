@@ -1,5 +1,43 @@
 @import "tailwindcss";
 
+/* Unknown dashboard routes mirror the marketing site's lost mesh illustration. */
+.lost-route { min-height: min(700px, calc(100vh - 145px)); display: grid; align-items: center; gap: 3rem; padding: 3rem; border: 1px solid var(--color-line); }
+.lost-route h1 { margin-top: 1.5rem; font-size: clamp(3rem, 6vw, 5.5rem); line-height: 1.04; font-weight: 700; letter-spacing: -.055em; }
+.lost-route h1 span { color: var(--color-fg-dim); }
+.lost-route-lede { max-width: 31rem; margin-top: 1.5rem; color: var(--color-fg-muted); line-height: 1.7; }
+.lost-route-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 2rem; }
+.lost-route-primary, .lost-route-secondary { display: inline-flex; align-items: center; gap: 1rem; padding: .8rem 1rem; border: 1px solid var(--color-line-2); border-radius: 3px; font: 600 12px var(--font-mono); }
+.lost-route-primary { background: var(--color-signal); color: var(--color-ink-950); cursor: pointer; }
+.lost-route-primary:disabled { cursor: wait; opacity: .8; }
+.lost-route-secondary { color: var(--color-fg); }
+.lost-route-primary:focus-visible, .lost-route-secondary:focus-visible { outline: 2px solid var(--color-signal); outline-offset: 3px; }
+.lost-route-hint { margin-top: 1.2rem; color: var(--color-fg-dim); font: 11px var(--font-mono); }
+.lost-route-visual { border: 1px solid var(--color-line-2); background: var(--color-ink-950); }
+.lost-route-visual-top { display: flex; justify-content: space-between; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--color-line); color: var(--color-fg-dim); font: 10px var(--font-mono); letter-spacing: .1em; }
+.lost-route-visual svg { display: block; width: 100%; height: auto; }
+.lost-route-faint, .lost-route-active, .lost-route-broken, .lost-route-repaired { fill: none; stroke-width: 1.5; }
+.lost-route-faint { stroke: var(--color-line-2); }
+.lost-route-active { stroke: var(--color-signal); }
+.lost-route-broken { stroke: var(--color-warn); stroke-dasharray: 5 8; }
+.lost-route-repaired { stroke: var(--color-signal); stroke-dasharray: 170; stroke-dashoffset: 170; }
+.is-rerouting .lost-route-broken { opacity: 0; }
+.is-rerouting .lost-route-repaired { animation: lost-route-repair .55s ease-out forwards; }
+.lost-route-node { fill: var(--color-ink-950); stroke: var(--color-signal); stroke-width: 2; }
+.lost-route-halo { fill: none; stroke: var(--color-warn); opacity: .3; }
+.lost-route-missing { fill: var(--color-ink-900); stroke: var(--color-warn); stroke-width: 1.5; }
+.is-rerouting .lost-route-missing { stroke: var(--color-signal); }
+.lost-route-four, .lost-route-label { fill: var(--color-fg-muted); font-family: var(--font-mono); }
+.lost-route-four { fill: var(--color-warn); font-size: 12px; }
+.lost-route-label { font-size: 9px; letter-spacing: .1em; }
+.lost-route-trace { overflow: hidden; padding: 1rem; border-top: 1px solid var(--color-line); color: var(--color-fg-muted); font: 11px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.lost-route-trace span:first-child { color: var(--color-signal); }
+.lost-route-trace span:last-child { color: var(--color-warn); }
+.is-rerouting .lost-route-trace span:last-child { color: var(--color-signal); }
+@keyframes lost-route-repair { to { stroke-dashoffset: 0; } }
+@media (min-width: 960px) { .lost-route { grid-template-columns: 1fr 1.1fr; } }
+@media (max-width: 640px) { .lost-route { padding: 2rem 1rem; gap: 2rem; } .lost-route-visual-top span:last-child { display: none; } }
+@media (prefers-reduced-motion: reduce) { .is-rerouting .lost-route-repaired { animation: none; stroke-dashoffset: 0; } }
+
 @theme {
   --font-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;

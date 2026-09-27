@@ -1,6 +1,6 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
 import Shell from './components/Shell'
 import SignIn from './pages/SignIn'
@@ -22,6 +22,7 @@ import VerifyEmail from './pages/VerifyEmail'
 import ConfirmEmail from './pages/ConfirmEmail'
 import CloseAccountConfirm from './pages/CloseAccountConfirm'
 import AuthCallback from './pages/AuthCallback'
+import NotFound from './pages/NotFound'
 import { Logo } from './components/ui'
 import './index.css'
 
@@ -43,7 +44,9 @@ function Gate() {
         <Route path="reset" element={<ResetPassword />} />
         <Route path="verify" element={<VerifyEmail />} />
         <Route path="account/close" element={<CloseAccountConfirm />} />
-        <Route path="*" element={<SignIn />} />
+        <Route index element={<SignIn />} />
+        <Route path="login" element={<SignIn />} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     )
   }
@@ -79,7 +82,7 @@ function Gate() {
         <Route path="logs" element={<Logs />} />
         <Route path="settings" element={<Settings />} />
         <Route path="audit" element={<AuditHistory />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
   )
