@@ -65,4 +65,8 @@ test('404 is excluded from indexing and has no canonical', async () => {
   const html = await read('404.html')
   assert.ok(html.includes('noindex,follow'))
   assert.ok(!html.includes('rel="canonical"'))
+  assert.ok(html.includes('This route<br /><span>has no node.</span>'))
+  assert.ok(html.includes('href="/">Reroute me home'))
+  assert.ok(html.includes('href="/docs">Browse the docs'))
+  assert.ok(html.includes('ILLUSTRATION · NOT LIVE TELEMETRY'))
 })

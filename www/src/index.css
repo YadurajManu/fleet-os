@@ -217,6 +217,101 @@ summary:focus-visible {
   outline-color: var(--color-fg, #e8ebef);
 }
 
+/* 404: the route trace is an illustration, never a live health indicator. */
+.not-found {
+  position: relative;
+  min-height: min(780px, 90svh);
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-line);
+}
+.not-found-layout {
+  display: grid;
+  min-height: min(780px, 90svh);
+  align-items: center;
+  gap: 4rem;
+  padding-block: 9rem 6rem;
+}
+.not-found-copy { position: relative; z-index: 1; }
+.not-found-amber { color: var(--color-warn); margin-right: .55rem; }
+.not-found h1 {
+  margin-top: 1.8rem;
+  font-size: clamp(3.5rem, 7vw, 6.8rem);
+  font-weight: 600;
+  line-height: .95;
+  letter-spacing: -.065em;
+}
+.not-found h1 span { color: var(--color-fg-dim); }
+.not-found-lede {
+  max-width: 42ch;
+  margin-top: 1.6rem;
+  color: var(--color-fg-muted);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+.not-found-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem; margin-top: 2rem; }
+.not-found-primary, .not-found-secondary {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 0 1rem;
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  text-decoration: none;
+  transition: background-color .2s ease, border-color .2s ease;
+}
+.not-found-primary { background: var(--color-signal); color: var(--color-ink-950); cursor: pointer; font-weight: 700; }
+.not-found-primary:hover { background: #75efaa; }
+.not-found-primary:disabled { cursor: wait; opacity: .8; }
+.not-found-secondary { border: 1px solid var(--color-line-2); color: var(--color-fg); }
+.not-found-secondary:hover { border-color: var(--color-fg-muted); background: var(--color-ink-850); }
+.not-found-hint { margin-top: 1.15rem; color: var(--color-fg-dim); font-family: var(--font-mono); font-size: .7rem; }
+.not-found-visual { border: 1px solid var(--color-line-2); background: color-mix(in oklab, var(--color-ink-950) 91%, transparent); }
+.not-found-visual-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--color-line);
+  padding: .8rem 1rem;
+  color: var(--color-fg-dim);
+  font-family: var(--font-mono);
+  font-size: .57rem;
+  letter-spacing: .1em;
+}
+.not-found-visual svg { width: 100%; height: auto; display: block; }
+.not-found-faint, .not-found-active, .not-found-broken, .not-found-repaired { fill: none; stroke-width: 1.5; }
+.not-found-faint { stroke: var(--color-line-2); }
+.not-found-active { stroke: var(--color-signal); stroke-dasharray: 350; animation: route-arrive 1.2s ease-out both; }
+.not-found-broken { stroke: var(--color-warn); stroke-dasharray: 5 8; }
+.not-found-repaired { stroke: var(--color-signal); stroke-dasharray: 170; stroke-dashoffset: 170; }
+.is-rerouting .not-found-broken { opacity: 0; }
+.is-rerouting .not-found-repaired { animation: route-repair .55s ease-out forwards; }
+.not-found-small-node { fill: var(--color-ink-950); stroke: var(--color-signal); stroke-width: 2; }
+.not-found-halo { fill: none; stroke: color-mix(in oklab, var(--color-warn) 26%, transparent); stroke-width: 1; }
+.not-found-lost-node { fill: var(--color-ink-900); stroke: var(--color-warn); stroke-width: 1.5; }
+.is-rerouting .not-found-lost-node { stroke: var(--color-signal); }
+.not-found-four, .not-found-svg-label { fill: var(--color-fg-muted); font-family: var(--font-mono); }
+.not-found-four { fill: var(--color-warn); font-size: 12px; }
+.not-found-svg-label { font-size: 9px; letter-spacing: .1em; }
+.not-found-trace { overflow: hidden; border-top: 1px solid var(--color-line); padding: 1rem; color: var(--color-fg-muted); font-family: var(--font-mono); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+.not-found-trace > span:first-child { color: var(--color-signal); margin-right: .4rem; }
+.not-found-trace-result { color: var(--color-warn); }
+.is-rerouting .not-found-trace-result { color: var(--color-signal); }
+@keyframes route-arrive { from { stroke-dashoffset: 350; } to { stroke-dashoffset: 0; } }
+@keyframes route-repair { to { stroke-dashoffset: 0; } }
+@media (min-width: 1024px) { .not-found-layout { grid-template-columns: 1fr 1.1fr; gap: 3rem; } }
+@media (max-width: 639px) {
+  .not-found-layout { min-height: 0; gap: 2.5rem; padding-block: 7rem 4rem; }
+  .not-found h1 { font-size: clamp(3.1rem, 12vw, 4.5rem); }
+  .not-found-visual-top span:last-child { display: none; }
+  .not-found-visual svg { max-height: 230px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .not-found-active { animation: none; }
+  .is-rerouting .not-found-repaired { animation: none; stroke-dashoffset: 0; }
+}
+
 /* Pointer interaction should never leave a ring behind. */
 a:focus:not(:focus-visible),
 button:focus:not(:focus-visible) {

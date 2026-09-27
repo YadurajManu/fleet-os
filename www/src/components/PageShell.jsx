@@ -4,6 +4,7 @@ import { PAGES, PAGE_ORDER } from '../lib/pages'
 import { EASE } from '../lib/motion'
 import Reveal from './ui/Reveal'
 import StatusDot from './ui/StatusDot'
+import NotFound from './NotFound'
 
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
@@ -241,27 +242,7 @@ export default function PageShell({ route }) {
     return () => io.disconnect()
   }, [page, route])
 
-  if (!page) {
-    return (
-      <div className="rail flex min-h-[70vh] flex-col justify-center py-32">
-        <span className="mono-label">404</span>
-        <h1 className="mt-5 text-[clamp(2rem,4vw,3rem)] font-semibold tracking-[-0.04em]">
-          No route for /{route}
-        </h1>
-        <p className="mt-4 max-w-[46ch] text-[15px] text-[var(--color-fg-muted)]">
-          That page is not in the fleet. The scheduler could not find an eligible node.
-        </p>
-        <div className="mt-8 flex gap-4">
-          <a href="/#top" className="link-draw font-mono text-[12px] text-[var(--color-signal)]">
-            back to the landing page
-          </a>
-          <a href="/docs" className="link-draw font-mono text-[12px] text-[var(--color-fg-muted)]">
-            documentation
-          </a>
-        </div>
-      </div>
-    )
-  }
+  if (!page) return <NotFound route={route} />
 
   const idx = PAGE_ORDER.indexOf(route)
   const prev = idx > 0 ? PAGE_ORDER[idx - 1] : null
