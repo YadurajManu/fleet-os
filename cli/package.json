@@ -2,6 +2,9 @@
   "name": "@yadurajfleetos/cli",
   "version": "0.22.0",
   "description": "Fleet OS command-line interface for deploying and orchestrating services on user-owned hardware",
+  "repository": { "type": "git", "url": "git+https://github.com/YadurajManu/fleet-os.git", "directory": "cli" },
+  "homepage": "https://fleet.plastikworld.xyz",
+  "bugs": { "url": "https://github.com/YadurajManu/fleet-os/issues" },
   "type": "module",
   "license": "MIT",
   "bin": {
