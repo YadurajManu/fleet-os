@@ -2,14 +2,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { waitForRunning, requireRunning, DEPLOY_READY_TIMEOUT_MS, type ReadStatus } from '../src/deploy-wait.js'
 
-/**
- * A status source driven by wall-clock elapsed time.
- *
- * The bug was entirely about *when* the status is read, so the fixture is a
- * timeline rather than a queue: "pending until 183ms, then running" is the real
- * deployment scaled down, and it fails against a 180ms deadline for the same
- * reason the real one failed against 180s.
- */
+/** A status source for tests that need real polling rather than a final read. */
 const after = (
   timeline: Array<{ atMs: number; status: string; failureReason?: string | null }>
 ): { read: ReadStatus; reads: () => number } => {
@@ -26,25 +19,13 @@ const after = (
 
 describe('waiting for a deploy to become running', () => {
   test('a deploy that lands just after the deadline still succeeds', async () => {
-    // The real one: started 15:44:54, running 15:47:57 — 183 seconds against a
-    // 180-second deadline. It reported failure about a healthy service.
-    const { read } = after([
-      { atMs: 0, status: 'deploying' },
-      { atMs: 183, status: 'running' },
-    ])
-    const out = await waitForRunning('f', 's', { timeoutMs: 180, pollMs: 20, read })
-    assert.deepEqual(out, { state: 'running' }, 'the final refresh catches it')
-  })
-
-  test('the final refresh is what saves it, not a longer deadline', async () => {
-    // Nothing is running while the loop is polling; the status only changes
-    // after the deadline has passed. Only the last look can see it.
-    const { read } = after([
-      { atMs: 0, status: 'deploying' },
-      { atMs: 120, status: 'running' },
-    ])
-    const out = await waitForRunning('f', 's', { timeoutMs: 100, pollMs: 30, read })
-    assert.equal(out.state, 'running')
+    // At the deadline, only the final authoritative read can see the new
+    // state. A call-count fixture proves that without depending on OS timers.
+    let reads = 0
+    const read: ReadStatus = async () => ({ status: ++reads === 1 ? 'deploying' : 'running' })
+    const out = await waitForRunning('f', 's', { timeoutMs: 0, read })
+    assert.deepEqual(out, { state: 'running' })
+    assert.equal(reads, 2, 'the second read happens after the deadline')
   })
 
   test('a service already running is not waited for at all', async () => {
