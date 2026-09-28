@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.21.1
+
+- `fleet uninstall --force` now explains when Docker cleanup is incomplete because Docker Desktop is stopped, and gives the correct retry command instead of control-plane troubleshooting advice.
+
 ## 0.20.1
 
 - `fleet auth login` now connects to the hosted Fleet control plane on a fresh install without asking for its URL. Saved self-hosted profiles, `FLEET_API`, and `--api` still take precedence.

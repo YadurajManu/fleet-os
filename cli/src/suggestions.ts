@@ -13,6 +13,10 @@ export interface SuggestionRule {
 
 export const RULES: SuggestionRule[] = [
   {
+    pattern: /Docker cleanup incomplete/i,
+    suggestions: ['start Docker Desktop and rerun "fleet uninstall --force"'],
+  },
+  {
     pattern: /(?:port|address|bind).*(?:already in use|is taken|in use)|already in use/i,
     suggestions: [
       'run "fleet services" to identify conflicting services',

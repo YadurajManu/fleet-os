@@ -16,7 +16,8 @@ import { packContext } from '../src/archive.js'
 import { table, relativeTime, mb, visibleLength, truncate, c } from '../src/render.js'
 import { readFileSync, readdirSync } from 'node:fs'
 import { affectedServices, fleetHealth, renderStatus, type StatusSnapshot } from '../src/commands/status.js'
-import { namedVolumes, stateDirs } from '../src/commands/uninstall.js'
+import { dockerCleanupMessage, namedVolumes, stateDirs } from '../src/commands/uninstall.js'
+import { suggest } from '../src/suggestions.js'
 
 describe('argument parsing', () => {
   test('uninstall flags remain separate and opt-in', () => {
@@ -67,6 +68,14 @@ test('uninstall finds the standard Unix agent state directory', () => {
   assert.deepEqual(dir, [process.platform === 'darwin'
     ? '/home/fleet/Library/Application Support/fleet-os'
     : '/var/lib/fleet-os'])
+})
+
+test('Docker-off uninstall advice does not point to the control plane', () => {
+  const message = dockerCleanupMessage(new Error('failed to connect to the docker API at unix:///missing.sock'))
+  assert.match(message, /Docker cleanup incomplete/)
+  assert.doesNotMatch(message, /failed to connect/)
+  const advice = suggest(message)
+  assert.deepEqual(advice, ['start Docker Desktop and rerun "fleet uninstall --force"'])
 })
 
 describe('rendering', () => {

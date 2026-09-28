@@ -19,6 +19,13 @@ async function run(file: string, ...args: string[]) {
 const docker = (...args: string[]) => run('docker', ...args)
 const lines = (s: string) => s.split(/\r?\n/).map(x => x.trim()).filter(Boolean)
 
+export function dockerCleanupMessage(error: unknown) {
+  const message = (error as Error).message
+  return /failed to connect to the docker API|Cannot connect to the Docker daemon/i.test(message)
+    ? 'Docker cleanup incomplete: start Docker Desktop, then rerun `fleet uninstall --force` to remove Fleet-labelled containers and networks.'
+    : `Docker cleanup failed: ${message}`
+}
+
 export function stateDirs(home = homedir(), programData = process.env.ProgramData) {
   if (process.env.FLEET_STATE_DIR) return [resolve(process.env.FLEET_STATE_DIR)]
   if (win) return [...(programData ? [join(programData, 'FleetOS')] : []), join(home, '.fleet-os')]
@@ -158,7 +165,7 @@ export const uninstallCommand = {
       }
     }
     try { await cleanupDocker(purge) }
-    catch (error) { problems.push(`Docker cleanup failed: ${(error as Error).message}`) }
+    catch (error) { problems.push(dockerCleanupMessage(error)) }
     await removeService()
     if (!win && !mac) await rm('/usr/local/bin/fleet-agent', { force: true })
     if (win) await rm(join(homedir(), 'bin', 'fleet-agent.exe'), { force: true })
