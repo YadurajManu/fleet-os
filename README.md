@@ -7,7 +7,7 @@
 
 An open-source platform for building and running Linux containers across your Macs, Linux machines, and VPSs—even behind NAT.
 
-[Get started](#get-started) · [Architecture](docs/ARCHITECTURE.md) · [Self-hosting](docs/self-hosting.md) · [Documentation](https://fleet.plastikworld.xyz) · [Contribute](CONTRIBUTING.md)
+[Get started](#get-started) · [Architecture](docs/ARCHITECTURE.md) · [Self-hosting](docs/self-hosting.md) · [Docs index](docs/README.md) · [Documentation](https://fleet.plastikworld.xyz) · [Contribute](CONTRIBUTING.md)
 
 [![CI](https://github.com/YadurajManu/fleet-os/actions/workflows/ci.yml/badge.svg)](https://github.com/YadurajManu/fleet-os/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@yadurajfleetos/cli)](https://www.npmjs.com/package/@yadurajfleetos/cli)
@@ -79,7 +79,7 @@ fleet logs hello --follow
 
 The CLI uploads a build context. A connected GitHub repository uses an exact commit and repository-scoped source credentials. See the [manifest reference](docs/fleet-yaml-spec.md) for databases, secrets, health checks, and placement, and the [build guide](docs/agent-delegated-builds.md) for platform selection and registry setup.
 
-**Release note:** this README describes current main. The npm package and published agent binaries may lag main; the v0.3.0 deployment work has not yet been published as a release. The updated build-log follow path is on main. Check [releases](https://github.com/YadurajManu/fleet-os/releases) before assuming a published CLI or installer contains a new feature.
+**Release note:** this README describes current main. The [npm CLI](https://www.npmjs.com/package/@yadurajfleetos/cli) and [agent releases](https://github.com/YadurajManu/fleet-os/releases) are versioned separately and may lag main. Check their release notes before assuming an installed binary contains a new feature.
 
 ## How it works
 
@@ -121,6 +121,8 @@ Docker Desktop deployments require named volumes and reject bind mounts and host
 
 ## Explore the project
 
+The source is organized by running component: [`control-plane/`](control-plane/), [`agent/`](agent/), [`cli/`](cli/), [`dashboard/`](dashboard/), and [`www/`](www/). Start with [`examples/demo-api/`](examples/demo-api/) for a small deployable project; [`deploy/`](deploy/) and [`fleet-up.sh`](fleet-up.sh) cover production Compose and local startup respectively. Marketing source and exports live in [`assets/marketing/`](assets/marketing/).
+
 | Start here | What it covers |
 | --- | --- |
 | [Self-hosting](docs/self-hosting.md) | Control-plane installation and networking |
@@ -128,6 +130,8 @@ Docker Desktop deployments require named volumes and reject bind mounts and host
 | [fleet.yaml reference](docs/fleet-yaml-spec.md) | Service and database declarations |
 | [Architecture](docs/ARCHITECTURE.md) | Components, deployment lifecycle, trust boundaries |
 | [CLI](cli/README.md) | Commands and operational workflows |
+| [Docs index](docs/README.md) | Guides, reference, architecture, and historical reports |
+| [Releasing](docs/RELEASING.md) | CLI and agent versioning, artifacts, checksums, and upgrade source |
 | [Contributing](CONTRIBUTING.md) | Repository layout and development checks |
 
 ## Help build Fleet OS

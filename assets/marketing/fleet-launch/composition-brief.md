@@ -4,8 +4,8 @@
 Create a stunning, high-aesthetic developer launch trailer (Instagram Reel / Shorts / TikTok format, 9:16 vertical) for Fleet OS.
 
 ## Output
-- Composition directory: `brag-output/composition/`
-- Rendered video: `brag-output/brag.mp4`
+- Composition directory: `assets/marketing/fleet-launch/composition/`
+- Rendered video: `assets/marketing/fleet-launch/brag.mp4`
 - Format: portrait — 1080x1920 (9:16)
 - Duration: 19.0 seconds
 

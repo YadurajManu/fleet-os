@@ -18,7 +18,14 @@ part, not the fix.
 | `dashboard/` | React 19 dashboard, served by nginx. |
 | `www/` | The marketing site and documentation (Vite). |
 | `deploy/` | Docker Compose, Cloudflare Tunnel config, registry auth. |
-| `docs/` | Architecture, data model, `fleet.yaml` spec, self-hosting. |
+| `examples/` | Small deployable projects, starting with `demo-api/`. |
+| `assets/marketing/` | Marketing source and exported media; not part of the runtime. |
+| `docs/` | Guides, reference, architecture, historical reports, and the [docs index](docs/README.md). |
+
+`fleet-up.sh` is the local stack entry point. The production Compose configuration
+and deployment instructions live under `deploy/`; the root `deploy.sh` is a
+short Docker Compose helper. Do not move agent installers or binary paths
+without updating the control-plane mounts and installer routes together.
 
 ## Getting the tests running
 
