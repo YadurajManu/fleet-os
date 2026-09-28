@@ -5,7 +5,7 @@ import { and, eq } from 'drizzle-orm'
 
 import { loadConfig } from '../src/config.js'
 import { createContext, closeContext, type AppContext } from '../src/api/context.js'
-import { orgs, fleets, nodes, services } from '../src/db/schema.js'
+import { orgs, fleets, nodes, services, deployments } from '../src/db/schema.js'
 import { hashToken, newAgentToken } from '../src/lib/tokens.js'
 import { parseManifest } from '../src/manifest/parse.js'
 import { syncManifest } from '../src/manifest/sync.js'
@@ -188,6 +188,18 @@ services:
     await apply(yaml)
     const [again] = await ctx.db.select().from(services).where(eq(services.id, first!.id))
     assert.equal(again!.hostname, 'keeper-homelab-oldform.example.test')
+  })
+
+  test('restores an unused pin but refuses to move a volume with deployment history', async () => {
+    const yaml = (node: string) => `fleet: homelab\nproject: pin-check\nservices:\n  data: { image: postgres:16, placement: pinned, node: ${node}, volume: pin-check-data }\n`
+    await apply(yaml('node-03'))
+    const [service] = await ctx.db.select().from(services).where(and(eq(services.fleetId, fleetId), eq(services.project, 'pin-check')))
+    await ctx.db.update(services).set({ pinnedNodeId: null }).where(eq(services.id, service!.id))
+    const restored = await apply(yaml('node-03'))
+    assert.deepEqual(restored.restoredPins, ['data → node-03'])
+    await ctx.db.insert(nodes).values({ fleetId, name: 'node-04', arch: 'amd64', cpuCores: 4, ramMb: 8192, diskMb: 100_000, agentTokenHash: hashToken(newAgentToken()) })
+    await ctx.db.insert(deployments).values({ serviceId: service!.id, status: 'failed' })
+    await assert.rejects(() => apply(yaml('node-04')), /volume may still be on the original node/i)
   })
 
 })

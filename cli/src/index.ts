@@ -86,6 +86,7 @@ const OPTIONS: Array<[string, string]> = [
   // Documented because it silently did nothing on `up` and `deploy` for a long
   // time, and a flag that validates but is ignored is worse than one that errors.
   ['--node <name>', 'Deploy onto this node, or say why the service cannot go there'],
+  ['--choose-node', 'Choose a node for new pinned services when applying a manifest'],
   // Needed since a service became (fleet, project, name): two projects may
   // both have a "backend", and picking the first match silently acts on
   // somebody else's.

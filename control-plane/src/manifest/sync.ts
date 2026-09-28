@@ -4,7 +4,7 @@ import { ENGINES, passwordRefFor } from './databases.js'
 import { unresolvedNodes } from './parse.js'
 import { hasSecret, setSecret } from '../secrets/store.js'
 import { managedHostname } from '../ingress/routes.js'
-import { services, nodes, fleets } from '../db/schema.js'
+import { services, nodes, fleets, deployments } from '../db/schema.js'
 import { recordAudit } from '../lib/audit.js'
 import { ApiError } from '../api/errors.js'
 import type { AppContext } from '../api/context.js'
@@ -17,6 +17,7 @@ export type SyncResult = {
   project: string
   created: string[]
   updated: string[]
+  restoredPins: string[]
   /** In the fleet but no longer in the manifest — reported, never deleted. */
   orphaned: string[]
   warnings: string[]
@@ -101,6 +102,7 @@ export async function syncManifest(
 
   const created: string[] = []
   const updated: string[] = []
+  const restoredPins: string[] = []
 
   await ctx.db.transaction(async (tx) => {
     for (const svc of manifest.services) {
@@ -153,6 +155,10 @@ export async function syncManifest(
 
       const prior = existingByName.get(key(project, svc.name))
       if (prior) {
+        if (prior.persistentVolume && prior.pinnedNodeId !== values.pinnedNodeId) {
+          const history = await tx.select({ id: deployments.id }).from(deployments).where(eq(deployments.serviceId, prior.id)).limit(1)
+          if (history.length) throw ApiError.unprocessable('volume_migration_required', `${svc.name} has deployment history. Its volume may still be on the original node; restore that node or migrate/restore the data before changing its pin.`)
+        }
         // An existing service keeps the hostname it was deployed with. The
         // scheme changed to carry the project, and rewriting a live row's
         // hostname would break a URL somebody has bookmarked or that another
@@ -163,6 +169,7 @@ export async function syncManifest(
           .set({ ...values, hostname: prior.hostname ?? values.hostname })
           .where(eq(services.id, prior.id))
         updated.push(svc.name)
+        if (prior.placementPolicy === 'pinned' && !prior.pinnedNodeId && values.pinnedNodeId) restoredPins.push(`${svc.name} → ${svc.node}`)
       } else {
         await tx.insert(services).values(values)
         created.push(svc.name)
@@ -207,5 +214,5 @@ export async function syncManifest(
     )
   }
 
-  return { project, created, updated, orphaned, warnings, generatedSecrets: createdSecrets }
+  return { project, created, updated, restoredPins, orphaned, warnings, generatedSecrets: createdSecrets }
 }

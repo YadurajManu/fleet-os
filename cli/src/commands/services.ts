@@ -1,10 +1,11 @@
 import { readFile, writeFile, access } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
+import { parseDocument } from 'yaml'
 import { request, streamRequest, requireFleet, CliError, EXIT } from '../api.js'
 import { c, table, statusColour, keyValues, relativeTime, mb } from '../render.js'
 import { task, glyph } from '../ui.js'
 import { withLadder } from '../ladder.js'
-import { confirm } from '../prompt.js'
+import { canPrompt, confirm, select } from '../prompt.js'
 import {
   DEPLOY_STEPS,
   phaseWalker,
@@ -22,11 +23,13 @@ type Service = {
   project: string
   repoUrl: string | null
   placementPolicy: string
+  pinnedNodeId?: string | null
   requestRamMb: number
   persistentVolume: boolean
   hostname: string | null
   domain: string | null
   current: { nodeName: string | null; status: string; gitSha: string | null } | null
+  last?: { status: string } | null
 }
 
 type PlacementPreview = {
@@ -38,6 +41,52 @@ type PlacementPreview = {
 }
 
 const manifestPath = (given?: string) => given ?? 'fleet.yaml'
+
+async function chooseManifestNodes(source: string, fleetId: string, flags: Flags): Promise<string> {
+  if (flags.json || flags['dry-run'] || flags.plan) return source
+  const doc = parseDocument(source)
+  if (doc.errors.length) return source // The server reports YAML errors with their locations.
+  const data = doc.toJS() as { databases?: Record<string, { node?: string }>; services?: Record<string, { node?: string; placement?: string }> } | null
+  const entries = [
+    ...Object.entries(data?.databases ?? {}).map(([name, body]) => ({ name, block: 'databases', body })),
+    ...Object.entries(data?.services ?? {}).filter(([, body]) => body?.placement === 'pinned').map(([name, body]) => ({ name, block: 'services', body })),
+  ]
+  if (!entries.length) return source
+  const { body: nodeBody } = await request<{ nodes: FleetNode[] }>('GET', `/fleets/${fleetId}/nodes`)
+  const nodes = nodeBody.nodes
+  if (canPrompt()) console.log(`\nAvailable nodes: ${nodes.map((n) => `${n.name} (${n.live ? 'online' : 'offline'}, ${n.arch ?? 'arch unknown'})`).join(' · ') || 'none'}`)
+  const project = String(doc.get('project') ?? projectNameFor(process.cwd()))
+  const { body: serviceBody } = await request<{ services: Service[] }>('GET', `/fleets/${fleetId}/services`)
+  let changed = false
+  for (const entry of entries) {
+    const existing = serviceBody.services.find((s) => s.project === project && s.name === entry.name)
+    const current = entry.body?.node
+    const missing = !current || !nodes.some((n) => n.name === current)
+    if (!missing && !flags['choose-node']) continue
+    // A volume may still exist after a stopped or failed deployment. Never offer
+    // a fresh pin as if that volume would follow it to another machine.
+    if (existing?.persistentVolume && existing.last) {
+      throw new CliError(`${entry.name} has deployment history. Its data may remain on its original node; restore that node or migrate/restore the volume before changing the pin.`, EXIT.usage)
+    }
+    if (!nodes.length) throw new CliError(`No nodes in this fleet. Pair one before placing ${entry.name}.`, EXIT.usage)
+    if (!canPrompt()) throw new CliError(`Choose a node for ${entry.block}.${entry.name}.node in fleet.yaml before applying. Available: ${nodes.map((n) => n.name).join(', ')}.`, EXIT.usage)
+    console.log(`\nPlacement for ${entry.name}${current ? ` · current pin ${current}` : ''}`)
+    const picked = await select(`Node for ${entry.name}`, nodes.map((n) => ({
+      label: n.name,
+      value: n.name,
+      hint: [n.live ? 'online' : 'offline', n.arch, n.ramMb ? mb(n.ramMb) + ' RAM' : undefined, freeDiskMb(n) !== undefined ? mb(freeDiskMb(n)!) + ' free disk' : undefined].filter(Boolean).join(' · '),
+    })))
+    if (picked !== current) {
+      doc.setIn([entry.block, entry.name, 'node'], picked)
+      changed = true
+    }
+  }
+  if (!changed) return source
+  const updated = doc.toString()
+  const { body: check } = await request<{ valid: boolean; issues?: Array<{ path: string; message: string }> }>('POST', `/fleets/${fleetId}/services/validate`, { body: { manifest: updated } })
+  if (!check.valid) throw new CliError(`Node choice was not saved: ${check.issues?.map((i) => `${i.path}: ${i.message}`).join('; ') ?? 'manifest is invalid'}`, EXIT.usage)
+  return updated
+}
 
 async function readManifest(path: string): Promise<string> {
   try {
@@ -85,7 +134,9 @@ export const validateCommand = {
 export const applyCommand = {
   async run(args: string[], flags: Flags) {
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
-    const manifest = await readManifest(manifestPath(args[0]))
+    const original = await readManifest(manifestPath(args[0]))
+    let manifest = original
+    if (!flags['dry-run'] && !flags.plan) manifest = await chooseManifestNodes(manifest, fleetId, flags)
 
     // --dry-run used to be accepted and ignored, so `fleet apply --dry-run`
     // applied. `fleet init` prints that exact command as the safe way to check
@@ -140,6 +191,7 @@ export const applyCommand = {
             project: string
             created: string[]
             updated: string[]
+            restoredPins?: string[]
             orphaned: string[]
             warnings: string[]
           }>('POST', `/fleets/${fleetId}/services`, {
@@ -154,10 +206,16 @@ export const applyCommand = {
       }
     )
 
+    if (manifest !== original) {
+      await writeFile(manifestPath(args[0]), manifest)
+      if (!flags.json) console.log(`${glyph.ok} ${c.green('saved')}  node choices in ${manifestPath(args[0])}`)
+    }
+
     if (flags.json) return console.log(JSON.stringify(body, null, 2))
 
     if (body.created.length) console.log(`${glyph.ok} ${c.green('created')}  ${body.created.join(', ')}`)
     if (body.updated.length) console.log(`${glyph.ok} ${c.cyan('updated')}  ${body.updated.join(', ')}`)
+    for (const pin of body.restoredPins ?? []) console.log(`${glyph.ok} ${c.green('pin restored')}  ${pin}`)
     for (const w of body.warnings) console.log(`${glyph.warn} ${c.yellow('warning')}  ${w}`)
     if (body.created.length) console.log(c.dim(`\nnext: fleet deploy ${body.created[0]}`))
   },
@@ -275,20 +333,25 @@ async function deployPlan(fleetId: string, service: Service): Promise<PlacementP
   return (await request<{ decision: PlacementPreview }>('GET', `/services/${service.id}/placement-preview`)).body.decision
 }
 
-function printPlan(service: Service, plan: PlacementPreview, gitSha?: string) {
+function printPlan(service: Service, plan: PlacementPreview, gitSha?: string, requestedNode?: string) {
   console.log(`\n${c.bold(`Plan for ${service.name}`)}`)
   if (plan.outcome !== 'placed' || !plan.nodeName) {
     console.log(`${c.red('  placement')}    ${plan.summary ?? 'No eligible node'}`)
     for (const rejected of plan.rejected) console.log(`  ${c.dim(rejected.nodeName.padEnd(12))} ${rejected.detail}`)
     return false
   }
-  const winner = plan.candidates[0]
+  const winner = requestedNode ? plan.candidates.find((n) => n.nodeName === requestedNode) : plan.candidates[0]
+  if (requestedNode && !winner) {
+    const rejection = plan.rejected.find((n) => n.nodeName === requestedNode)
+    console.log(`${c.red('  placement')}    ${rejection?.detail ?? `No eligible node named ${requestedNode}`}`)
+    return false
+  }
   const source = service.repoUrl
     ? `${service.repoUrl}${gitSha ? ` · ${gitSha.slice(0, 12)}` : ''}`
     : gitSha ? gitSha.slice(0, 12) : 'service definition'
-  const target = plan.nodeName
+  const target = requestedNode ?? plan.nodeName
   const reason = winner
-    ? `highest eligible score (${winner.score.toFixed(3)}; headroom ${winner.breakdown.headroom.toFixed(2)}, load ${winner.breakdown.load.toFixed(2)})`
+    ? `${requestedNode ? 'selected eligible node' : 'highest eligible score'} (${winner.score.toFixed(3)}; headroom ${winner.breakdown.headroom.toFixed(2)}, load ${winner.breakdown.load.toFixed(2)})`
     : 'eligible for this service'
   const url = service.domain ?? service.hostname ?? 'assigned after scheduling'
   console.log(`  ${c.dim('source'.padEnd(12))} ${source}`)
@@ -374,12 +437,22 @@ export const deployCommand = {
 
     const plan = await task('checking deployment plan', async () => deployPlan(fleetId, service))
     const viable = plan.outcome === 'placed' && Boolean(plan.nodeName)
-    if (!flags.json) printPlan(service, plan, gitSha)
+    let requestedNode = typeof flags.node === 'string' ? flags.node : undefined
+    if (flags['choose-node'] && !flags.plan && !flags['dry-run'] && !flags.json) {
+      if (service.placementPolicy === 'pinned') {
+        console.log(c.dim('This service is pinned. Change its manifest pin only after checking where its data lives.'))
+      } else if (viable && plan.candidates.length > 1) {
+        if (!canPrompt()) throw new CliError('Use --node <name> when deploying without a terminal.', EXIT.usage)
+        requestedNode = await select(`Node for ${service.name}`, plan.candidates.map((n) => ({ label: n.nodeName, value: n.nodeName, hint: `eligible · score ${n.score.toFixed(2)}` })))
+      }
+    }
+    const selectedViable = !requestedNode || plan.candidates.some((n) => n.nodeName === requestedNode)
+    if (!flags.json) printPlan(service, plan, gitSha, requestedNode)
     if (flags.json && (flags.plan || flags['dry-run'])) {
       console.log(JSON.stringify({ service: service.name, gitSha: gitSha ?? null, plan }, null, 2))
       return
     }
-    if (!viable) {
+    if (!viable || !selectedViable) {
       if (flags.json) console.log(JSON.stringify({ service: service.name, gitSha: gitSha ?? null, plan }, null, 2))
       process.exitCode = EXIT.noEligibleNode
       return
@@ -429,7 +502,7 @@ export const deployCommand = {
                 // Was in KNOWN_FLAGS and read by nothing, so `--node` was
                 // accepted and ignored and the scheduler picked whatever
                 // scored highest.
-                ...(typeof flags.node === 'string' ? { node: flags.node } : {}),
+                ...(requestedNode ? { node: requestedNode } : {}),
               },
             })
           ).body

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `fleet apply` shows available nodes and prompts when a new pinned service needs a node; `--choose-node` can explicitly revisit the choice. The chosen pin is validated and saved to `fleet.yaml` after a successful apply.
+- `fleet deploy --choose-node` lists eligible nodes for flexible services. Placement previews now reflect `--node` selections and reject ineligible targets before uploading a build context.
+- Apply reports restored pins; a service with deployment history cannot silently move its persistent volume to another node.
+
 ## 0.21.1
 
 - `fleet uninstall --force` now explains when Docker cleanup is incomplete because Docker Desktop is stopped, and gives the correct retry command instead of control-plane troubleshooting advice.
