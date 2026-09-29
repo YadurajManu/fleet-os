@@ -2,7 +2,7 @@
 
 ## Current milestone: local snapshot provenance
 
-- [ ] **Phase 1: Inspect and record local deployments** — SNAP-01 through SNAP-06
+- [x] **Phase 1: Inspect and record local deployments** — SNAP-01 through SNAP-06
 
 ### Phase 1: Inspect and record local deployments
 
