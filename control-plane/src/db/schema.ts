@@ -477,8 +477,9 @@ export const deployments = pgTable(
      * holding one; the second was an AppleDouble member that existed only
      * inside the archive, and nothing could see it.
      */
-    buildContext: jsonb('build_context').$type<{ entries: string[]; total: number; bytes: number }>(),
+    buildContext: jsonb('build_context').$type<{ entries: string[]; total: number; bytes: number; snapshot?: { fingerprint: string; files: Record<string, string>; manifestHash?: string; note?: string; changes?: { added: number; modified: number; removed: number } } }>(),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
   },
   (t) => [

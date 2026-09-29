@@ -1,0 +1,13 @@
+{
+  "source_path": "docs/adr/0001-mesh-and-ingress.md",
+  "type": "ADR",
+  "confidence": "high",
+  "manifest_override": false,
+  "title": "ADR 0001 — Mesh networking and reaching nodes behind NAT",
+  "summary": "Proposes outbound reverse-tunnel ingress now and self-hosted Headscale with tsnet for later node-to-node communication.",
+  "scope": ["ingress", "NAT", "node-to-node communication", "reverse tunnel", "Headscale"],
+  "cross_refs": [],
+  "locked": false,
+  "precedence": null,
+  "notes": "Status is proposed, so its future mesh choice is not a locked decision."
+}

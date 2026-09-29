@@ -147,6 +147,7 @@ export async function evaluateCanaryHealth(
         serviceId: opts.serviceId,
         gitSha: target.gitSha,
         imageTags: target.imageTags,
+        buildContext: target.buildContext,
         nodeId: targetNode,
         hostPort: current.hostPort ?? target.hostPort,
         status: 'deploying',

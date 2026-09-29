@@ -17,6 +17,7 @@ import { loadConfig } from '../src/config.js'
 import { createContext, closeContext, type AppContext } from '../src/api/context.js'
 import { extractContext, disposeContext, contextPath, assertValidContextId } from '../src/build/context.js'
 import { ApiError } from '../src/api/errors.js'
+import { compareSnapshots } from '../src/build/snapshot.js'
 
 /** Build a .tar.gz in memory from a directory, the way the CLI does. */
 function tarball(dir: string, extraArgs: string[] = []): Promise<Buffer> {
@@ -53,11 +54,34 @@ describe('unpacking an uploaded build context', () => {
     await mkdir(join(src, 'app'), { recursive: true })
     await writeFile(join(src, 'app', 'index.js'), 'console.log(1)\n')
 
-    const { id, path } = await extractContext(workdir, await tarball(src))
+    const { id, path, listing } = await extractContext(workdir, await tarball(src))
 
     assert.equal(await readFile(join(path, 'Dockerfile'), 'utf8'), 'FROM nginx\n')
     assert.equal(await readFile(join(path, 'app', 'index.js'), 'utf8'), 'console.log(1)\n')
     assert.equal(path, contextPath(workdir, id))
+    assert.match(listing.snapshot?.fingerprint ?? '', /^[a-f0-9]{64}$/)
+    assert.deepEqual(Object.keys(listing.snapshot?.files ?? {}).sort(), ['Dockerfile', 'app/index.js'])
+  })
+
+  test('source comparison counts changed files in verified uploads', async () => {
+    const first = await mkdtemp(join(tmpdir(), 'fleet-source-first-'))
+    const next = await mkdtemp(join(tmpdir(), 'fleet-source-next-'))
+    try {
+      await writeFile(join(first, 'Dockerfile'), 'FROM scratch\n')
+      await writeFile(join(first, 'old.txt'), 'old')
+      await writeFile(join(next, 'Dockerfile'), 'FROM alpine\n')
+      await writeFile(join(next, 'new.txt'), 'new')
+      const a = await extractContext(workdir, await tarball(first))
+      const b = await extractContext(workdir, await tarball(next))
+      assert.deepEqual(compareSnapshots(b.listing.snapshot!, a.listing.snapshot), {
+        added: ['new.txt'], modified: ['Dockerfile'], removed: ['old.txt'],
+      })
+      await disposeContext(workdir, a.id)
+      await disposeContext(workdir, b.id)
+    } finally {
+      await rm(first, { recursive: true, force: true })
+      await rm(next, { recursive: true, force: true })
+    }
   })
 
   test('each upload gets its own directory', async () => {

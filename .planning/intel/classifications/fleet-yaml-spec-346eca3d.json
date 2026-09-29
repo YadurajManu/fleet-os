@@ -1,0 +1,13 @@
+{
+  "source_path": "docs/fleet-yaml-spec.md",
+  "type": "SPEC",
+  "confidence": "high",
+  "manifest_override": false,
+  "title": "fleet.yaml",
+  "summary": "Defines the manifest contract for services, placement, databases, secrets, health, volumes, backups, and replicas.",
+  "scope": ["fleet.yaml", "services", "placement", "databases", "secrets", "health", "backups", "replicas"],
+  "cross_refs": ["adr/0001-mesh-and-ingress.md"],
+  "locked": false,
+  "precedence": null,
+  "notes": ""
+}

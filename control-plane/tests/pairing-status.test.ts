@@ -75,3 +75,21 @@ test('deployment lookup uses exact ID even while a previous release is running',
   assert.equal(result.json().deployment.status, 'failed')
   assert.equal(result.json().deployment.id, failed!.id)
 })
+
+test('source baseline ignores a newer failed deploy and requires service access', async () => {
+  const [service] = await ctx.db.insert(services).values({ fleetId: owner.fleet.id, name: 'snapshot-app' }).returning()
+  const [running] = await ctx.db.insert(deployments).values({
+    serviceId: service!.id, status: 'running', activatedAt: new Date(),
+    buildContext: { entries: ['Dockerfile'], total: 1, bytes: 100, snapshot: { fingerprint: 'a'.repeat(64), files: { Dockerfile: 'b'.repeat(64) } } },
+  }).returning()
+  await ctx.db.insert(deployments).values({
+    serviceId: service!.id, status: 'failed',
+    buildContext: { entries: ['Dockerfile'], total: 1, bytes: 100, snapshot: { fingerprint: 'c'.repeat(64), files: { Dockerfile: 'd'.repeat(64) } } },
+  })
+  const path = `/services/${service!.id}/source-baseline`
+  assert.equal((await app.inject({ url: path })).statusCode, 401)
+  const result = await app.inject({ url: path, headers: headers() })
+  assert.equal(result.statusCode, 200, result.body)
+  assert.equal(result.json().release.id, running!.id)
+  assert.equal(result.json().release.buildContext.snapshot.fingerprint, 'a'.repeat(64))
+})

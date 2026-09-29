@@ -11,7 +11,7 @@ export const PAGES = {
     group: 'Developers',
     title: 'Documentation',
     kicker: 'start here',
-    lede: 'The real first-run path: install the CLI, sign in, pair one machine, describe your service, then deploy from the dashboard or on a GitHub push.',
+    lede: 'Install the CLI, pair a machine, then deploy from your working directory or a connected GitHub repository.',
     updated: '21 Aug 2026',
     blocks: [
       H('1. Install the CLI and sign in'),
@@ -66,9 +66,20 @@ export const PAGES = {
       { t: 'code', lang: 'sh', lines: [
         '$ fleet validate',
         '$ fleet apply',
+        '$ fleet changes web       # preview local files; upload nothing',
         '$ fleet deploy web',
+        '$ fleet deployments web   # see the source snapshot and release status',
         '$ fleet status',
       ]},
+
+      H('Redeploy after changing local code'),
+      P('Edit files in your project, then run fleet changes web to see which included files differ from the last successful release. fleet deploy web previews and uploads that exact local snapshot, including uncommitted edits. The Git branch and commit shown are context; the snapshot fingerprint identifies what Fleet actually built.'),
+      { t: 'code', lang: 'sh', lines: [
+        '$ fleet changes web',
+        '$ fleet deploy web --message "Update home page"',
+        '$ fleet deployments web',
+      ]},
+      { t: 'note', tone: 'signal', text: 'A failed attempt does not replace the successful comparison baseline. Changes to fleet.yaml still need fleet apply, or fleet up to apply and deploy together. The local snapshot commands require a CLI and control plane version that support them.' },
 
       H('4. Deploy from GitHub'),
       P('For automatic deployments, configure a GitHub App on the control plane, then go to Dashboard → Settings → GitHub workspace. Choose the installed GitHub account, connect only the repository you want, and set its watched branch and fleet.yaml path. Fleet then uses the exact commit from each matching push.'),
@@ -326,7 +337,7 @@ export const PAGES = {
     group: 'Developers',
     title: 'CLI reference',
     kicker: 'reference',
-    lede: 'The fleet binary talks to the same API as the dashboard. Use it to pair nodes, validate a manifest, deploy, and inspect the result.',
+    lede: 'The fleet binary pairs nodes, validates manifests, previews local changes, deploys, and inspects each release.',
     updated: '21 Aug 2026',
     blocks: [
       H('Install'),
@@ -364,17 +375,28 @@ export const PAGES = {
 
       H('Services and deploys'),
       { t: 'table', head: ['Command', 'What it does'], rows: [
-        ['fleet up [service]', 'Zero-config deploy: smart detect + build + schedule + live URL.'],
+        ['fleet up [service]', 'Apply the manifest, preview and upload local build contexts, deploy in dependency order, and print URLs.'],
         ['fleet down <service>', 'Cleanly stop and tear down a service deployment from the cluster.'],
         ['fleet validate [file]', 'Check a fleet.yaml without saving it.'],
         ['fleet apply [file]', 'Save the desired service definitions from fleet.yaml.'],
-        ['fleet deploy <service> [--sha]', 'Show a placement plan, ask for confirmation, then build and roll out one service.'],
+        ['fleet changes <service>', 'Preview included local files, added/modified/removed counts, Git context and upload size without uploading or deploying.'],
+        ['fleet deploy <service> [--sha]', 'Show the placement plan and local snapshot preview, ask for confirmation, then upload and roll out one service.'],
+        ['fleet deploy <service> --message <text>', 'Attach a short note to a local snapshot release.'],
         ['fleet deploy <service> --plan', 'Show the source, target, reason, and URL without changing anything.'],
         ['fleet status', 'One-screen view of the whole fleet.'],
-        ['fleet deployments <svc>', 'Show deployment history and failure reasons.'],
+        ['fleet deployments <svc>', 'Show release history, local snapshot or Git identity, changed-file counts, node/platform, digest and failure reasons.'],
         ['fleet reschedule <svc>', 'Force a placement decision to be recomputed.'],
         ['fleet events', 'Unified event timeline.'],
       ]},
+
+      H('Deploy changed code without GitHub'),
+      P('From the project directory, run fleet changes before fleet deploy. Fleet compares only files included in the build archive with the last release that actually ran; .git, node_modules and .dockerignore exclusions are not counted. The preview makes no upload. Deploying sends the same archive that was previewed.'),
+      { t: 'code', lang: 'sh', lines: [
+        '$ fleet changes web',
+        '$ fleet deploy web --message "Fix navigation"',
+        '$ fleet deployments web',
+      ]},
+      { t: 'note', tone: 'signal', text: 'An older release may have no file hashes to compare, and switching from GitHub to local source cannot produce a per-file diff. fleet.yaml changes require fleet apply or fleet up; a source preview alone does not apply settings.' },
 
       H('Output'),
       P('Commands that return structured data accept --json. The shape matches the REST response for the equivalent endpoint, so scripts can use the same fields as the dashboard.'),

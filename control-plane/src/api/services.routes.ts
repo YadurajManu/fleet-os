@@ -1,6 +1,7 @@
 import { planPlatforms } from '../build/platforms.js'
 import { inspectImage, pinnedImage } from '../build/manifests.js'
-import { and, eq, ne, desc, inArray, gte, count } from 'drizzle-orm'
+import { compareSnapshots } from '../build/snapshot.js'
+import { and, eq, ne, desc, inArray, gte, count, isNotNull } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
 import { services, deployments, nodes, fleets, placementEvents } from '../db/schema.js'
@@ -274,7 +275,7 @@ export async function serviceRoutes(app: FastifyInstance) {
       if (!current || !current.nodeId) throw ApiError.unprocessable('not_running', `"${service.name}" has no deployment to restart`)
       const [created] = await db.transaction(async (tx) => {
         await tx.update(deployments).set({ status: 'superseded', finishedAt: new Date() }).where(eq(deployments.id, current.id))
-        const created = await tx.insert(deployments).values({ serviceId: service.id, gitSha: current.gitSha, imageTags: current.imageTags, nodeId: current.nodeId, hostPort: current.hostPort, status: 'deploying' }).returning()
+        const created = await tx.insert(deployments).values({ serviceId: service.id, gitSha: current.gitSha, imageTags: current.imageTags, buildContext: current.buildContext, nodeId: current.nodeId, hostPort: current.hostPort, status: 'deploying' }).returning()
         await recordAudit(tx, { orgId, actorUserId: req.userId, action: 'service.restarted', targetType: 'service', targetId: service.id, metadata: { fromDeployment: current.id, deployment: created[0]!.id } })
         return created
       })
@@ -392,7 +393,7 @@ export async function serviceRoutes(app: FastifyInstance) {
       if (!nodeId) throw ApiError.unprocessable('no_rollback_target', 'The previous release has no node assignment')
       const [created] = await db.transaction(async (tx) => {
         if (current) await tx.update(deployments).set({ status: 'superseded', finishedAt: new Date() }).where(eq(deployments.id, current.id))
-        const created = await tx.insert(deployments).values({ serviceId: service.id, gitSha: target.gitSha, imageTags: target.imageTags, nodeId, hostPort: current?.hostPort ?? target.hostPort, status: 'deploying' }).returning()
+        const created = await tx.insert(deployments).values({ serviceId: service.id, gitSha: target.gitSha, imageTags: target.imageTags, buildContext: target.buildContext, nodeId, hostPort: current?.hostPort ?? target.hostPort, status: 'deploying' }).returning()
         await recordAudit(tx, { orgId, actorUserId: req.userId, action: 'service.rolled_back', targetType: 'service', targetId: service.id, metadata: { fromDeployment: current?.id, targetDeployment: target.id, deployment: created[0]!.id } })
         return created
       })
@@ -668,6 +669,8 @@ export async function serviceRoutes(app: FastifyInstance) {
           image: z.string().max(512).optional(),
           /** An upload from POST /services/:id/build-context. */
           contextId: z.string().max(64).optional(),
+          manifestHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+          sourceNote: z.string().max(120).regex(/^[^\x00-\x1f\x7f]*$/).optional(),
           /** Deploy onto this node specifically. A name or an id. */
           node: z.string().max(128).optional(),
         })
@@ -787,13 +790,25 @@ export async function serviceRoutes(app: FastifyInstance) {
       // row walks queued → building → pushing → scheduling → deploying, which is
       // what the CLI polls to draw a deploy that takes minutes, and what leaves a
       // failed build somewhere `fleet deployments` can find it.
+      const contextListing = body.contextId ? await readContextListing(app.ctx.config.BUILD_WORKDIR, body.contextId) : null
+      if (contextListing?.snapshot) {
+        contextListing.snapshot.manifestHash = body.manifestHash
+        contextListing.snapshot.note = body.sourceNote
+        const [previous] = await db.select({ buildContext: deployments.buildContext }).from(deployments)
+          .where(and(eq(deployments.serviceId, service.id), inArray(deployments.status, ['running', 'superseded']), isNotNull(deployments.activatedAt)))
+          .orderBy(desc(deployments.startedAt)).limit(1)
+        const diff = compareSnapshots(contextListing.snapshot, previous?.buildContext?.snapshot)
+        if (diff) contextListing.snapshot.changes = {
+          added: diff.added.length,
+          modified: diff.modified.length,
+          removed: diff.removed.length,
+        }
+      }
       const deploymentId = await openDeployment(app.ctx, {
         serviceId: service.id,
         nodeId: decision.nodeId,
         gitSha: body.gitSha ?? null,
-        buildContext: body.contextId
-          ? await readContextListing(app.ctx.config.BUILD_WORKDIR, body.contextId)
-          : null,
+        buildContext: contextListing,
       })
       const phases = phaseWriter(app.ctx, deploymentId)
 
@@ -1066,6 +1081,7 @@ export async function serviceRoutes(app: FastifyInstance) {
           serviceId: service.id,
           gitSha: current.gitSha,
           imageTags: current.imageTags,
+          buildContext: current.buildContext,
           nodeId: decision.nodeId,
           status: 'deploying',
         })
@@ -1103,13 +1119,27 @@ export async function serviceRoutes(app: FastifyInstance) {
     return { deployment, progress: progress?.deploymentId === deploymentId ? progress : null }
   })
 
+  /** The last successful release is the comparison base, never a failed attempt. */
+  app.get('/services/:serviceId/source-baseline', { preHandler: requireServicePermission('service.read') }, async req => {
+    const { service } = await loadService(app, req.params as { serviceId: string })
+    const [release] = await db.select({
+      id: deployments.id,
+      status: deployments.status,
+      gitSha: deployments.gitSha,
+      buildContext: deployments.buildContext,
+    }).from(deployments)
+      .where(and(eq(deployments.serviceId, service.id), inArray(deployments.status, ['running', 'superseded']), isNotNull(deployments.activatedAt)))
+      .orderBy(desc(deployments.startedAt)).limit(1)
+    return { release: release ?? null }
+  })
+
   app.get(
     '/services/:serviceId/deployments',
     { preHandler: requireServicePermission('service.read') },
     async (req) => {
       const { service } = await loadService(app, req.params as { serviceId: string })
       const rows = await db
-        .select({ deployment: deployments, nodeName: nodes.name })
+        .select({ deployment: deployments, nodeName: nodes.name, nodePlatform: nodes.platform })
         .from(deployments)
         .leftJoin(nodes, eq(nodes.id, deployments.nodeId))
         .where(eq(deployments.serviceId, service.id))
@@ -1134,6 +1164,7 @@ export async function serviceRoutes(app: FastifyInstance) {
         deployments: rows.map((r) => ({
           ...r.deployment,
           nodeName: r.nodeName,
+          nodePlatform: r.nodePlatform,
           ...(live && live.deploymentId === r.deployment.id
             ? {
                 progress: {

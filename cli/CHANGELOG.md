@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.23.0
+
+- `fleet changes <service>` previews the exact local build snapshot, including added, modified, and removed files against the last successful release, without uploading source.
+- `fleet deploy` and `fleet up` show local snapshot identity, Git context, excluded patterns, manifest comparison, and upload size. The deploy uploads the same archive it previewed.
+- `fleet deployments` labels local snapshots separately from Git commits and can show a short note supplied with `--message`.
+- Requires the matching control-plane source-baseline API and server-side context hashing. Older releases without hashes report that comparison is unavailable.
+
 ## 0.22.0
 
 - `fleet apply` shows available nodes and prompts when a new pinned service needs a node; `--choose-node` can explicitly revisit the choice. The chosen pin is validated and saved to `fleet.yaml` after a successful apply.

@@ -51,7 +51,9 @@ const COLOR = {
 
 const CLI = [
   ['fleet nodes', 'list, cordon, drain, remove'],
-  ['fleet deploy', 'trigger a deploy at a git sha'],
+  ['fleet changes web', 'preview changed local files without upload'],
+  ['fleet deploy web', 'upload this snapshot and roll it out'],
+  ['fleet deployments web', 'see snapshot, status, node and digest'],
   ['fleet logs -f', 'follow logs across every node'],
   ['fleet rollback', 'previous deployment, same node rules'],
   ['fleet reschedule', 'force a service to move'],

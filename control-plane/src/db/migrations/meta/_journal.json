@@ -197,6 +197,13 @@
       "when": 1790316000000,
       "tag": "0027_email_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790700000000,
+      "tag": "0028_deployment_activation",
+      "breakpoints": true
     }
   ]
 }

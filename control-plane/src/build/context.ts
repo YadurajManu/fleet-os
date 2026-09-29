@@ -15,6 +15,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { ApiError } from '../api/errors.js'
+import { snapshotDirectory, type Snapshot } from './snapshot.js'
 
 /** Big enough for a real repository, small enough that a stray node_modules is caught. */
 export const MAX_CONTEXT_BYTES = 256 * 1024 * 1024
@@ -58,6 +59,8 @@ export type ContextListing = {
   total: number
   /** Compressed size of the upload. */
   bytes: number
+  /** Content identity and per-file hashes, without source bytes. */
+  snapshot?: Snapshot & { manifestHash?: string; note?: string; changes?: { added: number; modified: number; removed: number } }
 }
 
 /**
@@ -197,6 +200,9 @@ export async function extractContext(
   // much of a control plane. A file legitimately named `._x` is legal on Linux
   // and, in a build context, has never once been intended.
   await runTar(['-xzf', '-', '-C', path, '--no-same-owner', '--exclude=._*'], path, archive)
+
+  recorded.snapshot = await snapshotDirectory(path)
+  await writeFile(listingPath(workdir, id), JSON.stringify(recorded))
 
   return { id, path, listing: recorded }
 }

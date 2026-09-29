@@ -16,6 +16,7 @@ import { secretsCommand } from './secrets.js'
 import { backupCommand, backupsCommand, restoreCommand } from './backups.js'
 import {
   applyCommand,
+  changesCommand,
   deployCommand,
   deploymentsCommand,
   initCommand,
@@ -55,6 +56,7 @@ export const commands: Record<string, Command> = {
   nodes: nodesCommand,
   services: servicesCommand,
   deploy: deployCommand,
+  changes: changesCommand,
   where: whereCommand,
   reschedule: rescheduleCommand,
   deployments: deploymentsCommand,

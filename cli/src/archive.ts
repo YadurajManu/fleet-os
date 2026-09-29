@@ -9,9 +9,13 @@
  * Apple laptop will not start on an amd64 node.
  */
 import { spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { CliError, EXIT } from './api.js'
+import { snapshotDirectory, type Snapshot } from './snapshot.js'
 
 /**
  * Excluded even when no .dockerignore says so.
@@ -157,6 +161,22 @@ export function humanBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
 
+/** Inspect the same packed bytes that will be uploaded, without uploading them. */
+export async function snapshotArchive(archive: Buffer): Promise<Snapshot> {
+  const root = await mkdtemp(join(tmpdir(), 'fleet-snapshot-'))
+  try {
+    const archivePath = join(root, 'context.tar.gz')
+    const extracted = join(root, 'contents')
+    const { mkdir } = await import('node:fs/promises')
+    await mkdir(extracted)
+    await writeFile(archivePath, archive)
+    await promisify(execFile)('tar', ['-xzf', archivePath, '-C', extracted, '--no-same-owner', '--exclude=._*'])
+    return await snapshotDirectory(extracted)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
 /**
  * Pack the directory and hand it to the control plane.
  *
@@ -166,10 +186,11 @@ export function humanBytes(bytes: number): string {
  */
 export async function uploadContext(
   serviceId: string,
-  dir: string
+  dir: string,
+  packed?: Buffer
 ): Promise<{ contextId: string; bytes: number }> {
   const { request } = await import('./api.js')
-  const archive = await packContext(dir)
+  const archive = packed ?? await packContext(dir)
 
   const { body } = await request<{ contextId: string; bytes: number }>(
     'POST',

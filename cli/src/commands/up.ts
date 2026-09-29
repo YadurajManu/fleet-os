@@ -17,6 +17,7 @@ import { DEPLOY_STEPS, phaseWalker } from '../progress.js'
 import { requireRunning } from '../deploy-wait.js'
 import { planFromManifest, deployOrder, projectNameFor } from '../plan.js'
 import { uploadContext, humanBytes } from '../archive.js'
+import { localPreview, printLocalPreview } from '../source-preview.js'
 import type { Flags } from '../args.js'
 
 type Service = {
@@ -146,6 +147,8 @@ export const upCommand = {
         wait: !flags['no-wait'],
         ...(typeof flags.node === 'string' ? { node: flags.node } : {}),
         rootDir: typeof flags.file === 'string' ? dirname(flags.file) : rootDir,
+        manifestPath,
+        ...(typeof flags.message === 'string' ? { sourceNote: flags.message } : {}),
       })
       deployed.push({ service, url })
     }
@@ -179,16 +182,22 @@ async function deployOne(
     buildContext?: string
     wait: boolean
     rootDir: string
+    manifestPath: string
+    sourceNote?: string
     /** `--node`: deploy every service here, or say why one cannot go. */
     node?: string
   }
 ): Promise<string | null> {
   let contextId: string | undefined
+  let manifestHash: string | undefined
   if (opts.buildContext) {
     const dir = join(opts.rootDir, opts.buildContext)
+    const preview = await localPreview(service.id, dir, opts.manifestPath)
+    printLocalPreview(service.name, dir, preview, true)
+    manifestHash = preview.manifestHash
     const uploaded = await task(
       `packaging ${c.bold(service.name)}`,
-      async () => uploadContext(service.id, dir),
+      async () => uploadContext(service.id, dir, preview.archive),
       { done: (r) => `uploaded ${humanBytes(r.bytes)} of build context` }
     )
     contextId = uploaded.contextId
@@ -207,7 +216,7 @@ async function deployOne(
             url: string | null
             warnings: string[]
           }>('POST', `/services/${service.id}/deploy`, {
-            body: { gitSha: opts.gitSha, contextId, ...(opts.node ? { node: opts.node } : {}) },
+            body: { gitSha: opts.gitSha, contextId, manifestHash, sourceNote: opts.sourceNote, ...(opts.node ? { node: opts.node } : {}) },
           })
         ).body
         // Deliberately not walker.finish().

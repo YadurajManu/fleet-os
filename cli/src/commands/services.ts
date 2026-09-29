@@ -14,6 +14,7 @@ import { planFromDiscovery, renderPlan, toAssistPlan, type AssistPlan } from '..
 import { requireRunning } from '../deploy-wait.js'
 import { planFromManifest, projectNameFor } from '../plan.js'
 import { uploadContext, humanBytes } from '../archive.js'
+import { localPreview, printLocalPreview } from '../source-preview.js'
 import { localSource } from '../source.js'
 import type { Flags } from '../args.js'
 
@@ -333,7 +334,7 @@ async function deployPlan(fleetId: string, service: Service): Promise<PlacementP
   return (await request<{ decision: PlacementPreview }>('GET', `/services/${service.id}/placement-preview`)).body.decision
 }
 
-function printPlan(service: Service, plan: PlacementPreview, gitSha?: string, requestedNode?: string) {
+function printPlan(service: Service, plan: PlacementPreview, gitSha?: string, requestedNode?: string, localBuild = false) {
   console.log(`\n${c.bold(`Plan for ${service.name}`)}`)
   if (plan.outcome !== 'placed' || !plan.nodeName) {
     console.log(`${c.red('  placement')}    ${plan.summary ?? 'No eligible node'}`)
@@ -346,7 +347,7 @@ function printPlan(service: Service, plan: PlacementPreview, gitSha?: string, re
     console.log(`${c.red('  placement')}    ${rejection?.detail ?? `No eligible node named ${requestedNode}`}`)
     return false
   }
-  const source = service.repoUrl
+  const source = localBuild ? 'local snapshot · current directory' : service.repoUrl
     ? `${service.repoUrl}${gitSha ? ` · ${gitSha.slice(0, 12)}` : ''}`
     : gitSha ? gitSha.slice(0, 12) : 'service definition'
   const target = requestedNode ?? plan.nodeName
@@ -434,6 +435,9 @@ export const deployCommand = {
 
     const service = await findService(fleetId, name, projectFlag(flags))
     const gitSha = typeof flags.sha === 'string' ? flags.sha : undefined
+    const baseDir = typeof flags.dir === 'string' ? flags.dir : undefined
+    const manifestFile = typeof flags.file === 'string' ? flags.file : typeof flags.manifest === 'string' ? flags.manifest : undefined
+    const buildPath = await buildContextFor(service.name, manifestFile, baseDir)
 
     const plan = await task('checking deployment plan', async () => deployPlan(fleetId, service))
     const viable = plan.outcome === 'placed' && Boolean(plan.nodeName)
@@ -447,7 +451,7 @@ export const deployCommand = {
       }
     }
     const selectedViable = !requestedNode || plan.candidates.some((n) => n.nodeName === requestedNode)
-    if (!flags.json) printPlan(service, plan, gitSha, requestedNode)
+    if (!flags.json) printPlan(service, plan, gitSha, requestedNode, Boolean(buildPath))
     if (flags.json && (flags.plan || flags['dry-run'])) {
       console.log(JSON.stringify({ service: service.name, gitSha: gitSha ?? null, plan }, null, 2))
       return
@@ -458,6 +462,10 @@ export const deployCommand = {
       return
     }
     if (flags.plan || flags['dry-run']) return
+    const preview = buildPath
+      ? await task(`checking local source for ${c.bold(service.name)}`, () => localPreview(service.id, buildPath, manifestFile ?? join(baseDir ?? process.cwd(), 'fleet.yaml')))
+      : null
+    if (preview && !flags.json) printLocalPreview(service.name, buildPath!, preview)
     if (!flags.yes && !flags.y && !(await confirmDeploy())) {
       console.log(c.dim('Deployment cancelled. Re-run with --yes to skip confirmation.'))
       return
@@ -466,18 +474,10 @@ export const deployCommand = {
     // A service that builds from source needs its directory sent, or the
     // control plane has nothing to build and says the context does not exist.
     let contextId: string | undefined
-    const baseDir = typeof flags.dir === 'string' ? flags.dir : undefined
-    const manifestFile =
-      typeof flags.file === 'string'
-        ? flags.file
-        : typeof flags.manifest === 'string'
-        ? flags.manifest
-        : undefined
-    const buildPath = await buildContextFor(service.name, manifestFile, baseDir)
     if (buildPath) {
       const uploaded = await task(
         `packaging ${c.bold(service.name)}`,
-        async () => uploadContext(service.id, buildPath),
+        async () => uploadContext(service.id, buildPath, preview?.archive),
         { done: (r) => `uploaded ${humanBytes(r.bytes)} of build context` }
       )
       contextId = uploaded.contextId
@@ -499,6 +499,8 @@ export const deployCommand = {
               body: {
                 gitSha,
                 contextId,
+                ...(preview?.manifestHash ? { manifestHash: preview.manifestHash } : {}),
+                ...(typeof flags.message === 'string' ? { sourceNote: flags.message } : {}),
                 // Was in KNOWN_FLAGS and read by nothing, so `--node` was
                 // accepted and ignored and the scheduler picked whatever
                 // scored highest.
@@ -530,6 +532,25 @@ export const deployCommand = {
     if (body.url) console.log(`${glyph.info} ${c.cyan(body.url)}`)
 
     if (!flags['no-wait']) console.log(`${glyph.ok} ${service.name} deployed\nView logs: fleet logs ${service.name}`)
+  },
+}
+
+export const changesCommand = {
+  async run(args: string[], flags: Flags) {
+    const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
+    const [name] = args
+    if (!name) throw new CliError('usage: fleet changes <service> [--dir <path>]', EXIT.usage)
+    const service = await findService(fleetId, name, projectFlag(flags))
+    const baseDir = typeof flags.dir === 'string' ? flags.dir : undefined
+    const manifestFile = typeof flags.file === 'string' ? flags.file : undefined
+    const buildPath = await buildContextFor(service.name, manifestFile, baseDir)
+    if (!buildPath) throw new CliError(`No local build context for ${service.name} in fleet.yaml. Run this from the project directory.`, EXIT.usage)
+    const preview = await localPreview(service.id, buildPath, manifestFile ?? join(baseDir ?? process.cwd(), 'fleet.yaml'))
+    if (flags.json) console.log(JSON.stringify({ snapshot: preview.snapshot, diff: preview.diff, previous: preview.previous?.id ?? null, bytes: preview.archive.length }, null, 2))
+    else {
+      printLocalPreview(service.name, buildPath, preview)
+      console.log('\nNo files uploaded.')
+    }
   },
 }
 
@@ -629,8 +650,11 @@ export const deploymentsCommand = {
       deployments: Array<{
         id: string
         gitSha: string | null
+        buildContext?: { snapshot?: { fingerprint: string; note?: string; changes?: { added: number; modified: number; removed: number } } } | null
+        imageTags?: string[] | null
         status: string
         nodeName: string | null
+        nodePlatform?: string | null
         startedAt: string
         failureReason: string | null
         /** Present only on a row that is still building. */
@@ -648,18 +672,27 @@ export const deploymentsCommand = {
     if (flags.json) return console.log(JSON.stringify(body.deployments, null, 2))
     console.log(
       table(
-        ['when', 'sha', 'node', 'status', 'note'],
+        ['when', 'source', 'node', 'status', 'note'],
         body.deployments.map((d) => [
           relativeTime(d.startedAt),
-          d.gitSha?.slice(0, 7) ?? c.dim('—'),
-          d.nodeName ?? c.dim('—'),
+          d.buildContext?.snapshot ? `Local snapshot ${d.buildContext.snapshot.fingerprint.slice(0, 7)}` : d.gitSha ? `Git ${d.gitSha.slice(0, 7)}` : c.dim('image/legacy'),
+          `${d.nodeName ?? '—'}${d.nodePlatform ? ` · ${d.nodePlatform}` : ''}`,
           // "building" alone reads as stuck. The step counter is what tells a
           // reader the difference between a slow build and a hung one.
           d.progress ? buildStatus(d.status, d.progress) : statusColour(d.status),
-          d.failureReason ?? (d.progress?.detail ? c.dim(d.progress.detail) : ''),
+          d.failureReason ?? [
+            d.buildContext?.snapshot?.changes
+              ? `${Object.entries(d.buildContext.snapshot.changes).filter(([, n]) => n > 0).map(([kind, n]) => `${n} ${kind}`).join(', ') || 'no file changes'}`
+              : '',
+            d.buildContext?.snapshot?.note ?? (d.progress?.detail ? c.dim(d.progress.detail) : ''),
+          ].filter(Boolean).join(' · '),
         ])
       )
     )
+    for (const d of body.deployments) {
+      const digest = d.imageTags?.find((tag) => tag.includes('@sha256:'))
+      if (digest) console.log(`  ${d.id.slice(0, 8)}  ${digest}`)
+    }
   },
 }
 

@@ -130,6 +130,7 @@ export async function rescheduleFromNode(
         serviceId: service.id,
         gitSha: deployment.gitSha,
         imageTags: deployment.imageTags,
+        buildContext: deployment.buildContext,
         nodeId: decision.nodeId,
         status: 'deploying',
         hostPort,

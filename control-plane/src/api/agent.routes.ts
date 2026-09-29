@@ -515,7 +515,7 @@ export async function agentRoutes(app: FastifyInstance) {
           await db.transaction(async (tx) => {
             await tx
               .update(deployments)
-              .set({ status: 'running', finishedAt: new Date() })
+              .set({ status: 'running', activatedAt: new Date(), finishedAt: new Date() })
               .where(eq(deployments.id, row.id))
 
             // A new release is a new program, and its predecessor's appetite

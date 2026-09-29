@@ -60,7 +60,14 @@ fleet validate
 fleet apply
 
 # Plan and deploy a service
+fleet changes web
+fleet deploy web --message "Update home page"
+
+# After editing local files, repeat to deploy the new snapshot.
+# No GitHub push is required. The current release stays online during the build.
+fleet changes web
 fleet deploy web
+fleet deployments web
 
 # Roll back to previous healthy deployment
 fleet rollback web
@@ -88,7 +95,9 @@ fleet logs web --follow
 | `fleet doctor` | Diagnostic health check across cluster |
 | `fleet diagnose <q>` | AI-powered root-cause analysis |
 | `fleet apply [file]` | Apply `fleet.yaml` manifest |
-| `fleet deploy <svc>` | Plan, build, schedule, and roll out a service |
+| `fleet deploy <svc> [--message <text>]` | Preview the local snapshot, confirm, upload it, then build and roll out |
+| `fleet changes <svc>` | Compare the included local files with the last successful release without uploading |
+| `fleet deployments <svc>` | Show local snapshot or Git identity, changed-file counts, status, node and image digest |
 | `fleet logs <svc> --follow` | Live SSE stream of container logs |
 | `fleet logs <svc>` | Read the current log tail |
 | `fleet restart <svc>` | Restart a service |

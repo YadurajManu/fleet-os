@@ -77,7 +77,7 @@ fleet deploy hello --yes
 fleet logs hello --follow
 ```
 
-The CLI uploads a build context. A connected GitHub repository uses an exact commit and repository-scoped source credentials. See the [manifest reference](docs/fleet-yaml-spec.md) for databases, secrets, health checks, and placement, and the [build guide](docs/agent-delegated-builds.md) for platform selection and registry setup.
+After editing the app, run `fleet changes hello` to preview included files against the last successful release, then `fleet deploy hello` to upload and roll out the new local snapshot. No GitHub push is required. `fleet deployments hello` shows its fingerprint, file-change counts, node, and image digest. Local deploys include uncommitted edits; a connected GitHub repository instead uses an exact commit and repository-scoped source credentials for webhook builds. See the [manifest reference](docs/fleet-yaml-spec.md) for databases, secrets, health checks, and placement, and the [build guide](docs/agent-delegated-builds.md) for platform selection and registry setup.
 
 **Release note:** this README describes current main. The [npm CLI](https://www.npmjs.com/package/@yadurajfleetos/cli) and [agent releases](https://github.com/YadurajManu/fleet-os/releases) are versioned separately and may lag main. Check their release notes before assuming an installed binary contains a new feature.
 

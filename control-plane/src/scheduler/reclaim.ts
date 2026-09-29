@@ -113,6 +113,7 @@ export async function reclaimToNode(
         serviceId: service.id,
         gitSha: deployment.gitSha,
         imageTags: deployment.imageTags,
+        buildContext: deployment.buildContext,
         nodeId: returnedNodeId,
         status: 'deploying',
       })
@@ -235,6 +236,7 @@ async function placeStranded(
         serviceId: service.id,
         gitSha: deployment.gitSha,
         imageTags: deployment.imageTags,
+        buildContext: deployment.buildContext,
         nodeId: decision.nodeId,
         status: 'deploying',
         hostPort,

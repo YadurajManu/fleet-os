@@ -55,7 +55,7 @@ export const KNOWN_FLAGS = new Set([
   'purge-data', 'stop-docker',
   // per command
   'ai', 'all', 'apply', 'channel', 'deploy', 'email', 'events', 'f', 'fix', 'follow', 'limit',
-  'name', 'node', 'only', 'out', 'password', 'project', 'secret', 'service', 'sha',
+  'name', 'node', 'only', 'out', 'password', 'project', 'secret', 'service', 'sha', 'message',
   'since', 'terminal', 'to', 'token', 'url',
   'target', 'shell', 'timeout', 'no-animation', 'color', 'ascii',
   'watch', 'services', 'nodes', 'failures',

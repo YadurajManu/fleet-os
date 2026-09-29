@@ -87,7 +87,7 @@ export async function openDeployment(
      * extracted context and its listing are both removed when the build ends,
      * and a build failure cannot be explained without knowing what went in.
      */
-    buildContext?: { entries: string[]; total: number; bytes: number } | null
+    buildContext?: { entries: string[]; total: number; bytes: number; snapshot?: { fingerprint: string; files: Record<string, string>; manifestHash?: string; note?: string; changes?: { added: number; modified: number; removed: number } } } | null
   }
 ): Promise<string> {
   const [row] = await ctx.db

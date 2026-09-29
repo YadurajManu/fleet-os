@@ -57,6 +57,8 @@ New capability fields are optional for old agents. Agents without build capabili
 
 Uploaded CLI contexts use expiring source-download grants and SHA-256 verification. GitHub sources use an exact commit and a fresh repository-scoped installation token. Build inputs include a keyed secret digest for cache identity; successful matching input/platform jobs can reuse a recorded digest. The cache does not currently revalidate images removed externally from the registry.
 
+For local uploads, Fleet hashes the files extracted for the builder and retains paths plus SHA-256 hashes on the deployment row, never the source bytes. The CLI previews the same packed archive and compares it with the last release recorded as having reached `running`; `activated_at` preserves that fact after a release is superseded. Older historical releases without a verified activation time or hashes cannot be compared. The manifest file has a separate fingerprint, and optional Git branch/SHA/dirty text is context rather than snapshot identity. `fleet changes` performs this preview without uploading.
+
 Jobs carry attempt and node identity, a 45-second lease, renewal every 10 seconds, cancellation and result acknowledgment. Expired attempts can retry up to three attempts total. Node/attempt fencing rejects stale results; restart/orphan handling prevents indefinite running jobs. This uses single-control-plane tunnel ownership, not distributed leader election.
 
 `ALLOW_QEMU_FALLBACK` is disabled by default. If enabled, an amd64 builder can be considered when no native builder exists, with QEMU/binfmt configured separately. This differs from an app's `allow_emulation` setting for runtime placement.

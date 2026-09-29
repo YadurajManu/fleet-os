@@ -35,6 +35,7 @@ export type ScaleOutcome =
 type Template = {
   image: string[]
   gitSha: string | null
+  buildContext: typeof deployments.$inferSelect.buildContext
 }
 
 export async function reconcileReplicas(
@@ -81,6 +82,7 @@ export async function reconcileReplicas(
         status: deployments.status,
         imageTags: deployments.imageTags,
         gitSha: deployments.gitSha,
+        buildContext: deployments.buildContext,
         startedAt: deployments.startedAt,
       })
       .from(deployments)
@@ -100,6 +102,7 @@ export async function reconcileReplicas(
     const template: Template = {
       image: (live[0]!.imageTags as string[]) ?? [],
       gitSha: live[0]!.gitSha,
+      buildContext: live[0]!.buildContext,
     }
     if (!template.image.length) continue
 
@@ -170,6 +173,7 @@ export async function reconcileReplicas(
             serviceId: service.id,
             nodeId: decision.nodeId,
             gitSha: template.gitSha,
+            buildContext: template.buildContext,
             imageTags: template.image,
             hostPort,
             status: 'deploying',
@@ -196,6 +200,7 @@ export async function reconcileReplicas(
         status: 'deploying',
         imageTags: template.image,
         gitSha: template.gitSha,
+        buildContext: template.buildContext,
         startedAt: new Date(),
       })
     }

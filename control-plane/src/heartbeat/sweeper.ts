@@ -202,7 +202,7 @@ export async function failStalledRollouts(
       // promote it here rather than destroying what is already working.
       await ctx.db
         .update(deployments)
-        .set({ status: 'running', finishedAt: new Date() })
+        .set({ status: 'running', activatedAt: new Date(), finishedAt: new Date() })
         .where(eq(deployments.id, row.id))
       rescued.push(row.id)
       ;(opts.log?.warn ?? opts.log?.info)?.(
