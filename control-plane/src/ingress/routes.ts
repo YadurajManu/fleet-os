@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
-import { deployments, fleets, nodes, services } from '../db/schema.js'
+import { deployments, fleets, nodes, services, serviceDomains } from '../db/schema.js'
 import type { AppContext } from '../api/context.js'
 
 export type Route = {
@@ -66,7 +66,8 @@ export async function resolveRoute(ctx: AppContext, hostname: string): Promise<R
       and(
         // Either hostname can address the service; both are unique.
         isNotNull(services.id),
-        eq(services.hostname, host)
+        eq(services.hostname, host),
+        eq(services.internal, false)
       )
     )
     // During a rollout the old release is `running` and its replacement is
@@ -97,7 +98,7 @@ export async function resolveRoute(ctx: AppContext, hostname: string): Promise<R
         and(eq(deployments.serviceId, services.id), inArray(deployments.status, ['running', 'deploying']))
       )
       .innerJoin(nodes, eq(nodes.id, deployments.nodeId))
-      .where(eq(services.domain, host))
+      .where(and(eq(services.domain, host), eq(services.internal, false)))
       // Same rule as above: serve the proven release while its replacement
       // is still being checked.
       .orderBy(
@@ -105,6 +106,21 @@ export async function resolveRoute(ctx: AppContext, hostname: string): Promise<R
         desc(deployments.startedAt)
       )
     candidates = byDomain
+  }
+  if (!candidates.length) {
+    // Only verified aliases route. Saving a custom domain is not proof that
+    // the caller owns it; the permanent managed hostname remains available.
+    candidates = await ctx.db.select({
+      serviceId: services.id, serviceName: services.name, fleetId: services.fleetId,
+      healthCheckPath: services.healthCheckPath, containerPort: services.containerPort,
+      nodeId: nodes.id, nodeName: nodes.name, advertiseAddr: nodes.advertiseAddr,
+      nodeStatus: nodes.status, hostPort: deployments.hostPort, status: deployments.status,
+    }).from(serviceDomains)
+      .innerJoin(services, eq(services.id, serviceDomains.serviceId))
+      .innerJoin(deployments, and(eq(deployments.serviceId, services.id), inArray(deployments.status, ['running', 'deploying'])))
+      .innerJoin(nodes, eq(nodes.id, deployments.nodeId))
+      .where(and(eq(serviceDomains.host, host), isNotNull(serviceDomains.verifiedAt), eq(services.internal, false)))
+      .orderBy(sql`case ${deployments.status} when 'running' then 0 else 1 end`, desc(deployments.startedAt))
   }
 
   /**
@@ -162,8 +178,9 @@ export async function invalidateRoutesForService(ctx: AppContext, serviceId: str
     .where(eq(services.id, serviceId))
     .limit(1)
   if (!row) return
-
-  await invalidateRouteHosts(ctx, [row.hostname, row.domain])
+  const aliases = await ctx.db.select({ host: serviceDomains.host }).from(serviceDomains)
+    .where(eq(serviceDomains.serviceId, serviceId))
+  await invalidateRouteHosts(ctx, [row.hostname, row.domain, ...aliases.map((alias) => alias.host)])
 }
 
 /**

@@ -53,7 +53,7 @@ end with a hyphen.
 | `min_reliability` | enum | `any` | `any`, `opportunistic`, `standard`, `high`. |
 | `gpu` | bool | `false` | Filters to nodes reporting a GPU. |
 | `volume` | name or `{name, path}` | — | Named volume. Anchors the service to one node. |
-| `domain` | hostname | — | Public ingress. TLS is automatic. |
+| `domain` | hostname | — | Desired public domain. Custom names require TXT ownership proof, routing DNS, and direct TLS before they become primary; the managed Fleet URL remains available. See [service domains](../feature.md). |
 | `internal` | bool | `false` | Reachable only by other services on the same node. No published port, no hostname. |
 | `health.path` | path | `/` | Must start with `/`. |
 | `health.interval` | duration | `15s` | How often the container is probed. |

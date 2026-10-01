@@ -11,6 +11,7 @@ import { Reservation, HealthPath } from '../components/Measured'
 import { Bar, LinesSkeleton } from '../components/Skeleton'
 import Diagnose from '../components/Diagnose'
 import Backups from '../components/Backups'
+import ServiceDomains from '../components/ServiceDomains'
 
 type Preview = {
   decision:
@@ -201,6 +202,8 @@ export default function ServiceDetail() {
       </div>
 
       <ErrorNote error={actionError} />
+
+      <ServiceDomains serviceId={service.id} canEdit={canEdit} />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
         <Panel title="declared">
