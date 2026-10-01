@@ -4,7 +4,7 @@ import { compareSnapshots } from '../build/snapshot.js'
 import { and, eq, ne, desc, inArray, gte, count, isNotNull } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
-import { services, deployments, nodes, fleets, placementEvents } from '../db/schema.js'
+import { services, serviceDomains, deployments, nodes, fleets, placementEvents } from '../db/schema.js'
 import { parseManifest, unresolvedNodes, ManifestError } from '../manifest/parse.js'
 import { syncManifest } from '../manifest/sync.js'
 import { place } from '../scheduler/placement.js'
@@ -343,7 +343,9 @@ export async function serviceRoutes(app: FastifyInstance) {
       // Read the hostnames while the row still exists — after the delete there
       // is nothing to resolve them from, and a stale cached route would keep
       // answering for a service that is gone.
-      const hosts = [service.hostname, service.domain]
+      const aliases = await db.select({ host: serviceDomains.host }).from(serviceDomains)
+        .where(eq(serviceDomains.serviceId, service.id))
+      const hosts = [service.hostname, service.domain, ...aliases.map((alias) => alias.host)]
 
       const active = await db
         .select({ id: deployments.id })
@@ -1280,7 +1282,7 @@ export async function serviceRoutes(app: FastifyInstance) {
  * a service you cannot see should not be distinguishable from one that does
  * not exist.
  */
-function requireServicePermission(permission: Parameters<typeof requireFleetPermission>[0]) {
+export function requireServicePermission(permission: Parameters<typeof requireFleetPermission>[0]) {
   return async function guard(req: Parameters<ReturnType<typeof requireFleetPermission>>[0], reply: Parameters<ReturnType<typeof requireFleetPermission>>[1]) {
     const { serviceId } = req.params as { serviceId?: string }
     if (!serviceId) throw ApiError.badRequest('missing_service', 'Route is missing a service id')
@@ -1298,7 +1300,7 @@ function requireServicePermission(permission: Parameters<typeof requireFleetPerm
   }
 }
 
-async function loadService(app: FastifyInstance, params: { serviceId: string }) {
+export async function loadService(app: FastifyInstance, params: { serviceId: string }) {
   const rows = await app.ctx.db
     .select({ service: services, orgId: fleets.orgId })
     .from(services)

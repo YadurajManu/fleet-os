@@ -453,6 +453,22 @@ export const services = pgTable(
   ]
 )
 
+/** Additional public names. The generated hostname stays on services forever. */
+export const serviceDomains = pgTable('service_domains', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  serviceId: uuid('service_id').notNull().references(() => services.id, { onDelete: 'cascade' }),
+  host: text('host').notNull(),
+  kind: text('kind').notNull(), // managed_alias | custom
+  source: text('source').notNull(), // api | manifest | legacy
+  challenge: text('challenge'),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }),
+  tlsVerifiedAt: timestamp('tls_verified_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('service_domains_host_key').on(t.host),
+  index('service_domains_service_idx').on(t.serviceId),
+])
+
 export const deployments = pgTable(
   'deployments',
   {

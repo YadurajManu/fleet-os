@@ -1,3 +1,11 @@
+{
+	# A certificate is issued only after Fleet confirms ownership. Keep the
+	# decision on the private Compose network; an unknown host fails closed.
+	on_demand_tls {
+		ask http://control-plane:8080/internal/domain-allowed
+	}
+}
+
 # TLS for the container registry, served straight from this box.
 #
 # The registry is the one hostname that must NOT go through the Cloudflare
@@ -35,4 +43,13 @@ fleetbuilds.{$INGRESS_ZONE} {
   reverse_proxy control-plane:8080
  }
  respond 404
+}
+
+# Customer-owned domains arrive directly at this server. The separate ingress
+# listener resolves the verified Host to the currently healthy service/node.
+https:// {
+	tls {
+		on_demand
+	}
+	reverse_proxy control-plane:8081
 }

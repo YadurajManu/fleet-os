@@ -9,6 +9,7 @@ import { upCommand } from './up.js'
 import { tuneCommand } from './tune.js'
 import { fixCommand } from './fix.js'
 import { openCommand } from './open.js'
+import { domainsCommand } from './domains.js'
 import { downCommand } from './down.js'
 import { unpairCommand, agentCommand } from './unpair.js'
 import { uninstallCommand } from './uninstall.js'
@@ -38,6 +39,8 @@ export type Command = { run(args: string[], flags: Flags): Promise<void> }
 export const commands: Record<string, Command> = {
   up: upCommand,
   open: openCommand,
+  domains: domainsCommand,
+  domain: domainsCommand,
   down: downCommand,
   rm: removeServiceCommand,
   auth: authCommand,

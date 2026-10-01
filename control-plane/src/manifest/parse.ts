@@ -1,5 +1,6 @@
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
+import { normalizeDomain } from '../ingress/domains.js'
 import {
   ENGINES,
   clientEnv,
@@ -182,7 +183,9 @@ const serviceFields = z
         }),
       ])
       .optional(),
-    domain: z.string().optional(),
+    domain: z.string().refine((value) => {
+      try { normalizeDomain(value); return true } catch { return false }
+    }, 'domain must be a hostname without a scheme, port, path, or wildcard').optional(),
     /** Reachable only by other services on the same node, by name. */
     internal: z.boolean().default(false),
     /** The port the container listens on. Ingress publishes it for you. */

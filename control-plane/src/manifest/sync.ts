@@ -4,7 +4,9 @@ import { ENGINES, passwordRefFor } from './databases.js'
 import { unresolvedNodes } from './parse.js'
 import { hasSecret, setSecret } from '../secrets/store.js'
 import { managedHostname } from '../ingress/routes.js'
-import { services, nodes, fleets, deployments } from '../db/schema.js'
+import { services, nodes, fleets, deployments, serviceDomains } from '../db/schema.js'
+import { domainKind, newDomainChallenge, normalizeDomain } from '../ingress/domains.js'
+import { invalidateRouteHosts } from '../ingress/routes.js'
 import { recordAudit } from '../lib/audit.js'
 import { ApiError } from '../api/errors.js'
 import type { AppContext } from '../api/context.js'
@@ -103,9 +105,12 @@ export async function syncManifest(
   const created: string[] = []
   const updated: string[] = []
   const restoredPins: string[] = []
+  const domainWarnings: string[] = []
+  const changedHosts: string[] = []
 
   await ctx.db.transaction(async (tx) => {
     for (const svc of manifest.services) {
+      const prior = existingByName.get(key(project, svc.name))
       const values = {
         fleetId,
         project,
@@ -142,7 +147,9 @@ export async function syncManifest(
         // and booleans, and an environment variable is always a string.
         env: Object.fromEntries(Object.entries(svc.env).map(([k, v]) => [k, String(v)])),
         secretRefs: svc.secrets,
-        domain: svc.domain ?? null,
+        // A new custom name is not public until its TXT proof is verified.
+        // Preserve dashboard/CLI-owned primary names across manifest applies.
+        domain: svc.internal ? null : prior?.domain ?? null,
         containerPort: svc.port,
         internal: svc.internal,
         // Every public service gets a managed hostname whether or not it brings
@@ -153,8 +160,9 @@ export async function syncManifest(
         reclaimPolicy: svc.reclaim ?? null,
       }
 
-      const prior = existingByName.get(key(project, svc.name))
+      let serviceId: string
       if (prior) {
+        serviceId = prior.id
         if (prior.persistentVolume && prior.pinnedNodeId !== values.pinnedNodeId) {
           const history = await tx.select({ id: deployments.id }).from(deployments).where(eq(deployments.serviceId, prior.id)).limit(1)
           if (history.length) throw ApiError.unprocessable('volume_migration_required', `${svc.name} has deployment history. Its volume may still be on the original node; restore that node or migrate/restore the data before changing its pin.`)
@@ -166,13 +174,48 @@ export async function syncManifest(
         // coexist, and the unique index on hostname keeps them honest.
         await tx
           .update(services)
-          .set({ ...values, hostname: prior.hostname ?? values.hostname })
+          .set({ ...values, hostname: svc.internal ? null : prior.hostname ?? values.hostname })
           .where(eq(services.id, prior.id))
         updated.push(svc.name)
         if (prior.placementPolicy === 'pinned' && !prior.pinnedNodeId && values.pinnedNodeId) restoredPins.push(`${svc.name} → ${svc.node}`)
       } else {
-        await tx.insert(services).values(values)
+        if (values.hostname && (await tx.select({ id: serviceDomains.id }).from(serviceDomains)
+          .where(eq(serviceDomains.host, values.hostname)).limit(1)).length)
+          throw ApiError.conflict('domain_taken', `${values.hostname} is already claimed`)
+        const [createdRow] = await tx.insert(services).values(values).returning({ id: services.id })
+        serviceId = createdRow!.id
         created.push(svc.name)
+      }
+
+      const manifestRows = await tx.select().from(serviceDomains)
+        .where(eq(serviceDomains.serviceId, serviceId))
+      for (const old of manifestRows.filter((d) => d.source === 'manifest' && d.host !== svc.domain?.toLowerCase())) {
+        await tx.delete(serviceDomains).where(eq(serviceDomains.id, old.id))
+        if (values.domain === old.host) await tx.update(services).set({ domain: null }).where(eq(services.id, serviceId))
+        changedHosts.push(old.host)
+      }
+      if (svc.domain && !svc.internal) {
+        const host = normalizeDomain(svc.domain)
+        let kind: 'managed_alias' | 'custom'
+        try { kind = domainKind(host, zone) } catch (error) {
+          throw ApiError.unprocessable('invalid_domain', (error as Error).message)
+        }
+        const existingDomain = await tx.select().from(serviceDomains).where(eq(serviceDomains.host, host)).limit(1)
+        if (existingDomain[0] && existingDomain[0].serviceId !== serviceId)
+          throw ApiError.conflict('domain_taken', `${host} belongs to another service`)
+        if (existingDomain[0]?.source === 'api') {
+          domainWarnings.push(`${svc.name}: ${host} was added outside the manifest; Fleet left its ownership unchanged.`)
+        } else if (!existingDomain[0]) {
+          await tx.insert(serviceDomains).values({ serviceId, host, kind, source: 'manifest',
+            challenge: kind === 'custom' ? newDomainChallenge() : null,
+            verifiedAt: kind === 'managed_alias' ? new Date() : null })
+          changedHosts.push(host)
+        }
+        if (existingDomain[0]?.source === 'api') {
+          // The API-owned address remains an alias; apply cannot claim its primary setting.
+        } else if (kind === 'managed_alias' || existingDomain[0]?.verifiedAt) {
+          await tx.update(services).set({ domain: host }).where(eq(services.id, serviceId))
+        } else domainWarnings.push(`${svc.name}: ${host} is pending DNS ownership verification; the existing URL still works.`)
       }
     }
 
@@ -185,6 +228,7 @@ export async function syncManifest(
       metadata: { project, created, updated, services: manifest.services.length },
     })
   })
+  if (changedHosts.length) await invalidateRouteHosts(ctx, changedHosts)
 
   // Scoped to this project. Computed across the whole fleet, "no longer in
   // fleet.yaml" warned about every service belonging to somebody else's
@@ -194,7 +238,7 @@ export async function syncManifest(
     .filter((s) => s.project === project && !declared.has(s.name))
     .map((s) => s.name)
 
-  const warnings = [...manifest.warnings]
+  const warnings = [...manifest.warnings, ...domainWarnings]
   if (orphaned.length) {
     warnings.push(
       `${orphaned.join(', ')} ${orphaned.length === 1 ? 'is' : 'are'} no longer in the "${project}" ` +

@@ -44,6 +44,11 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
     'looking around',
     [
       ['open [service]', 'Open the live service in your default browser'],
+      ['domains [service]', 'List permanent, friendly, and verified custom URLs'],
+      ['domains add <service> <host>', 'Add a Fleet name or show DNS proof for your domain'],
+      ['domains check <service> [host]', 'Check ownership and routing DNS'],
+      ['domains primary <service> <host>', 'Choose the URL shown after deploy'],
+      ['domains rm <service> <host>', 'Remove an additional URL; keep the permanent Fleet address'],
       ['status [--watch]', 'Live fleet health, affected services, recent activity, and recovery actions'],
       ['services', 'List services and where they are running'],
       ['nodes', 'List nodes'],

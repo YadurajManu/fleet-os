@@ -98,6 +98,11 @@ fleet logs web --follow
 | `fleet deploy <svc> [--message <text>]` | Preview the local snapshot, confirm, upload it, then build and roll out |
 | `fleet changes <svc>` | Compare the included local files with the last successful release without uploading |
 | `fleet deployments <svc>` | Show local snapshot or Git identity, changed-file counts, status, node and image digest |
+| `fleet domains [svc]` | Show the permanent Fleet URL, attached domains, and verification state |
+| `fleet domains add <svc> <host>` | Add a Fleet alias or print the TXT and A/CNAME records for a custom domain |
+| `fleet domains check <svc> [host]` | Verify ownership, routing, and HTTPS readiness |
+| `fleet domains primary <svc> <host>` | Change the URL used by `fleet open`; pass the permanent Fleet host to restore it |
+| `fleet domains rm <svc> <host>` | Remove an additional domain without removing the permanent Fleet URL |
 | `fleet logs <svc> --follow` | Live SSE stream of container logs |
 | `fleet logs <svc>` | Read the current log tail |
 | `fleet restart <svc>` | Restart a service |

@@ -6,7 +6,7 @@ import { createServer, request as httpRequest, type Server } from 'node:http'
 
 import { loadConfig } from '../src/config.js'
 import { createContext, closeContext, type AppContext } from '../src/api/context.js'
-import { orgs, fleets, nodes, services, deployments } from '../src/db/schema.js'
+import { orgs, fleets, nodes, services, serviceDomains, deployments } from '../src/db/schema.js'
 import { hashToken, newAgentToken } from '../src/lib/tokens.js'
 import {
   resolveRoute,
@@ -224,6 +224,17 @@ describe('routing and failover', () => {
     assert.equal(res.headers['x-fleet-ingress'], 'no_route')
   })
 
+  test('custom aliases route only after ownership is verified', async () => {
+    const host = `custom-${Date.now()}.example.com`
+    const [alias] = await ctx.db.insert(serviceDomains).values({
+      serviceId, host, kind: 'custom', source: 'api', challenge: 'fleet-verification=test',
+    }).returning()
+    assert.equal(await resolveRoute(ctx, host), null)
+    await ctx.db.update(serviceDomains).set({ verifiedAt: new Date() }).where(eq(serviceDomains.id, alias!.id))
+    await invalidateRoutesForService(ctx, serviceId)
+    assert.equal((await resolveRoute(ctx, host))?.nodeName, 'node-a')
+  })
+
   test('FR-8: the same URL follows the service to a new node', async () => {
     // Exactly what a failover does: supersede, place elsewhere, repoint.
     await ctx.db
@@ -239,6 +250,9 @@ describe('routing and failover', () => {
     assert.equal(res.status, 200)
     assert.match(res.body, /served by node-b/, 'the URL must now reach the new node')
     assert.equal(res.node, 'node-b')
+    const [alias] = await ctx.db.select({ host: serviceDomains.host }).from(serviceDomains)
+      .where(eq(serviceDomains.serviceId, serviceId)).limit(1)
+    assert.equal((await resolveRoute(ctx, alias!.host))?.nodeName, 'node-b', 'aliases must follow failover too')
   })
 
   test('an unreachable upstream explains itself rather than hanging', async () => {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `fleet domains` to manage permanent Fleet URLs, friendly aliases, and DNS-verified custom domains. `check` verifies the direct TLS certificate before a custom domain can become primary. Requires the matching control-plane migration and Caddy direct-TLS ingress.
+
 ## 0.23.0
 
 - `fleet changes <service>` previews the exact local build snapshot, including added, modified, and removed files against the last successful release, without uploading source.
