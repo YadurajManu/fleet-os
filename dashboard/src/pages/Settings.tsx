@@ -1,6 +1,6 @@
 import { Link, useSearchParams } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
-import { api, type AuditPage } from '../lib/api'
+import { api, type AuditPage, type Node } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import AuditEntries from '../components/AuditEntries'
 import { Button, Copyable, ErrorNote, Field, Panel } from '../components/ui'
@@ -611,6 +611,58 @@ function FleetSettings() {
   )
 }
 
+function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fleet']> }) {
+  const health = usePoll(() => api<{ status: string; version: string; revision?: string }>('/healthz'), '/healthz', 60_000)
+  const nodes = usePoll(
+    () => api<{ nodes: Node[] }>(`/fleets/${fleet.id}/nodes`),
+    `/fleets/${fleet.id}/nodes`,
+    15_000
+  )
+  const current = nodes.data?.nodes ?? []
+
+  return (
+    <Panel title="updates" right={<a href="https://github.com/YadurajManu/fleet-os/blob/main/docs/updates.md" target="_blank" rel="noreferrer" className="normal-case text-[var(--color-signal)] hover:underline">Update guide ↗</a>}>
+      <div className="space-y-5 p-5 text-[12.5px]">
+        <p className="text-[var(--color-fg-muted)]">Server, agents, and CLI update separately. Check the running versions before changing a release.</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="border border-[var(--color-line-2)] p-3">
+            <p className="mono-label text-[10px] text-[var(--color-fg-dim)]">CONTROL PLANE</p>
+            <p className="mt-2 font-mono text-[13px] text-[var(--color-fg)]">{health.error ? 'unreachable' : health.data?.revision || 'checking…'}</p>
+            <p className="mt-1 text-[var(--color-fg-muted)]">{health.data ? `${health.data.status} · API ${health.data.version}` : 'Running Git revision'}</p>
+          </div>
+          <div className="border border-[var(--color-line-2)] p-3">
+            <p className="mono-label text-[10px] text-[var(--color-fg-dim)]">AGENTS</p>
+            <p className="mt-2 font-mono text-[13px] text-[var(--color-fg)]">{nodes.error ? 'unavailable' : nodes.data ? `${current.filter((node) => node.live).length} / ${current.length} online` : 'checking…'}</p>
+            <p className="mt-1 text-[var(--color-fg-muted)]">Auto-upgrade {fleet.agentAutoUpgrade ? 'enabled for this fleet' : 'off for this fleet'}</p>
+          </div>
+          <div className="border border-[var(--color-line-2)] p-3">
+            <p className="mono-label text-[10px] text-[var(--color-fg-dim)]">CLI</p>
+            <p className="mt-2 font-mono text-[13px] text-[var(--color-fg)]">Installed per computer</p>
+            <p className="mt-1 text-[var(--color-fg-muted)]">Run <code>fleet updates</code> locally to check it.</p>
+          </div>
+        </div>
+        {nodes.error && <ErrorNote error={nodes.error} />}
+        {current.length > 0 && (
+          <div>
+            <p className="mono-label mb-2 text-[10px] text-[var(--color-fg-dim)]">NODE VERSIONS</p>
+            <div className="divide-y divide-[var(--color-line)] border border-[var(--color-line-2)]">
+              {current.map((node) => (
+                <div key={node.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 font-mono text-[11px]">
+                  <span className="text-[var(--color-fg)]">{node.name}</span>
+                  <span className="text-[var(--color-fg-muted)]">{node.agentVersion || 'version not reported'} · {node.live ? 'online' : 'offline · last reported version'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="border-t border-[var(--color-line)] pt-4 text-[var(--color-fg-muted)]">
+          On the server: <code className="text-[var(--color-fg)]">sudo ./deploy/upgrade.sh check</code>, then <code className="text-[var(--color-fg)]">sudo ./deploy/upgrade.sh apply</code>. The host command verifies a database backup and prints its rollback command before replacing containers. To update this computer’s CLI: <code className="text-[var(--color-fg)]">npm install -g @yadurajfleetos/cli@latest</code>.
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
 
 
 export default function Settings() {
@@ -646,6 +698,8 @@ export default function Settings() {
       />
 
       <SessionsSettings />
+
+      {fleet && <Updates fleet={fleet} />}
 
       <FleetSettings />
 

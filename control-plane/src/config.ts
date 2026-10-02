@@ -19,6 +19,7 @@ const schema = z.object({
   HEARTBEAT_MISS_THRESHOLD: z.coerce.number().int().min(1).max(20).default(3),
   /** Publicly reported to agents and diagnostics; set during release builds. */
   CONTROL_PLANE_VERSION: z.string().max(32).default('0.1.0'),
+  FLEET_REVISION: z.string().max(64).default('unknown'),
   /**
    * Email delivery. Both are optional and only do anything together: without
    * them the control plane runs normally and alert rules with an email channel

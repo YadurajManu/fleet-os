@@ -18,6 +18,12 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { affectedServices, fleetHealth, renderStatus, type StatusSnapshot } from '../src/commands/status.js'
 import { dockerCleanupMessage, namedVolumes, stateDirs } from '../src/commands/uninstall.js'
 import { suggest } from '../src/suggestions.js'
+import { nodeVersionLine } from '../src/commands/updates.js'
+
+test('updates never presents an offline node version as current', () => {
+  assert.deepEqual(nodeVersionLine({ name: 'laptop', agentVersion: 'v0.2.4', live: false }),
+    ['laptop', 'v0.2.4', 'offline · last reported'])
+})
 
 describe('argument parsing', () => {
   test('uninstall flags remain separate and opt-in', () => {

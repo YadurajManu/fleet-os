@@ -97,6 +97,7 @@ fleet logs web --follow
 | `fleet apply [file]` | Apply `fleet.yaml` manifest |
 | `fleet deploy <svc> [--message <text>]` | Preview the local snapshot, confirm, upload it, then build and roll out |
 | `fleet changes <svc>` | Compare the included local files with the last successful release without uploading |
+| `fleet updates` | Show server revision, node agent versions, CLI version, and safe update steps |
 | `fleet deployments <svc>` | Show local snapshot or Git identity, changed-file counts, status, node and image digest |
 | `fleet domains [svc]` | Show the permanent Fleet URL, attached domains, and verification state |
 | `fleet domains add <svc> <host>` | Add a Fleet alias or print the TXT and A/CNAME records for a custom domain |

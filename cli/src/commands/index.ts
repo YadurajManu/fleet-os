@@ -5,6 +5,7 @@ import { statusCommand, eventsCommand } from './status.js'
 import { alertsCommand } from './alerts.js'
 import { configCommand, useCommand } from './config.js'
 import { doctorCommand } from './doctor.js'
+import { updatesCommand } from './updates.js'
 import { upCommand } from './up.js'
 import { tuneCommand } from './tune.js'
 import { fixCommand } from './fix.js'
@@ -47,6 +48,7 @@ export const commands: Record<string, Command> = {
   config: configCommand,
   use: useCommand,
   doctor: doctorCommand,
+  updates: updatesCommand,
   tune: tuneCommand,
   fix: fixCommand,
   init: initCommand,

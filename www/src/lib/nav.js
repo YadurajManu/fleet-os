@@ -22,6 +22,7 @@ export const SITE_MAP = [
       ['Mesh networking', '/docs/mesh'],
       ['Failover and reclaim', '/docs/failover'],
       ['CLI reference', '/docs/cli'],
+      ['Updating Fleet OS', '/docs/updates'],
       ['REST API', '/docs/api'],
       ['Self-hosting', '/docs/self-hosting'],
       ['Source', '/github'],

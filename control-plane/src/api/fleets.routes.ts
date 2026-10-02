@@ -673,6 +673,7 @@ export async function fleetRoutes(app: FastifyInstance) {
       heartbeat_interval_sec: config.HEARTBEAT_INTERVAL_SEC,
       heartbeat_miss_threshold: config.HEARTBEAT_MISS_THRESHOLD,
       version: config.CONTROL_PLANE_VERSION,
+      revision: config.FLEET_REVISION,
     }
   })
 }

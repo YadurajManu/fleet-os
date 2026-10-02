@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.25.0
+
+- Added `fleet updates` with the running server revision, node agent versions, this computer's CLI version, and the separate update paths. Offline agent versions are explicitly marked as last reported.
+- Requires a control plane that reports its Git revision in `/healthz` for the server revision to be shown; older servers appear as unknown. Does not trigger a server or agent update from the CLI.
+
+## 0.24.0
 
 - Added `fleet domains` to manage permanent Fleet URLs, friendly aliases, and DNS-verified custom domains. `check` verifies the direct TLS certificate before a custom domain can become primary. Requires the matching control-plane migration and Caddy direct-TLS ingress.
 

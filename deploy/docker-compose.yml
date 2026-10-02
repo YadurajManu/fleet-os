@@ -146,6 +146,7 @@ services:
       HEARTBEAT_INTERVAL_SEC: ${HEARTBEAT_INTERVAL_SEC:-5}
       HEARTBEAT_MISS_THRESHOLD: ${HEARTBEAT_MISS_THRESHOLD:-3}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      FLEET_REVISION: ${FLEET_REVISION:-unknown}
     ports:
       - '${API_PORT:-8080}:8080'      # control-plane API
       - '${INGRESS_PORT:-8081}:8081'  # public edge

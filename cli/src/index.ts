@@ -32,6 +32,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
       ['auth login', 'Sign in and save a secure local session'],
       ['nodes pair', 'Mint a pairing token for a new machine'],
       ['doctor', 'Check the control plane, nodes, services, ingress, and GitHub'],
+      ['updates', 'Show running server revision, agent versions, and CLI update steps'],
       ['apply [file]', 'Apply a fleet.yaml to the fleet'],
       ['deploy <service>', 'Preview local changes, then build and roll out the uploaded snapshot'],
       ['changes <service>', 'Compare included local files with the last successful release; upload nothing'],

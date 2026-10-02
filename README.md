@@ -132,6 +132,7 @@ The source is organized by running component: [`control-plane/`](control-plane/)
 | [CLI](cli/README.md) | Commands and operational workflows |
 | [Docs index](docs/README.md) | Guides, reference, architecture, and historical reports |
 | [Releasing](docs/RELEASING.md) | CLI and agent versioning, artifacts, checksums, and upgrade source |
+| [Updating](docs/updates.md) | Server backup and rollback, agent rollout, CLI upgrades, and the update center |
 | [Contributing](CONTRIBUTING.md) | Repository layout and development checks |
 
 ## Help build Fleet OS

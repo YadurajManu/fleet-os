@@ -5,6 +5,7 @@ Start with the [project README](../README.md) for installation and a first deplo
 | Guide | Purpose |
 | --- | --- |
 | [Self-hosting](self-hosting.md) | Run the control plane and configure ingress |
+| [Updating](updates.md) | Check versions, back up and roll back the server, and roll out agents and CLI |
 | [Agent delegated builds](agent-delegated-builds.md) | Enable a builder and understand its limits |
 | [CLI experience](cli-experience.md) | Pairing and command workflows |
 | [Email notifications](email-notifications.md) | Notification behavior and configuration |

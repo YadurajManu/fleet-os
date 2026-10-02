@@ -342,14 +342,17 @@ everything; apart, neither is enough.
 
 ## Upgrading
 
+From a clean `main` checkout on the Docker Compose host:
+
 ```bash
-git pull && ./fleet-up.sh
+sudo ./deploy/upgrade.sh check
+sudo ./deploy/upgrade.sh apply
 ```
 
-The control plane migrates on boot and refuses to start if it cannot — a
-container serving against an un-migrated database answers every request with
-an internal error, and the cause is three layers down. Migrations are
-forward-only, so snapshot the database first.
+The updater verifies a Postgres archive outside the DB container and prints
+its rollback command before replacing anything. Migrations are forward-only;
+rolling back code does not reverse them. See [Updating Fleet OS](updates.md)
+for agents, the CLI, and post-update checks.
 
 ## When something is wrong
 

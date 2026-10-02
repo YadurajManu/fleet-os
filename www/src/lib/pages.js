@@ -364,6 +364,7 @@ export const PAGES = {
         ['fleet config show', 'Show the saved control plane and selected fleet without exposing tokens.'],
         ['fleet use <fleet>', 'Choose the default fleet for later commands.'],
         ['fleet doctor', 'Check login, fleet access, nodes, deployments, HTTPS ingress, and GitHub.'],
+        ['fleet updates', 'Show the server revision, each node’s agent version, CLI version and safe update steps.'],
         ['fleet open [service]', 'Open the live service URL directly in your default browser.'],
         ['fleet logs <service> --follow', 'Follow the current agent-reported container tail.'],
         ['fleet restart <service>', 'Recreate the current release and preserve its history.'],
@@ -421,6 +422,27 @@ export const PAGES = {
         ['3', 'No eligible node for one or more services.'],
         ['4', 'Deploy rolled back after a failed health check.'],
       ]},
+    ],
+  },
+
+  'docs/updates': {
+    group: 'Developers',
+    title: 'Update Fleet OS',
+    kicker: 'operations',
+    lede: 'The server, node agents and CLI ship separately. See what is running, then update each track with its own rollback.',
+    updated: '02 October 2026',
+    blocks: [
+      H('Check before you change'),
+      P('Run fleet updates on your computer or open Settings → Updates in the dashboard. The command shows the running server revision, agent versions from node heartbeats, and this computer’s CLI version. An offline node displays its last reported version.'),
+      { t: 'code', lang: 'sh', lines: ['$ fleet updates', '$ fleet updates --json'] },
+      H('Update the server'),
+      P('On a self-hosted Docker Compose server, run the guarded updater from a clean main checkout. It verifies a Postgres backup outside the database container, records a rollback command, fast-forwards main, rebuilds the server, dashboard and website, then checks container health. Database migrations are forward-only; inspect compatibility before a release.'),
+      { t: 'code', lang: 'sh', lines: ['$ sudo ./deploy/upgrade.sh check', '$ sudo ./deploy/upgrade.sh apply'] },
+      H('Update agents'),
+      P('Publish the intended platform binaries and checksums to the control plane. The fleet-wide auto-upgrade switch is off by default. Enable it for a canary fleet, then confirm each node reconnects and reports its new version before expanding. The switch does not stage individual nodes or automatically undo a broken agent.'),
+      H('Update the CLI'),
+      { t: 'code', lang: 'sh', lines: ['$ npm install -g @yadurajfleetos/cli@latest', '$ fleet --version'] },
+      { t: 'note', tone: 'warn', text: 'A healthy API does not prove every service is routed. After updating, check the dashboard, public routes, node heartbeats and existing applications. Use the saved rollback command if those checks fail.' },
     ],
   },
 
@@ -1102,7 +1124,7 @@ export const PAGES = {
 // Order used for prev/next navigation at the foot of each page.
 export const PAGE_ORDER = [
   'docs', 'docs/fleet-yaml', 'docs/scheduler', 'docs/mesh', 'docs/failover',
-  'docs/cli', 'docs/domains', 'docs/api', 'docs/self-hosting', 'github', 'changelog',
+  'docs/cli', 'docs/updates', 'docs/domains', 'docs/api', 'docs/self-hosting', 'github', 'changelog',
   'roadmap', 'about', 'blog', 'security', 'status', 'contact', 'community',
   'legal/privacy', 'legal/terms', 'legal/licence',
 ]
