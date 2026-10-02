@@ -129,6 +129,7 @@ describe('what the agent is actually told', () => {
   let orgId: string
   let userId: string
   let agentToken: string
+  let nodeId: string
 
   before(async () => {
     ctx = createContext(loadConfig())
@@ -165,6 +166,7 @@ describe('what the agent is actually told', () => {
       },
     })
     agentToken = register.json().agent_token
+    nodeId = register.json().node_id ?? register.json().nodeId
 
     await app.inject({
       method: 'POST',
@@ -246,5 +248,32 @@ services:
     })
     const [svc] = res.json().services
     assert.equal(svc.host_port, null)
+  })
+
+  test('one node can canary, pause, then inherit fleet agent updates', async () => {
+    const path = `/fleets/${fleetId}/nodes/${nodeId}/auto-upgrade`
+    const desired = async () => (await app.inject({
+      method: 'GET', url: '/agent/desired-state',
+      headers: { authorization: `Bearer ${agentToken}` },
+    })).json().agent_auto_upgrade
+    const setNode = (enabled: boolean | null) => app.inject({
+      method: 'PATCH', url: path,
+      headers: { authorization: `Bearer ${token}` }, payload: { enabled },
+    })
+
+    assert.equal((await app.inject({ method: 'PATCH', url: path, payload: { enabled: true } })).statusCode, 401)
+    assert.equal((await app.inject({ method: 'PATCH', url: path, headers: { authorization: `Bearer ${token}` }, payload: { enabled: 'yes' } })).statusCode, 422)
+    assert.equal(await desired(), false)
+    assert.equal((await setNode(true)).statusCode, 200)
+    assert.equal(await desired(), true)
+    const fleetUpdate = await app.inject({
+      method: 'PATCH', url: `/fleets/${fleetId}`,
+      headers: { authorization: `Bearer ${token}` }, payload: { agentAutoUpgrade: true },
+    })
+    assert.equal(fleetUpdate.statusCode, 200)
+    assert.equal((await setNode(false)).statusCode, 200)
+    assert.equal(await desired(), false)
+    assert.equal((await setNode(null)).statusCode, 200)
+    assert.equal(await desired(), true)
   })
 })

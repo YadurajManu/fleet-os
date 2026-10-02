@@ -5,11 +5,16 @@ import { c, table } from '../render.js'
 import type { Flags } from '../args.js'
 
 type Health = { status: string; version: string; revision?: string }
-type Node = { name: string; agentVersion: string | null; live: boolean }
+type Node = { name: string; agentVersion: string | null; live: boolean; agentAutoUpgrade: boolean | null }
 type Fleet = { agentAutoUpgrade: boolean }
 
-export function nodeVersionLine(node: Node): string[] {
-  return [node.name, node.agentVersion || 'not reported', node.live ? 'online' : 'offline · last reported']
+export function nodeVersionLine(node: Node, fleetPolicy = false): string[] {
+  return [
+    node.name,
+    node.agentVersion || 'not reported',
+    node.live ? 'online' : 'offline · last reported',
+    node.agentAutoUpgrade == null ? `inherit · ${fleetPolicy ? 'on' : 'off'}` : node.agentAutoUpgrade ? 'on · canary' : 'off · paused',
+  ]
 }
 
 export const updatesCommand = {
@@ -53,7 +58,7 @@ export const updatesCommand = {
     ]))
     if (nodes.length) {
       console.log('\nnodes')
-      console.log(table(['name', 'agent', 'heartbeat'], nodes.map(nodeVersionLine)))
+      console.log(table(['name', 'agent', 'heartbeat', 'auto-upgrade'], nodes.map((node) => nodeVersionLine(node, fleet?.agentAutoUpgrade))))
     }
     console.log(`\n${c.dim('Server:')} run sudo ./deploy/upgrade.sh check on the Compose host; then sudo ./deploy/upgrade.sh apply.`)
     console.log(`${c.dim('CLI:')} npm install -g @yadurajfleetos/cli@latest`)

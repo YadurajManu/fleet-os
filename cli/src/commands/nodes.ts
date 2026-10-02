@@ -12,6 +12,7 @@ type Node = {
   cpuCores: number
   reliabilityTier: string
   live: boolean
+  agentAutoUpgrade: boolean | null
   lastHeartbeatAt: string | null
   telemetry: { cpuPct: number; ramUsedMb: number; containers: Array<{ name: string }> } | null
 }
@@ -48,6 +49,19 @@ export const nodesCommand = {
 
     if (sub === 'pair') {
       return pairNode(fleetId, flags)
+    }
+
+    if (sub === 'upgrade') {
+      const mode = args[2]
+      if (!target || !['on', 'off', 'inherit'].includes(mode ?? '')) {
+        throw new CliError('usage: fleet nodes upgrade <name> on|off|inherit', EXIT.usage)
+      }
+      const node = await findNode(fleetId, target)
+      const enabled = mode === 'inherit' ? null : mode === 'on'
+      await request('PATCH', `/fleets/${fleetId}/nodes/${node.id}/auto-upgrade`, { body: { enabled } })
+      console.log(`${node.name}: agent auto-upgrade ${mode === 'inherit' ? 'inherits the fleet policy' : mode === 'on' ? 'enabled' : 'paused'}`)
+      if (mode === 'on') console.log(c.dim('The node checks the control-plane-served checksums on its next desired-state poll. Verify its next heartbeat and version with fleet updates.'))
+      return
     }
 
     if (sub === 'cordon' || sub === 'uncordon') {
@@ -101,7 +115,7 @@ export const nodesCommand = {
       return
     }
 
-    throw new CliError('usage: fleet nodes [ls|pair|cordon|uncordon|rm]', EXIT.usage)
+    throw new CliError('usage: fleet nodes [ls|pair|upgrade|cordon|uncordon|rm]', EXIT.usage)
   },
 }
 

@@ -31,6 +31,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
       ['use <fleet>', 'Select the default fleet for later commands'],
       ['auth login', 'Sign in and save a secure local session'],
       ['nodes pair', 'Mint a pairing token for a new machine'],
+      ['nodes upgrade <name> on|off|inherit', 'Canary or pause agent auto-upgrade on one node'],
       ['doctor', 'Check the control plane, nodes, services, ingress, and GitHub'],
       ['updates', 'Show running server revision, agent versions, and CLI update steps'],
       ['apply [file]', 'Apply a fleet.yaml to the fleet'],

@@ -612,6 +612,9 @@ function FleetSettings() {
 }
 
 function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fleet']> }) {
+  const canEdit = fleet.role === 'owner' || fleet.role === 'admin'
+  const [savingNode, setSavingNode] = useState<string | null>(null)
+  const [policyError, setPolicyError] = useState<unknown>(null)
   const health = usePoll(() => api<{ status: string; version: string; revision?: string }>('/healthz'), '/healthz', 60_000)
   const nodes = usePoll(
     () => api<{ nodes: Node[] }>(`/fleets/${fleet.id}/nodes`),
@@ -619,6 +622,22 @@ function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fle
     15_000
   )
   const current = nodes.data?.nodes ?? []
+
+  const setNodePolicy = async (node: Node, mode: string) => {
+    if (mode === 'on' && !window.confirm(`Enable agent auto-upgrade on ${node.name}? First verify the binaries and SHA256SUMS served by this control plane. The node may restart on its next poll.`)) return
+    setSavingNode(node.id)
+    setPolicyError(null)
+    try {
+      await api(`/fleets/${fleet.id}/nodes/${node.id}/auto-upgrade`, {
+        method: 'PATCH', body: { enabled: mode === 'inherit' ? null : mode === 'on' },
+      })
+      nodes.refetch()
+    } catch (err) {
+      setPolicyError(err)
+    } finally {
+      setSavingNode(null)
+    }
+  }
 
   return (
     <Panel title="updates" right={<a href="https://github.com/YadurajManu/fleet-os/blob/main/docs/updates.md" target="_blank" rel="noreferrer" className="normal-case text-[var(--color-signal)] hover:underline">Update guide ↗</a>}>
@@ -642,6 +661,7 @@ function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fle
           </div>
         </div>
         {nodes.error && <ErrorNote error={nodes.error} />}
+        {policyError != null && <ErrorNote error={policyError} />}
         {current.length > 0 && (
           <div>
             <p className="mono-label mb-2 text-[10px] text-[var(--color-fg-dim)]">NODE VERSIONS</p>
@@ -650,13 +670,24 @@ function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fle
                 <div key={node.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 font-mono text-[11px]">
                   <span className="text-[var(--color-fg)]">{node.name}</span>
                   <span className="text-[var(--color-fg-muted)]">{node.agentVersion || 'version not reported'} · {node.live ? 'online' : 'offline · last reported version'}</span>
+                  <select
+                    aria-label={`Agent auto-upgrade for ${node.name}`}
+                    value={node.agentAutoUpgrade == null ? 'inherit' : node.agentAutoUpgrade ? 'on' : 'off'}
+                    disabled={!canEdit || savingNode === node.id}
+                    onChange={(event) => void setNodePolicy(node, event.target.value)}
+                    className="border border-[var(--color-line-2)] bg-[var(--color-ink-900)] px-2 py-1 text-[var(--color-fg)] disabled:opacity-50"
+                  >
+                    <option value="inherit">Fleet policy · {fleet.agentAutoUpgrade ? 'on' : 'off'}</option>
+                    <option value="on">Enable on this node</option>
+                    <option value="off">Pause on this node</option>
+                  </select>
                 </div>
               ))}
             </div>
           </div>
         )}
         <div className="border-t border-[var(--color-line)] pt-4 text-[var(--color-fg-muted)]">
-          On the server: <code className="text-[var(--color-fg)]">sudo ./deploy/upgrade.sh check</code>, then <code className="text-[var(--color-fg)]">sudo ./deploy/upgrade.sh apply</code>. The host command verifies a database backup and prints its rollback command before replacing containers. To update this computer’s CLI: <code className="text-[var(--color-fg)]">npm install -g @yadurajfleetos/cli@latest</code>.
+          On the server: <code className="text-[var(--color-fg)]">sudo ./deploy/upgrade.sh check</code>, then <code className="text-[var(--color-fg)]">sudo ./deploy/upgrade.sh apply</code>. The host command verifies a database backup and prints its rollback command before replacing containers. To update an agent, confirm the served binaries first, then enable one node above and wait for its fresh heartbeat. To update this computer’s CLI: <code className="text-[var(--color-fg)]">npm install -g @yadurajfleetos/cli@latest</code>.
         </div>
       </div>
     </Panel>

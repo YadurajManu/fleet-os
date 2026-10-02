@@ -21,8 +21,8 @@ import { suggest } from '../src/suggestions.js'
 import { nodeVersionLine } from '../src/commands/updates.js'
 
 test('updates never presents an offline node version as current', () => {
-  assert.deepEqual(nodeVersionLine({ name: 'laptop', agentVersion: 'v0.2.4', live: false }),
-    ['laptop', 'v0.2.4', 'offline · last reported'])
+  assert.deepEqual(nodeVersionLine({ name: 'laptop', agentVersion: 'v0.2.4', live: false, agentAutoUpgrade: false }),
+    ['laptop', 'v0.2.4', 'offline · last reported', 'off · paused'])
 })
 
 describe('argument parsing', () => {

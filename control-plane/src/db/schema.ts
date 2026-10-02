@@ -220,6 +220,8 @@ export const nodes = pgTable(
     // hashed, never stored in the clear (§10)
     agentTokenHash: text('agent_token_hash').notNull(),
     agentVersion: text('agent_version'),
+    /** Null inherits the fleet policy; explicit values allow a canary or pause. */
+    agentAutoUpgrade: boolean('agent_auto_upgrade'),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

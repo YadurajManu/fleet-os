@@ -355,6 +355,33 @@ export async function fleetRoutes(app: FastifyInstance) {
     }
   )
 
+  /** Explicit node policy overrides the fleet switch; null returns to inheritance. */
+  app.patch(
+    '/fleets/:fleetId/nodes/:nodeId/auto-upgrade',
+    { preHandler: requireFleetPermission('node.upgrade') },
+    async (req) => {
+      const { fleetId, nodeId } = req.params as { fleetId: string; nodeId: string }
+      const parsed = z.object({ enabled: z.boolean().nullable() }).strict().safeParse(req.body)
+      if (!parsed.success) throw ApiError.unprocessable('invalid_upgrade_policy', 'Set enabled to true, false, or null')
+
+      const updated = await db.transaction(async (tx) => {
+        const [row] = await tx.update(nodes)
+          .set({ agentAutoUpgrade: parsed.data.enabled })
+          .where(and(eq(nodes.id, nodeId), eq(nodes.fleetId, fleetId)))
+          .returning()
+        if (!row) throw ApiError.notFound('Node')
+        await recordAudit(tx, {
+          orgId: req.orgId!, actorUserId: req.userId,
+          action: 'node.auto_upgrade_changed', targetType: 'node', targetId: nodeId,
+          metadata: { enabled: parsed.data.enabled },
+        })
+        return row
+      })
+      const { agentTokenHash: _omit, ...safe } = updated
+      return { node: safe }
+    }
+  )
+
   /** Cordon: stop scheduling here, leave what is running alone (PRD 7.1). */
   app.post(
     '/fleets/:fleetId/nodes/:nodeId/cordon',

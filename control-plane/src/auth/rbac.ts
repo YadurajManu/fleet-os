@@ -35,6 +35,7 @@ export const PERMISSIONS = {
   'fleet.update': 'admin',
   'node.pair': 'admin',
   'node.cordon': 'admin',
+  'node.upgrade': 'admin',
   'node.drain': 'admin',
   'service.create': 'admin',
   'service.update': 'admin',

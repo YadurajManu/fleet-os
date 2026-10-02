@@ -3,6 +3,7 @@
 ## 0.25.0
 
 - Added `fleet updates` with the running server revision, node agent versions, this computer's CLI version, and the separate update paths. Offline agent versions are explicitly marked as last reported.
+- Added `fleet nodes upgrade <name> on|off|inherit` for a one-node canary or pause, with the effective policy shown in `fleet updates`.
 - Requires a control plane that reports its Git revision in `/healthz` for the server revision to be shown; older servers appear as unknown. Does not trigger a server or agent update from the CLI.
 
 ## 0.24.0

@@ -7,10 +7,12 @@ Fleet has three release tracks. The control plane, dashboard, and website run fr
 1. Run `fleet updates` or open **Settings → Updates**. Both show the running server revision and each node's reported agent version and heartbeat. The CLI command also shows its own installed version; the browser cannot see software installed on your computer. An offline node's version is its last report, not proof of what is currently running.
 2. Read the release notes and compatibility requirements. Take a database backup before changing the server. Keep the previous revision and agent binaries available.
 3. On the control-plane host, run `sudo ./deploy/upgrade.sh check` followed by `sudo ./deploy/upgrade.sh apply`. The script refuses a dirty checkout or a non-fast-forward update, backs up Postgres outside its container, verifies the archive, records an exact rollback command, builds the new control plane, dashboard, and website, and checks container health. It keeps agent auto-upgrade settings unchanged. Database migrations run on control-plane startup; a code rollback does **not** undo migrations, so migrations must remain backward compatible.
-4. Upgrade agents in a canary fleet first. Only opt in a fleet after the control plane serves the intended binaries and `SHA256SUMS`. Agents verify checksums before installing and restart into the new binary. Check the first heartbeat and version on each node before expanding the rollout. The existing fleet-wide switch is deliberately off by default; it is not a per-node rollout controller.
+4. Upgrade one agent first. Confirm the control plane serves the intended binaries and `SHA256SUMS`, then choose **Enable on this node** in Settings → Updates or run `fleet nodes upgrade <name> on`. Agents verify checksums before installing and restart into the new binary. Wait for a fresh heartbeat and the expected version before enabling another node. `off` pauses one node even if the fleet switch is on; `inherit` returns to the fleet policy. The fleet-wide switch remains off by default.
 5. Run `npm install -g @yadurajfleetos/cli@latest` on each operator machine, then `fleet --version`. An npm release does not update installed CLIs by itself.
 
 The dashboard presents these as separate tracks because a single “update everything” button would hide three different trust and rollback boundaries. The server cannot safely replace itself from a browser without an independently managed host updater. The host-side script is that updater; it requires local shell access to the server and Docker Compose.
+
+Migration `0030_node_auto_upgrade` adds a nullable node policy. Existing nodes inherit the existing fleet setting, so old agents and deployments keep their behavior until an admin explicitly changes a policy.
 
 ## Rollback and failure handling
 
@@ -24,7 +26,7 @@ Before shipping, run control-plane, dashboard, website, and CLI typechecks, test
 
 ## Current limits
 
-- Agent auto-upgrade is fleet-wide and off by default. It does not stage individual nodes, enforce a maintenance window, or roll back a broken agent automatically.
+- Agent auto-upgrade is off by default. Per-node overrides support manual canaries but do not enforce a maintenance window or roll back a broken agent automatically.
 - `/healthz` reports the running Git revision only for deployments that pass `FLEET_REVISION` to Compose; older deployments show `unknown`.
 - The update script supports the repository's Docker Compose deployment. Other installation methods need their own updater.
 - Postgres schema migrations are forward-only. Keep migrations additive and compatible with the previous server revision; test restores separately.
