@@ -190,6 +190,7 @@ export type Service = {
   /** The manifest these services came from; the dashboard groups by it. */
   project: string
   repoUrl: string | null
+  image: string | null
   /**
    * The directory this service builds from, when it builds from source.
    *

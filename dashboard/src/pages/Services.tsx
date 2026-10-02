@@ -221,9 +221,10 @@ export default function Services() {
   const metrics = useMemo(() => {
     const total = services.length
     const running = services.filter((s) => s.current?.status === 'running' || s.current?.status === 'online').length
-    const unplaced = services.filter((s) => !s.current?.nodeName).length
+    const failed = services.filter((s) => describeState(s).label === 'failed').length
+    const neverDeployed = services.filter((s) => !s.last).length
     const totalRam = services.reduce((acc, s) => acc + (s.requestRamMb || 0), 0)
-    return { total, running, unplaced, totalRam }
+    return { total, running, failed, neverDeployed, totalRam }
   }, [services])
 
   // Filtered Services
@@ -402,7 +403,7 @@ export default function Services() {
         </div>
         {canEdit && (
           <Button
-            variant={showEditor ? 'ghost' : 'primary'}
+            variant="secondary"
             onClick={() => setShowEditor(!showEditor)}
             className="h-[34px] px-4 font-mono text-[11.5px]"
           >
@@ -423,10 +424,10 @@ export default function Services() {
       {/* ── Summary KPI Bar ─────────────────────────────────────── */}
       <div className="grid gap-px bg-[var(--color-line)] sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ['Total Services', String(metrics.total), 'idle'],
           ['Running Workloads', `${metrics.running} / ${metrics.total}`, metrics.running > 0 ? 'ok' : 'idle'],
-          ['Memory Allocated', mb(metrics.totalRam), 'idle'],
-          ['Unplaced', String(metrics.unplaced), metrics.unplaced > 0 ? 'warn' : 'idle'],
+          ['Failed', String(metrics.failed), metrics.failed > 0 ? 'warn' : 'idle'],
+          ['Never Deployed', String(metrics.neverDeployed), 'idle'],
+          ['Memory Reserved', mb(metrics.totalRam), 'idle'],
         ].map(([label, value, tone]) => (
           <div key={label} className="bg-[var(--color-ink-950)] px-5 py-3.5">
             <div className="mono-label normal-case tracking-[0.08em]">{label}</div>
@@ -703,7 +704,7 @@ export default function Services() {
             return (
               <div
                 key={s.id}
-                className="rise-in flex flex-col justify-between gap-4 bg-[var(--color-ink-950)] p-5 transition-colors duration-200 hover:bg-[var(--color-ink-900)]"
+                className="rise-in flex flex-col justify-between gap-3 bg-[var(--color-ink-950)] p-4 transition-colors duration-200 hover:bg-[var(--color-ink-900)]"
                 style={{ animationDelay: `${Math.min(rowIndex, 8) * 45}ms` }}
               >
                 {/* ── Top Header Row ─────────────────────────────── */}
@@ -757,9 +758,11 @@ export default function Services() {
                         >
                           {s.repoUrl.replace('https://github.com/', '')} ↗
                         </a>
+                      ) : s.image ? (
+                        <span title={s.image}>prebuilt image · {s.image}</span>
                       ) : (
                         <span title="Built from a context uploaded by the CLI, not from a connected repository">
-                          built from an uploaded context
+                          local build context
                         </span>
                       )}
                       {state.when && <span title="When this deployment started">· {state.when}</span>}
@@ -796,15 +799,22 @@ export default function Services() {
                         aria-expanded={expanded}
                         className="press font-mono text-[10.5px] text-[var(--color-fg-dim)] underline underline-offset-2 hover:text-[var(--color-fg-muted)]"
                       >
-                        {expanded
-                          ? 'hide'
-                          : state.detail
-                            ? 'why?'
-                            : `${s.recentFailures} recent failure${s.recentFailures === 1 ? '' : 's'}`}
+                        {expanded ? 'hide details' : state.detail ? 'details' : `${s.recentFailures} recent failure${s.recentFailures === 1 ? '' : 's'}`}
                       </button>
                     )}
                   </div>
                 </div>
+
+                {state.detail && (
+                  <div className="rounded-[3px] border-l-2 border-[var(--color-down)] bg-[color-mix(in_oklab,var(--color-down)_6%,transparent)] px-3 py-2 font-mono text-[11px] leading-relaxed text-[var(--color-fg-muted)]">
+                    <span className="font-semibold text-[var(--color-down)]">{state.label === 'failed' ? 'Deploy failed' : 'Node unavailable'} · </span>{summarise(state.detail).head}
+                  </div>
+                )}
+                {!s.last && (
+                  <p className="font-mono text-[11px] text-[var(--color-fg-muted)]">
+                    No release yet. {needsLocalSource ? `Run fleet deploy ${s.name} from your project directory.` : 'Deploy this service to start serving it.'}
+                  </p>
+                )}
 
                 {/*
                   A deploy in flight, phase by phase — whoever started it.
@@ -834,11 +844,8 @@ export default function Services() {
                       <div className="rounded-[3px] border-l-2 border-[var(--color-down)] bg-[color-mix(in_oklab,var(--color-down)_6%,transparent)] px-3.5 py-3">
                         {state.detail && (
                           <>
-                            <p className="font-mono text-[11.5px] leading-relaxed text-[var(--color-fg-muted)]">
-                              {summarise(state.detail).head}
-                            </p>
                             {summarise(state.detail).rest && (
-                              <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all border-t border-[var(--color-line)] pt-2 font-mono text-[10.5px] leading-relaxed text-[var(--color-fg-dim)]">
+                              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-[10.5px] leading-relaxed text-[var(--color-fg-dim)]">
                                 {summarise(state.detail).rest}
                               </pre>
                             )}
@@ -858,10 +865,10 @@ export default function Services() {
                         )}
 
                         <Link
-                          to={`/logs?service=${s.id}`}
+                          to={`/services/${s.id}`}
                           className="mt-2.5 inline-block font-mono text-[10.5px] text-[var(--color-fg-muted)] underline underline-offset-2 hover:text-[var(--color-fg)]"
                         >
-                          open the container logs →
+                          view deployment details →
                         </Link>
 
                         {/* A reading of the failure, beside the failure.
@@ -920,7 +927,7 @@ export default function Services() {
                       {url ? 'PUBLIC ENDPOINT' : 'REACHABLE AS'}
                     </div>
                     {url ? (
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex flex-wrap items-center gap-2.5">
                         {/* Presenting a dead URL in signal green, with a Copy
                             button, is the page telling you something works
                             when it does not. */}
@@ -957,6 +964,9 @@ export default function Services() {
                         >
                           {copiedId === s.id ? '✓ Copied' : 'Copy'}
                         </button>
+                        <Link to={`/services/${s.id}#domains`} className="shrink-0 font-mono text-[10.5px] text-[var(--color-signal)] underline underline-offset-2 hover:text-[#55ee9c]">
+                          Manage domains
+                        </Link>
                       </div>
                     ) : (
                       // An internal service has no public address by design.
@@ -1080,7 +1090,7 @@ export default function Services() {
                         }
                         className={`press h-[30px] px-3.5 text-[11px] ${isDeploying ? 'shimmer' : ''}`}
                       >
-                        {isDeploying ? <span className="breathe">Deploying…</span> : isRunning ? '🚀 Redeploy' : '🚀 Deploy'}
+                        {isDeploying ? <span className="breathe">Deploying…</span> : isRunning ? '🚀 Redeploy' : state.label === 'failed' ? '🚀 Retry deploy' : '🚀 Deploy'}
                       </Button>
 
                       {canEdit && (

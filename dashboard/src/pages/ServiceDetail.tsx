@@ -1,4 +1,4 @@
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
 import { api, type Deployment, type Service } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import { mb, since } from '../lib/format'
@@ -6,7 +6,7 @@ import { Button, ConfirmDialog, Copyable, ErrorNote, Panel, StatusPill } from '.
 import LogTerminal from '../components/LogTerminal'
 import ExplainFailure from '../components/ExplainFailure'
 import { helpFor } from '../lib/failureReasons'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Reservation, HealthPath } from '../components/Measured'
 import { Bar, LinesSkeleton } from '../components/Skeleton'
 import Diagnose from '../components/Diagnose'
@@ -30,6 +30,7 @@ const isReadable = (reason: string) => reason.length > 40 && reason.includes('\n
 export default function ServiceDetail() {
   const { serviceId } = useParams()
   const navigate = useNavigate()
+  const { hash } = useLocation()
   const { fleet } = useAuth()
   const canDeploy = fleet?.role !== 'viewer'
   // Deletion is gated on admin to match the API's `service.update` requirement.
@@ -49,6 +50,11 @@ export default function ServiceDetail() {
   const logs = usePoll(() => api<{ node: { name: string }; lines: string[]; diagnostic: string | null }>(`/services/${serviceId}/logs`), `/services/${serviceId}/logs`, 2000)
 
   const service = services.data?.services.find((s) => s.id === serviceId)
+  const serviceLoaded = Boolean(service)
+
+  useEffect(() => {
+    if (serviceLoaded && hash === '#domains') document.getElementById('domains')?.scrollIntoView()
+  }, [serviceLoaded, hash])
 
   /**
    * Actions that change what is currently serving, and what to say about them.
@@ -203,7 +209,9 @@ export default function ServiceDetail() {
 
       <ErrorNote error={actionError} />
 
-      <ServiceDomains serviceId={service.id} canEdit={canEdit} />
+      <div id="domains" className="scroll-mt-24">
+        <ServiceDomains serviceId={service.id} canEdit={canEdit} />
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
         <Panel title="declared">
