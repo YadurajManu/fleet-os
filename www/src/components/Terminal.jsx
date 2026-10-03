@@ -6,39 +6,28 @@ import StatusDot from './ui/StatusDot'
 
 // kind: cmd (typed), out, ok, dim, warn, blank
 const SCRIPT = [
-  { kind: 'cmd', text: 'fleet init' },
-  { kind: 'ok', text: '  ✓ wrote fleet.yaml' },
-  { kind: 'ok', text: '  ✓ linked github.com/you/homelab' },
-  { kind: 'dim', text: '  fleet: homelab · 4 nodes · 3 architectures' },
+  { kind: 'cmd', text: 'npm install -g @yadurajfleetos/cli' },
+  { kind: 'cmd', text: 'fleet auth login' },
+  { kind: 'cmd', text: 'fleet nodes pair' },
+  { kind: 'dim', text: '  Run the one-time installer on your Docker machine' },
   { kind: 'blank' },
   { kind: 'cmd', text: 'cat fleet.yaml' },
+  { kind: 'out', text: 'fleet: homelab' },
   { kind: 'out', text: 'services:' },
-  { kind: 'out', text: '  web:' },
-  { kind: 'out', text: '    build: ./apps/web' },
+  { kind: 'out', text: '  hello:' },
+  { kind: 'out', text: '    image: nginx:1.27-alpine' },
   { kind: 'out', text: '    placement: flexible' },
-  { kind: 'out', text: '    resources: { ram: 512Mi, cpu: 0.5 }' },
-  { kind: 'out', text: '    domain: web.yourdomain.dev' },
-  { kind: 'out', text: '  postgres:' },
-  { kind: 'out', text: '    image: postgres:16' },
-  { kind: 'out', text: '    placement: pinned' },
-  { kind: 'out', text: '    node: node-03' },
-  { kind: 'out', text: '    volume: pgdata' },
+  { kind: 'out', text: '    container_port: 80' },
+  { kind: 'out', text: '    resources: { ram: 128Mi, cpu: 0.2 }' },
+  { kind: 'out', text: '    health: { path: / }' },
   { kind: 'blank' },
-  { kind: 'cmd', text: 'git push fleet main' },
-  { kind: 'dim', text: 'remote: build 4f1c9ae · buildx · linux/arm64 linux/amd64' },
-  { kind: 'dim', text: 'remote: layers cached 11/14 · 38.2s' },
-  { kind: 'dim', text: 'remote: pushed registry.fleet.plastikworld.xyz/homelab/web:4f1c9ae' },
-  { kind: 'ok', text: 'remote: schedule web → node-01 home-server (score 0.92)' },
-  { kind: 'ok', text: 'remote: health   GET /healthz  200  1.9s' },
-  { kind: 'ok', text: 'remote: live     https://web.yourdomain.dev' },
-  { kind: 'out', text: '   9ac21bd..4f1c9ae  main -> main' },
+  { kind: 'cmd', text: 'fleet validate' },
+  { kind: 'cmd', text: 'fleet up --yes' },
+  { kind: 'dim', text: '  Fleet shows placement and release progress here' },
+  { kind: 'dim', text: '  Wait for running; use the URL Fleet returns' },
   { kind: 'blank' },
-  { kind: 'cmd', text: 'fleet status' },
-  { kind: 'dim', text: 'NODE     HOST          ARCH   SVC  LOAD  STATUS' },
-  { kind: 'out', text: 'node-01  home-server   amd64   2    38%  online' },
-  { kind: 'out', text: 'node-02  pi-5          arm64   1    48%  online' },
-  { kind: 'out', text: 'node-03  thinkpad      amd64   1    41%  online' },
-  { kind: 'out', text: 'node-04  vps-fra       amd64   1    22%  online' },
+  { kind: 'cmd', text: 'fleet services' },
+  { kind: 'cmd', text: 'fleet open hello' },
 ]
 
 const COLOR = {
@@ -164,7 +153,7 @@ export default function Terminal() {
                   zsh — ~/homelab
                 </div>
                 <span className="font-mono text-[10px] tracking-[0.1em] text-[var(--color-fg-dim)]">
-                  fleet-os cli v0.9.2
+                  ILLUSTRATIVE FLOW · NOT LIVE OUTPUT
                 </span>
               </div>
 

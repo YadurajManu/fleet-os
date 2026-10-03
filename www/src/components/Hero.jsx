@@ -12,10 +12,10 @@ import NodeHUD from './NodeHUD'
 const MeshScene = lazy(() => import('./MeshScene'))
 
 const STATS = [
-  ['zero cloud cost', 'hardware you already own'],
+  ['compute', 'hardware you already own'],
   ['architectures', 'arm64 · armv7 · amd64'],
-  ['deploy', 'git push → live in seconds'],
-  ['networking', 'managed HTTPS + encrypted mesh'],
+  ['deploy', 'CLI or connected GitHub repo'],
+  ['networking', 'HTTPS ingress + outbound tunnel'],
 ]
 
 export default function Hero() {
@@ -99,7 +99,7 @@ export default function Hero() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.9, ease: EASE.expo, delay: 0.38 }}
               >
-                Without a cloud bill.
+                Keep control of where it runs.
               </motion.span>
             </h1>
 
@@ -109,8 +109,7 @@ export default function Hero() {
               transition={{ duration: 0.8, ease: EASE.expo, delay: 0.5 }}
               className="mt-6 max-w-[40ch] text-[15px] leading-[1.62] text-[var(--color-fg-muted)] text-pretty"
             >
-              Pair your machines, write a <code>fleet.yaml</code>, and <code>git push</code>. Fleet OS builds,
-              places, and runs your services across every device you own — with failover built in.
+              Pair a machine, declare a service in <code>fleet.yaml</code>, and deploy from your CLI or a connected GitHub repo. Fleet builds and places Linux containers on eligible nodes. Flexible services can fail over when another suitable node and image are available.
             </motion.p>
 
             <motion.div
@@ -147,7 +146,7 @@ export default function Hero() {
             >
               <InstallCommand />
               <p className="mt-2.5 font-mono text-[10px] tracking-[0.06em] text-[var(--color-fg-dim)]">
-                install → pair → push → live.
+                install → pair → deploy a prebuilt app. <a href="/docs" className="text-[var(--color-signal)] underline underline-offset-4">Start here</a>
               </p>
             </motion.div>
           </motion.div>

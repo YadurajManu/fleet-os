@@ -14,9 +14,9 @@ export const STEPS = [
   {
     n: '02',
     kicker: 'build',
-    title: 'git push, and get a multi-arch image',
-    body: 'The control plane builds with Buildx and pushes arm64, armv7 and amd64 tags to your registry. Mismatched hardware stops being your problem at build time.',
-    code: 'linux/arm64 ✓   linux/arm/v7 ✓   linux/amd64 ✓',
+    title: 'Build on an opted-in node',
+    body: 'An eligible agent can build for the platforms your service needs and push the result to your registry. A prebuilt image skips the build step; multi-platform builds need suitable builders.',
+    code: 'source → eligible builder → registry digest',
   },
   {
     n: '03',
@@ -28,15 +28,15 @@ export const STEPS = [
   {
     n: '04',
     kicker: 'mesh',
-    title: 'Every node is a peer on an encrypted mesh',
-    body: 'WireGuard between nodes, service discovery by name, ingress that follows the workload. No port forwarding, no NAT archaeology, TLS issued and renewed for you.',
-    code: 'api.yourdomain.dev → mesh → whichever node holds api',
+    title: 'Reach nodes through outbound tunnels',
+    body: 'Agents open outbound connections to the control plane. Public HTTPS ingress routes to the node running the service without opening an inbound port on that node.',
+    code: 'api.yourdomain.dev → ingress → node tunnel → api',
   },
   {
     n: '05',
     kicker: 'fail over',
     title: 'A missed heartbeat is a scheduling event',
-    body: 'Lid closes, power blips, someone trips over the switch. Flexible services are rescheduled onto an eligible node in seconds. Pinned services raise a distinct alert instead of silently moving.',
+    body: 'When a node stops reporting, Fleet can reschedule a flexible service if another eligible node has capacity and a compatible image. Pinned services alert rather than silently moving their data.',
     code: 'heartbeat missed ×3 → node-03 down → reschedule',
   },
   {

@@ -31,7 +31,13 @@ Fleet OS connects your machines to one control plane. Declare an app in `fleet.y
 
 ## Get started
 
-You need a reachable Fleet control plane, a configured registry/ingress, and at least one paired machine running Docker with a **Linux container engine**. To operate your own control plane, start with [self-hosting](docs/self-hosting.md). Windows and macOS use Docker Desktop; native Windows containers are not supported.
+Before starting, you need:
+
+- A reachable Fleet control plane and configured registry/HTTPS ingress. The public endpoint needs a host; using hardware you own does not make that hosting free.
+- One machine running Docker with a **Linux container engine**. Windows and macOS use Docker Desktop; native Windows containers are not supported.
+- An agent paired to that machine. A build-capable node is needed only when building source; the first example below uses a prebuilt image.
+
+To operate your own control plane, start with [self-hosting](docs/self-hosting.md).
 
 ### 1. Install the CLI and connect
 
@@ -65,7 +71,7 @@ fleet services
 fleet open hello
 ```
 
-This starts with a prebuilt image so you can establish that pairing, scheduling, and routing work before configuring a builder. Fleet prints the service URL; DNS and ingress must be configured for it to be reachable.
+This is the first-deploy check: a prebuilt image establishes that pairing, scheduling, and routing work before you configure a builder. `fleet up` prints the placement and release result; open the URL it returns only after the deployment reports running. DNS and ingress must be configured for that URL to be reachable. See the same [prebuilt-image quickstart on the website](https://fleet.plastikworld.xyz/docs).
 
 ### 3. Build your own app
 

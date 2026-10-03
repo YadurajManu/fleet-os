@@ -66,7 +66,7 @@ export default function HowItWorks() {
           index="01"
           kicker="how it works"
           title="Six moving parts, and you touch two of them."
-          lede="Register the machines, then push. Everything between build and live URL is the control plane's job — and it is the part that gets hard the moment your fleet stops being one always-on box."
+          lede="Pair a machine, deploy a prebuilt image to check routing, then opt a node into builds when you need source deployments. The control plane coordinates placement and the route to your app."
           max="max-w-[46ch]"
         />
       </div>
