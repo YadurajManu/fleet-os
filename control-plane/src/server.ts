@@ -19,6 +19,7 @@ import { setupTerminalServer } from './tunnel/terminal.js'
 import { registerLogStream } from './api/log-stream.js'
 import { pairingStatusRoutes } from './api/pairing-status.js'
 import { opsRoutes } from './api/ops.routes.js'
+import { instrumentApi } from './ops/metrics.js'
 import type { AppContext } from './api/context.js'
 
 export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
@@ -44,6 +45,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   })
 
   app.decorate('ctx', ctx)
+  instrumentApi(app)
 
   // Build contexts arrive as a gzipped tar. Fastify has no parser for that, and
   // without one the upload route sees an unsupported-media-type error instead

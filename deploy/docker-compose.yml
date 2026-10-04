@@ -135,6 +135,7 @@ services:
       BUILD_MODE: ${BUILD_MODE:-agent}
       ALLOW_QEMU_FALLBACK: ${ALLOW_QEMU_FALLBACK:-false}
       BUILD_WORKDIR: /var/lib/fleet-os/builds
+      OPS_REGISTRY_STORAGE_PATH: /var/lib/fleet-os/registry-metrics
       BACKUP_DIR: /var/lib/fleet-os/backups
       INSTALL_SCRIPT_PATH: /app/install/install.sh
       AGENT_BIN_DIR: /app/install/bin
@@ -152,6 +153,7 @@ services:
       - '${INGRESS_PORT:-8081}:8081'  # public edge
     volumes:
       - builds:/var/lib/fleet-os/builds
+      - registrydata:/var/lib/fleet-os/registry-metrics:ro
       # Backups are the one thing here that cannot be regenerated, so they get
       # their own volume rather than sharing scratch space that gets cleaned.
       - backups:/var/lib/fleet-os/backups
