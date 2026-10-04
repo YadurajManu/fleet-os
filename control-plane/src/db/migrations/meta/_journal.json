@@ -218,6 +218,13 @@
       "when": 1790970000000,
       "tag": "0030_node_auto_upgrade",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791144000000,
+      "tag": "0031_platform_operators",
+      "breakpoints": true
     }
   ]
 }

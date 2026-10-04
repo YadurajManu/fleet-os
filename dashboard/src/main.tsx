@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { Suspense, lazy, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
@@ -24,7 +24,33 @@ import CloseAccountConfirm from './pages/CloseAccountConfirm'
 import AuthCallback from './pages/AuthCallback'
 import NotFound from './pages/NotFound'
 import { Logo } from './components/ui'
+import { api } from './lib/api'
 import './index.css'
+
+const Ops = lazy(() => import('./pages/Ops'))
+
+function OpsGate() {
+  const { ready, email, verified } = useAuth()
+  const [access, setAccess] = useState<'checking' | 'allowed' | 'denied'>('checking')
+  useEffect(() => {
+    if (!ready || !email || !verified) return
+    let active = true
+    void api('/ops/me').then(() => { if (active) setAccess('allowed') }).catch(() => { if (active) setAccess('denied') })
+    return () => { active = false }
+  }, [ready, email, verified])
+  if (!ready) return <div className="p-8">Checking session…</div>
+  if (!email) return <Routes>
+    <Route path="/auth/callback" element={<AuthCallback />} />
+    <Route path="/reset" element={<ResetPassword />} />
+    <Route path="/verify" element={<VerifyEmail />} />
+    <Route path="/account/close" element={<CloseAccountConfirm />} />
+    <Route path="*" element={<SignIn />} />
+  </Routes>
+  if (!verified) return <ConfirmEmail />
+  if (access === 'checking') return <div className="p-8">Checking operator access…</div>
+  if (access === 'denied') return <div className="mx-auto mt-24 max-w-lg border border-[var(--color-line-2)] p-8"><h1 className="text-xl font-semibold">Operations access required</h1><p className="mt-3 text-[var(--color-fg-muted)]">This account needs a platform-operator grant, verified email, and two-factor authentication. Customer fleet roles do not grant access.</p></div>
+  return <Suspense fallback={<div className="p-8">Loading Operations…</div>}><Ops /></Suspense>
+}
 
 function Gate() {
   const { ready, email, verified } = useAuth()
@@ -92,7 +118,7 @@ createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <Gate />
+        {window.location.hostname.startsWith('ops.') ? <OpsGate /> : <Gate />}
       </AuthProvider>
     </BrowserRouter>
   </React.StrictMode>

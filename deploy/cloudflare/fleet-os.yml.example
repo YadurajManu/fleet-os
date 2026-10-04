@@ -49,6 +49,10 @@ ingress:
   - hostname: fleetapp.REPLACE_ZONE
     service: http://dashboard:80
 
+  # Company-only read-only operations console. Server API checks platform role.
+  - hostname: ops.REPLACE_ZONE
+    service: http://dashboard:80
+
   # The API directly, for the CLI and for agents.
   - hostname: fleetapi.REPLACE_ZONE
     service: http://control-plane:8080

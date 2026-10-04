@@ -13,7 +13,7 @@ set -euo pipefail
 # explicitly instead.
 ZONE="${ZONE:-plastikworld.xyz}"
 APEX="$ZONE"
-HOSTS="${HOSTS:-fleet.$ZONE fleetapp.$ZONE fleetapi.$ZONE *.$ZONE}"
+HOSTS="${HOSTS:-fleet.$ZONE fleetapp.$ZONE ops.$ZONE fleetapi.$ZONE *.$ZONE}"
 NAME="${TUNNEL_NAME:-fleet-os}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG="$DIR/fleet-os.yml"
