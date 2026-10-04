@@ -49,6 +49,8 @@ const schema = z.object({
   /** Envelope sender. Must be on a domain verified in Resend, or every send 403s. */
   MAIL_FROM: z.string().optional(),
   REGISTRY_URL: z.string().optional(),
+  /** Optional read-only registry data mount for company Operations measurements. */
+  OPS_REGISTRY_STORAGE_PATH: z.string().default(''),
   REGISTRY_CREDENTIALS: z.string().optional(),
   BUILDX_BUILDER: z.string().optional(),
   /**

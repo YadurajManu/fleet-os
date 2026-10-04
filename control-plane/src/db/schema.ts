@@ -88,6 +88,35 @@ export const platformOperators = pgTable('platform_operators', {
   grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+export const platformIncidents = pgTable('platform_incidents', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  signalKey: text('signal_key').notNull().unique(),
+  kind: text('kind').notNull(),
+  targetId: uuid('target_id'),
+  title: text('title').notNull(),
+  status: text('status').notNull().default('open'),
+  openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
+  lastObservedAt: timestamp('last_observed_at', { withTimezone: true }).notNull().defaultNow(),
+  evidenceAt: timestamp('evidence_at', { withTimezone: true }).notNull(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  assignedTo: uuid('assigned_to').references(() => users.id, { onDelete: 'set null' }),
+}, t => [index('platform_incidents_status_idx').on(t.status, t.lastObservedAt)])
+export const platformIncidentEvents = pgTable('platform_incident_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  incidentId: uuid('incident_id').notNull().references(() => platformIncidents.id, { onDelete: 'cascade' }),
+  actorId: uuid('actor_id').references(() => users.id, { onDelete: 'set null' }),
+  action: text('action').notNull(),
+  note: text('note'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [index('platform_incident_events_incident_idx').on(t.incidentId, t.at)])
+export const platformAccessEvents = pgTable('platform_access_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  actorId: uuid('actor_id').references(() => users.id, { onDelete: 'set null' }),
+  action: text('action').notNull(),
+  targetId: uuid('target_id'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [index('platform_access_events_at_idx').on(t.at)])
+
 /**
  * Single-use, short-lived tokens for password reset and email verification.
  * Only the sha256 of the token is stored: the plaintext lives in the email and
