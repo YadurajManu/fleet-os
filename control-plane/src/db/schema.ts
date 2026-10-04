@@ -82,6 +82,12 @@ export const users = pgTable(
   ]
 )
 
+/** Separate from customer org roles. Granted only by a database operator. */
+export const platformOperators = pgTable('platform_operators', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 /**
  * Single-use, short-lived tokens for password reset and email verification.
  * Only the sha256 of the token is stored: the plaintext lives in the email and

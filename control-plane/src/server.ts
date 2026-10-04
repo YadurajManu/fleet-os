@@ -18,6 +18,7 @@ import { setupTunnelServer } from './tunnel/registry.js'
 import { setupTerminalServer } from './tunnel/terminal.js'
 import { registerLogStream } from './api/log-stream.js'
 import { pairingStatusRoutes } from './api/pairing-status.js'
+import { opsRoutes } from './api/ops.routes.js'
 import type { AppContext } from './api/context.js'
 
 export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
@@ -111,6 +112,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   await app.register(domainRoutes)
   await app.register(secretRoutes)
   await app.register(backupRoutes)
+  await app.register(opsRoutes)
 
   registerLogStream(app)
 
