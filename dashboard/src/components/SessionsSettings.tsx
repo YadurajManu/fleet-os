@@ -58,6 +58,7 @@ export default function SessionsSettings() {
   const [revokingId, setRevokingId] = useState<string | null>(null)
   const [revokingAll, setRevokingAll] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  const [revealedIps, setRevealedIps] = useState<string[]>([])
 
   const items = sessions.data?.sessions ?? []
   const hasOtherSessions = items.some((s) => !s.isCurrent)
@@ -91,27 +92,16 @@ export default function SessionsSettings() {
   return (
     <Panel
       title="security & active sessions"
-      right={
-        hasOtherSessions ? (
-          <button
-            type="button"
-            disabled={revokingAll}
-            onClick={revokeOthers}
-            className="font-mono text-[11px] text-[var(--color-down)] transition-opacity hover:underline disabled:opacity-50"
-          >
-            {revokingAll ? 'revoking…' : 'Revoke all other sessions'}
-          </button>
-        ) : (
-          <span className="mono-label normal-case tracking-[0.06em]">
-            {items.length} remembered {items.length === 1 ? 'device' : 'devices'}
-          </span>
-        )
-      }
+      right={<span className="mono-label normal-case tracking-[0.06em]">{items.length} remembered {items.length === 1 ? 'device' : 'devices'}</span>}
     >
       <div className="space-y-4 p-5">
         <p className="text-[12.5px] leading-relaxed text-[var(--color-fg-muted)]">
           Devices and browsers that have authenticated with your credentials. Revoking a device prompts for a security alert on its next sign-in.
         </p>
+        {hasOtherSessions && <div className="flex flex-wrap items-center justify-between gap-3 border border-[var(--color-line-2)] p-3">
+          <p className="text-[12px] text-[var(--color-fg-muted)]">Revoke all other sessions. This device stays signed in.</p>
+          <Button type="button" variant="danger" disabled={revokingAll} onClick={() => void revokeOthers()}>{revokingAll ? 'Revoking…' : 'Revoke all others'}</Button>
+        </div>}
 
         {error ? <ErrorNote error={error} /> : null}
 
@@ -149,8 +139,8 @@ export default function SessionsSettings() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-[var(--color-fg-dim)]">
-                    {session.ip && <span>{session.ip}</span>}
-                    <span>•</span>
+                    {session.ip && <button type="button" aria-label={`${revealedIps.includes(session.id) ? 'Hide' : 'Reveal'} IP for ${session.device.browser} on ${session.device.os}`} onClick={() => setRevealedIps((ids) => ids.includes(session.id) ? ids.filter((id) => id !== session.id) : [...ids, session.id])} className="underline underline-offset-2 hover:text-[var(--color-fg)]">{revealedIps.includes(session.id) ? session.ip : 'Reveal IP'}</button>}
+                    {session.ip && <span>•</span>}
                     <span>
                       {session.isCurrent ? (
                         <span className="text-[var(--color-signal)] font-medium">active now</span>
@@ -174,9 +164,7 @@ export default function SessionsSettings() {
 
               <div>
                 {session.isCurrent ? (
-                  <span className="font-mono text-[11px] text-[var(--color-fg-dim)]">
-                    (current)
-                  </span>
+                  <span className="font-mono text-[11px] text-[var(--color-fg-dim)]">Current session · sign out above to end it</span>
                 ) : (
                   <Button
                     type="button"
@@ -185,7 +173,7 @@ export default function SessionsSettings() {
                     onClick={() => revokeOne(session.id)}
                     className="py-1 px-2.5 text-[11px]"
                   >
-                    {revokingId === session.id ? 'revoking…' : 'Revoke'}
+                    {revokingId === session.id ? 'revoking…' : 'Revoke this session'}
                   </Button>
                 )}
               </div>

@@ -407,7 +407,7 @@ function GitHubWorkspace({ fleet }: { fleet: NonNullable<ReturnType<typeof useAu
  * have. Meanwhile the four values the schema calls per-fleet had no way to be
  * changed at all: there was no update route.
  */
-function FleetSettings() {
+function FleetSettings({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
   const { fleet, refreshFleets } = useAuth()
   const canEdit = fleet?.role === 'owner' || fleet?.role === 'admin'
 
@@ -431,7 +431,7 @@ function FleetSettings() {
     setAutoUpgrade(fleet.agentAutoUpgrade)
     setError(null)
     setSaved(false)
-  }, [fleet?.id, fleet?.name, fleet?.heartbeatIntervalSec, fleet?.heartbeatMissThreshold, fleet?.defaultReclaimPolicy]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fleet?.id, fleet?.name, fleet?.heartbeatIntervalSec, fleet?.heartbeatMissThreshold, fleet?.defaultReclaimPolicy, fleet?.agentAutoUpgrade]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const detection = interval * threshold
   const dirty =
@@ -441,6 +441,8 @@ function FleetSettings() {
       threshold !== fleet.heartbeatMissThreshold ||
       reclaim !== fleet.defaultReclaimPolicy ||
       autoUpgrade !== fleet.agentAutoUpgrade)
+
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
   // Mirrors the server's rule rather than trusting the button to be enough.
   const tooWide = detection > 300
@@ -572,6 +574,10 @@ function FleetSettings() {
 
         {error != null && <ErrorNote error={error} />}
 
+        <p className="border-l-2 border-[var(--color-signal)] pl-3 text-[12px] leading-relaxed text-[var(--color-fg-muted)]">
+          After Save: the fleet name and node-down threshold update immediately. The reclaim policy applies to future decisions. Agent auto-upgrade changes the default for nodes that inherit this fleet policy; an explicit node override stays in place.
+        </p>
+
         {canEdit ? (
           <div className="flex items-center gap-3">
             <Button variant="primary" onClick={() => void save()} disabled={!dirty || invalid || saving}>
@@ -584,6 +590,8 @@ function FleetSettings() {
                   setInterval(fleet.heartbeatIntervalSec)
                   setThreshold(fleet.heartbeatMissThreshold)
                   setReclaim(fleet.defaultReclaimPolicy)
+                  setAutoUpgrade(fleet.agentAutoUpgrade)
+                  setSaved(false)
                 }}
                 className="font-mono text-[11px] text-[var(--color-fg-dim)] underline-offset-4 hover:text-[var(--color-fg)] hover:underline"
               >
@@ -622,6 +630,10 @@ function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fle
     15_000
   )
   const current = nodes.data?.nodes ?? []
+  const [rolloutNode, setRolloutNode] = useState<string>('')
+  const selectedNode = current.find((node) => node.id === rolloutNode)
+  const heartbeatAge = (node: Node) => node.lastHeartbeatAt ? `${Math.max(0, Math.floor((Date.now() - new Date(node.lastHeartbeatAt).getTime()) / 1000))}s ago` : 'never'
+  const compatibility = (node: Node) => !node.agentVersion ? 'Unknown · version not reported' : node.live ? 'Connected · protocol accepted' : 'Unverified · heartbeat stale'
 
   const setNodePolicy = async (node: Node, mode: string) => {
     if (mode === 'on' && !window.confirm(`Enable agent auto-upgrade on ${node.name}? First verify the binaries and SHA256SUMS served by this control plane. The node may restart on its next poll.`)) return
@@ -643,6 +655,7 @@ function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fle
     <Panel title="updates" right={<a href="https://github.com/YadurajManu/fleet-os/blob/main/docs/updates.md" target="_blank" rel="noreferrer" className="normal-case text-[var(--color-signal)] hover:underline">Update guide ↗</a>}>
       <div className="space-y-5 p-5 text-[12.5px]">
         <p className="text-[var(--color-fg-muted)]">Server, agents, and CLI update separately. Check the running versions before changing a release.</p>
+        <p className="border-l-2 border-[var(--color-line-2)] pl-3 text-[11px] text-[var(--color-fg-muted)]">Compatibility here means the control plane accepted a recent agent heartbeat. It does not certify every capability or guarantee a successful upgrade.</p>
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="border border-[var(--color-line-2)] p-3">
             <p className="mono-label text-[10px] text-[var(--color-fg-dim)]">CONTROL PLANE</p>
@@ -669,7 +682,7 @@ function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fle
               {current.map((node) => (
                 <div key={node.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 font-mono text-[11px]">
                   <span className="text-[var(--color-fg)]">{node.name}</span>
-                  <span className="text-[var(--color-fg-muted)]">{node.agentVersion || 'version not reported'} · {node.live ? 'online' : 'offline · last reported version'}</span>
+                  <span className="text-[var(--color-fg-muted)]">{node.agentVersion || 'version not reported'} · heartbeat {heartbeatAge(node)} · {compatibility(node)}</span>
                   <select
                     aria-label={`Agent auto-upgrade for ${node.name}`}
                     value={node.agentAutoUpgrade == null ? 'inherit' : node.agentAutoUpgrade ? 'on' : 'off'}
@@ -686,6 +699,20 @@ function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fle
             </div>
           </div>
         )}
+        {current.length > 0 && <div className="border border-[var(--color-line-2)] p-4">
+          <p className="mono-label text-[10px] text-[var(--color-fg-dim)]">ONE-NODE ROLLOUT</p>
+          <p className="mt-2 text-[var(--color-fg-muted)]">Choose one node to stage an upgrade. This checklist guides the rollout; it does not schedule or enforce a maintenance window.</p>
+          <select aria-label="Rollout node" value={rolloutNode} onChange={(event) => setRolloutNode(event.target.value)} className="mt-3 w-full max-w-sm border border-[var(--color-line-2)] bg-[var(--color-ink-900)] p-2 font-mono text-[12px] text-[var(--color-fg)]">
+            <option value="">Choose a node…</option>
+            {current.map((node) => <option key={node.id} value={node.id}>{node.name} · {node.agentVersion || 'unknown version'}</option>)}
+          </select>
+          {selectedNode && <ol className="mt-3 list-decimal space-y-1 pl-5 text-[12px] text-[var(--color-fg-muted)]">
+            <li>Record {selectedNode.name}’s current version ({selectedNode.agentVersion || 'not reported'}) and active services.</li>
+            <li>Verify the served binary and SHA256SUMS, then enable auto-upgrade for this node only above.</li>
+            <li>Wait for a fresh heartbeat and compare the reported version and service health.</li>
+            <li>If unhealthy, pause this node’s upgrade policy and restore the previous binary using the update guide.</li>
+          </ol>}
+        </div>}
         <div className="border-t border-[var(--color-line)] pt-4 text-[var(--color-fg-muted)]">
           On the server: <code className="text-[var(--color-fg)]">sudo ./deploy/upgrade.sh check</code>, then <code className="text-[var(--color-fg)]">sudo ./deploy/upgrade.sh apply</code>. The host command verifies a database backup and prints its rollback command before replacing containers. To update an agent, confirm the served binaries first, then enable one node above and wait for its fresh heartbeat. To update this computer’s CLI: <code className="text-[var(--color-fg)]">npm install -g @yadurajfleetos/cli@latest</code>.
         </div>
@@ -699,6 +726,33 @@ function Updates({ fleet }: { fleet: NonNullable<ReturnType<typeof useAuth>['fle
 export default function Settings() {
   const { fleet, email, signOut } = useAuth()
   const isAdmin = fleet?.role === 'owner' || fleet?.role === 'admin'
+  const [search, setSearch] = useState('')
+  const [fleetDirty, setFleetDirty] = useState(false)
+  const [emailDirty, setEmailDirty] = useState(false)
+  const unsaved = fleetDirty || emailDirty
+  const sections = [
+    { id: 'account', label: 'Account', terms: 'profile sign out' },
+    { id: 'notifications', label: 'Notifications', terms: 'email login logout' },
+    { id: 'two-factor', label: 'Two-factor authentication', terms: 'security totp' },
+    { id: 'sessions', label: 'Sessions', terms: 'devices location ip revoke' },
+    ...(fleet ? [{ id: 'updates', label: 'Updates', terms: 'versions agents rollout compatibility' }, { id: 'fleet', label: 'Fleet', terms: 'heartbeat reclaim auto-upgrade' }] : []),
+    ...(isAdmin ? [{ id: 'github', label: 'GitHub', terms: 'repositories integration' }, { id: 'audit', label: 'Audit', terms: 'activity history' }] : []),
+    { id: 'close-account', label: 'Close account', terms: 'delete' },
+  ]
+  const matches = sections.filter((section) => `${section.label} ${section.terms}`.toLowerCase().includes(search.toLowerCase().trim()))
+
+  useEffect(() => {
+    if (!unsaved) return
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    const warnOnNavigation = (event: MouseEvent) => {
+      const anchor = (event.target as Element | null)?.closest('a[href]') as HTMLAnchorElement | null
+      if (!anchor || anchor.origin !== window.location.origin || anchor.pathname === window.location.pathname) return
+      if (!window.confirm('You have unsaved Settings changes. Leave without saving them?')) event.preventDefault()
+    }
+    window.addEventListener('beforeunload', warn)
+    document.addEventListener('click', warnOnNavigation, true)
+    return () => { window.removeEventListener('beforeunload', warn); document.removeEventListener('click', warnOnNavigation, true) }
+  }, [unsaved])
 
   const audit = usePoll(
     () => api<AuditPage>(`/fleets/${fleet?.id}/audit?limit=5`),
@@ -719,25 +773,36 @@ export default function Settings() {
         <p className="mt-1 text-[13.5px] text-[var(--color-fg-muted)]">Fleet configuration, account, and the audit trail.</p>
       </div>
 
-      <AccountSession me={me.data} email={email} fleet={fleet} signOut={signOut} />
+      <div className="grid gap-6 lg:grid-cols-[210px_minmax(0,1fr)]">
+        <nav aria-label="Settings sections" className="lg:sticky lg:top-20 lg:self-start">
+          <label htmlFor="settings-search" className="mono-label text-[10px] text-[var(--color-fg-dim)]">FIND A SETTING</label>
+          <input id="settings-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search settings…" className="mt-2 h-9 w-full border border-[var(--color-line-2)] bg-[var(--color-ink-900)] px-3 text-[12px] text-[var(--color-fg)] focus:border-[var(--color-signal)] focus:outline-none" />
+          <div className="mt-3 flex gap-1 overflow-x-auto lg:flex-col">
+            {matches.map((section) => <a key={section.id} href={`#${section.id}`} className="shrink-0 border-l-2 border-transparent px-3 py-2 font-mono text-[11px] text-[var(--color-fg-muted)] hover:border-[var(--color-signal)] hover:text-[var(--color-fg)]">{section.label}</a>)}
+            {!matches.length && <p className="px-3 py-2 text-[12px] text-[var(--color-fg-dim)]">No matching setting.</p>}
+          </div>
+          {unsaved && <p role="status" className="mt-3 border border-[var(--color-warn)] p-2 text-[11px] text-[var(--color-warn)]">Unsaved changes. Save or discard before leaving Settings.</p>}
+        </nav>
+        <div className="min-w-0 space-y-6 [&>section]:scroll-mt-20">
+      <section id="account"><AccountSession me={me.data} email={email} fleet={fleet} signOut={signOut} /></section>
 
-      {me.data?.user && <EmailPreferences user={me.data.user} onSaved={() => me.refetch()} />}
+      {me.data?.user && <section id="notifications"><EmailPreferences user={me.data.user} onSaved={() => me.refetch()} onDirtyChange={setEmailDirty} /></section>}
 
-      <TwoFactorSettings
+      <section id="two-factor"><TwoFactorSettings
         enabled={Boolean(me.data?.user?.totpEnabled)}
         onRefresh={() => me.refetch()}
-      />
+      /></section>
 
-      <SessionsSettings />
+      <section id="sessions"><SessionsSettings /></section>
 
-      {fleet && <Updates fleet={fleet} />}
+      {fleet && <section id="updates"><Updates fleet={fleet} /></section>}
 
-      <FleetSettings />
+      <section id="fleet"><FleetSettings onDirtyChange={setFleetDirty} /></section>
 
-      {isAdmin && fleet && <GitHubWorkspace fleet={fleet} />}
+      {isAdmin && fleet && <section id="github"><GitHubWorkspace fleet={fleet} /></section>}
 
       {isAdmin && (
-        <Panel title="recent audit activity" right={<Link to="/audit" className="normal-case text-[var(--color-signal)] hover:underline">View audit history →</Link>}>
+        <section id="audit"><Panel title="recent audit activity" right={<Link to="/audit" className="normal-case text-[var(--color-signal)] hover:underline">View audit history →</Link>}>
           {audit.error ? (
             <div className="p-5">
               <ErrorNote error={audit.error} />
@@ -745,24 +810,29 @@ export default function Settings() {
           ) : (
             <AuditEntries entries={audit.data?.entries ?? []} />
           )}
-        </Panel>
+        </Panel></section>
       )}
 
       {/* Last on the page on purpose: the most destructive control should not
           sit next to routine settings where it can be reached by accident. */}
-      <CloseAccount />
+      <section id="close-account"><CloseAccount /></section>
+        </div>
+      </div>
     </div>
   )
 }
 
-function EmailPreferences({ user, onSaved }: {
+function EmailPreferences({ user, onSaved, onDirtyChange }: {
   user: { emailEveryLogin: boolean; emailOnLogout: boolean }
   onSaved: () => void
+  onDirtyChange: (dirty: boolean) => void
 }) {
   const [everyLogin, setEveryLogin] = useState(user.emailEveryLogin)
   const [onLogout, setOnLogout] = useState(user.emailOnLogout)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  const dirty = everyLogin !== user.emailEveryLogin || onLogout !== user.emailOnLogout
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
   async function save() {
     setBusy(true)
@@ -786,6 +856,7 @@ function EmailPreferences({ user, onSaved }: {
         <label className="flex items-center gap-3"><input type="checkbox" checked={everyLogin} onChange={(e) => setEveryLogin(e.target.checked)} /> Email me after every successful sign-in</label>
         <label className="flex items-center gap-3"><input type="checkbox" checked={onLogout} onChange={(e) => setOnLogout(e.target.checked)} /> Email me after signing out in the browser</label>
         <ErrorNote error={error} />
+        <p className="text-[12px] text-[var(--color-fg-muted)]">After Save: routine sign-in and browser sign-out emails follow these choices. Security notices remain on.</p>
         <Button variant="primary" onClick={() => void save()} disabled={busy || (everyLogin === user.emailEveryLogin && onLogout === user.emailOnLogout)}>{busy ? 'saving…' : 'Save preferences'}</Button>
       </div>
     </Panel>
