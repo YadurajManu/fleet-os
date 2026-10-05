@@ -37,6 +37,7 @@ export const PERMISSIONS = {
   'node.cordon': 'admin',
   'node.upgrade': 'admin',
   'node.drain': 'admin',
+  'node.terminal': 'admin',
   'service.create': 'admin',
   'service.update': 'admin',
   'alert.write': 'admin',

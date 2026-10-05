@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto'
-import { and, eq, ne } from 'drizzle-orm'
+import { and, eq, ne, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
 import { users, orgs, orgMembers, fleets, authSessions } from '../db/schema.js'
 import { hashPassword, verifyPassword } from '../auth/passwords.js'
-import { issueTokens, consumeRefresh, revokeAllRefresh, REFRESH_TTL_SEC } from '../auth/tokens.js'
+import { issueTokens, consumeRefresh, revokeAllRefresh, revokeSessions, sessionActive, REFRESH_TTL_SEC } from '../auth/tokens.js'
 import {
   issueEmailToken,
   consumeEmailToken,
@@ -114,7 +114,7 @@ export async function authRoutes(app: FastifyInstance) {
     // provider being reachable in this exact second.
     await sendVerification(created.user.id, created.user.email)
 
-    const tokens = await issueTokens(app, redis, created.user.id)
+    const tokens = await issueTokens(app, redis, created.user.id, { deviceHash: deviceHash(parseDevice(req.headers['user-agent'] ?? null)) })
     setTokenCookies(reply, tokens)
     return reply.code(201).send({
       ...tokens,
@@ -200,7 +200,7 @@ export async function authRoutes(app: FastifyInstance) {
       req.log.warn({ err, userId: user.id }, 'sign-in notification failed')
     }
 
-    const tokens = await issueTokens(app, redis, user.id)
+    const tokens = await issueTokens(app, redis, user.id, { deviceHash: deviceHash(parseDevice(req.headers['user-agent'] ?? null)) })
     setTokenCookies(reply, tokens)
     return { ...tokens, user: { id: user.id, email: user.email } }
   })
@@ -211,13 +211,13 @@ export async function authRoutes(app: FastifyInstance) {
       ?? req.cookies?.fleet_refresh_token
     if (!refreshToken) throw ApiError.badRequest('missing_refresh_token', 'refreshToken is required')
 
-    let claims: { sub: string; typ: string; jti?: string }
+    let claims: { sub: string; typ: string; jti?: string; sid?: string }
     try {
       claims = app.jwt.verify(refreshToken)
     } catch {
       throw ApiError.unauthorized('Invalid or expired refresh token')
     }
-    if (claims.typ !== 'refresh' || !claims.jti) {
+    if (claims.typ !== 'refresh' || !claims.jti || !await sessionActive(redis, claims)) {
       throw ApiError.unauthorized('Not a refresh token')
     }
 
@@ -227,7 +227,12 @@ export async function authRoutes(app: FastifyInstance) {
       throw ApiError.unauthorized('Refresh token has already been used or revoked')
     }
 
-    const tokens = await issueTokens(app, redis, userId)
+    let tokens
+    try {
+      tokens = await issueTokens(app, redis, userId, { sid: claims.sid })
+    } catch {
+      throw ApiError.unauthorized('Session expired or revoked')
+    }
     setTokenCookies(reply, tokens)
     return tokens
   })
@@ -238,8 +243,9 @@ export async function authRoutes(app: FastifyInstance) {
     const token = req.cookies?.fleet_refresh_token
     if (token) {
       try {
-        const claims = app.jwt.verify<{ sub: string; typ: string; jti?: string }>(token)
+        const claims = app.jwt.verify<{ sub: string; typ: string; jti?: string; sid?: string }>(token)
         if (claims.typ === 'refresh' && claims.jti && await consumeRefresh(redis, claims.jti) === claims.sub) {
+          if (claims.sid) await redis.del(`authsession:${claims.sub}:${claims.sid}`)
           const [owner] = await db.select({ email: users.email, emailOnLogout: users.emailOnLogout })
             .from(users).where(eq(users.id, claims.sub)).limit(1)
           if (owner?.emailOnLogout) {
@@ -391,6 +397,9 @@ export async function authRoutes(app: FastifyInstance) {
         .limit(1)
 
       if (existingByEmail[0]) {
+        if (!existingByEmail[0].emailVerifiedAt) {
+          return reply.redirect(`${dashboardBase}/auth/callback?error=${encodeURIComponent('Sign in and verify the existing account email before linking GitHub. Reset your password first if needed.')}`)
+        }
         // Link GitHub to existing account
         user = existingByEmail[0]
         await db
@@ -491,7 +500,7 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     // Issue tokens and set cookies
-    const tokens = await issueTokens(app, redis, user.id)
+    const tokens = await issueTokens(app, redis, user.id, { deviceHash: deviceHash(parseDevice(req.headers['user-agent'] ?? null)) })
     setTokenCookies(reply, tokens)
 
     // Redirect to dashboard callback handler
@@ -632,7 +641,7 @@ export async function authRoutes(app: FastifyInstance) {
       req.log.warn({ err, userId: user.id }, 'sign-in notification failed')
     }
 
-    const tokens = await issueTokens(app, redis, user.id)
+    const tokens = await issueTokens(app, redis, user.id, { deviceHash: deviceHash(parseDevice(req.headers['user-agent'] ?? null)) })
     setTokenCookies(reply, tokens)
     return { ...tokens, user: { id: user.id, email: user.email } }
   })
@@ -646,6 +655,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     if (!user) throw ApiError.notFound('User')
 
+    if (user.totpSecret) throw ApiError.badRequest('totp_already_enabled', 'Disable the existing factor with confirmation before setting up a new one')
     const secret = generateTotpSecret()
     const uri = generateTotpUri(user.email, secret, 'Fleet OS')
 
@@ -676,10 +686,13 @@ export async function authRoutes(app: FastifyInstance) {
       throw ApiError.badRequest('invalid_totp_code', 'Invalid 6-digit verification code. Please check your authenticator app.')
     }
 
-    await db
+    const enabled = await db
       .update(users)
       .set({ totpSecret: secret })
-      .where(eq(users.id, req.userId!))
+      .where(and(eq(users.id, req.userId!), isNull(users.totpSecret)))
+      .returning({ id: users.id })
+
+    if (!enabled.length) throw ApiError.badRequest('totp_already_enabled', 'An existing 2FA factor cannot be replaced')
 
     await redis.del(pendingKey)
 
@@ -765,9 +778,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.get('/auth/sessions', { preHandler: requireUser }, async (req) => {
     const rows = await listDevices(app.ctx, req.userId!)
-    const currentLogin = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
-    const currentDevice = parseDevice(currentLogin.userAgent)
-    const currentHash = deviceHash(currentDevice)
+    const currentHash = await redis.get(`authsession:${req.userId!}:${req.user.sid}`)
 
     const sessions = rows.map((r) => ({
       id: r.id,
@@ -788,13 +799,15 @@ export async function authRoutes(app: FastifyInstance) {
   app.delete('/auth/sessions/:id', { preHandler: requireUser }, async (req) => {
     const { id } = req.params as { id: string }
     const gone = await db
-      .delete(authSessions)
+      .select({ id: authSessions.id, deviceHash: authSessions.deviceHash })
+      .from(authSessions)
       .where(and(eq(authSessions.userId, req.userId!), eq(authSessions.id, id)))
-      .returning({ id: authSessions.id })
 
     if (!gone.length) {
       throw ApiError.notFound('Session')
     }
+    await revokeSessions(redis, req.userId!, { deviceHash: gone[0]!.deviceHash })
+    await db.delete(authSessions).where(and(eq(authSessions.userId, req.userId!), eq(authSessions.id, id)))
 
     const membership = await db
       .select({ orgId: orgMembers.orgId })
@@ -816,14 +829,12 @@ export async function authRoutes(app: FastifyInstance) {
   })
 
   app.post('/auth/sessions/revoke-others', { preHandler: requireUser }, async (req) => {
-    const currentLogin = loginContextFrom(req.headers as Record<string, unknown>, req.ip)
-    const currentDevice = parseDevice(currentLogin.userAgent)
-    const currentHash = deviceHash(currentDevice)
+    const revokedCount = await revokeSessions(redis, req.userId!, { exceptSid: req.user.sid })
+    const currentHash = await redis.get(`authsession:${req.userId!}:${req.user.sid}`)
 
-    const deleted = await db
+    await db
       .delete(authSessions)
-      .where(and(eq(authSessions.userId, req.userId!), ne(authSessions.deviceHash, currentHash)))
-      .returning({ id: authSessions.id })
+      .where(and(eq(authSessions.userId, req.userId!), ne(authSessions.deviceHash, currentHash ?? '')))
 
     const membership = await db
       .select({ orgId: orgMembers.orgId })
@@ -838,11 +849,11 @@ export async function authRoutes(app: FastifyInstance) {
         action: 'user.sessions_revoked_all_others',
         targetType: 'session',
         targetId: req.userId!,
-        metadata: { revokedCount: deleted.length },
+        metadata: { revokedCount },
       })
     }
 
-    return { ok: true, revokedCount: deleted.length }
+    return { ok: true, revokedCount }
   })
 
   /* ── password reset and email verification ──────────────────────────
@@ -1129,7 +1140,7 @@ export async function authRoutes(app: FastifyInstance) {
     const raw = await redis.get(key)
     if (!raw) throw ApiError.notFound('CLI login session has expired or is invalid')
 
-    const tokens = await issueTokens(app, redis, req.userId!)
+    const tokens = await issueTokens(app, redis, req.userId!, { deviceHash: deviceHash(parseDevice(req.headers['user-agent'] ?? null)) })
     const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, req.userId!)).limit(1)
 
     const payload = {

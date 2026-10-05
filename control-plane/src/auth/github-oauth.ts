@@ -139,7 +139,7 @@ export async function fetchGitHubProfile(accessToken: string): Promise<GitHubPro
     }
   }
 
-  const finalEmail = (verifiedEmail || userData.email || '').toLowerCase().trim()
+  const finalEmail = (verifiedEmail || '').toLowerCase().trim()
   if (!finalEmail) {
     throw new GitHubOAuthError(
       'No verified email address found on your GitHub account. Please verify your email on GitHub and try again.',

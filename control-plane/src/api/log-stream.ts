@@ -4,6 +4,8 @@ import type { ServerResponse } from 'http'
 import type { Redis } from 'ioredis'
 import type { AppContext } from './context.js'
 import { services, nodes } from '../db/schema.js'
+import { requireServicePermission } from './services.routes.js'
+import { sessionActive } from '../auth/tokens.js'
 
 const CHANNEL_PREFIX = 'fleet:logs:'
 
@@ -28,18 +30,25 @@ interface LogEntry {
  * Track shared subscribers so multiple clients watching the same
  * service share one Redis subscription instead of one per client.
  */
-const sharedSubs = new Map<string, { subscriber: Redis; count: number }>()
+const sharedSubs = new Map<string, { subscriber: Redis; count: number; ready: Promise<unknown> }>()
 
 async function getSubscriber(redis: Redis, channel: string): Promise<Redis> {
   const existing = sharedSubs.get(channel)
   if (existing) {
     existing.count++
+    await existing.ready
     return existing.subscriber
   }
-  const subscriber = redis.duplicate()
-  await subscriber.connect()
-  await subscriber.subscribe(channel)
-  sharedSubs.set(channel, { subscriber, count: 1 })
+  const subscriber = redis.duplicate({ lazyConnect: true })
+  const ready = subscriber.connect().then(() => subscriber.subscribe(channel))
+  sharedSubs.set(channel, { subscriber, count: 1, ready })
+  try {
+    await ready
+  } catch (err) {
+    sharedSubs.delete(channel)
+    subscriber.disconnect()
+    throw err
+  }
   return subscriber
 }
 
@@ -48,9 +57,8 @@ async function releaseSubscriber(redis: Redis, channel: string): Promise<void> {
   if (!existing) return
   existing.count--
   if (existing.count <= 0) {
-    await existing.subscriber.unsubscribe(channel)
-    await existing.subscriber.quit().catch(() => {})
     sharedSubs.delete(channel)
+    await existing.subscriber.quit().catch(() => existing.subscriber.disconnect())
   }
 }
 
@@ -122,25 +130,14 @@ export async function logStreamHandler(
 
   seed = seed.slice(-200)
 
-  // Set SSE headers.
-  reply.raw.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  })
-
   const buildSeed = await redis.lrange(`build:logs:${serviceId}`, 0, 199).catch(() => [])
   for (const line of buildSeed.reverse()) { try { seed.push(JSON.parse(line)) } catch {} }
-  // Send seed.
-  for (const entry of seed) {
-    reply.raw.write(`data: ${JSON.stringify(entry)}\n\n`)
-  }
-  ;(reply.raw as ServerResponse & { flush: () => void }).flush?.()
-
-  // Subscribe for live entries.
+  // Subscribe before sending headers so connection failures remain ordinary API errors.
   const subscriber = await getSubscriber(redis, channel)
-
+  if (reply.raw.destroyed) {
+    await releaseSubscriber(redis, channel)
+    return
+  }
   const onMessage = (_: string, message: string) => {
     try {
       const entry: LogEntry = JSON.parse(message)
@@ -151,36 +148,51 @@ export async function logStreamHandler(
       // Skip malformed messages.
     }
   }
-
   subscriber.on('message', onMessage)
-
-  // Clean up on client disconnect.
-  reply.raw.on('close', async () => {
+  reply.raw.once('close', () => {
     subscriber.off('message', onMessage)
-    await releaseSubscriber(redis, channel)
+    void releaseSubscriber(redis, channel)
   })
+
+  // Set SSE headers.
+  reply.hijack()
+  reply.raw.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  })
+  reply.raw.flushHeaders()
+
+  // Send seed.
+  for (const entry of seed) {
+    reply.raw.write(`data: ${JSON.stringify(entry)}\n\n`)
+  }
+  ;(reply.raw as ServerResponse & { flush: () => void }).flush?.()
+
 }
 
 /**
  * Register the log stream SSE route.
  */
 export function registerLogStream(app: FastifyInstance): void {
-  app.get(
+  app.get<{ Params: { serviceId: string } }>(
     '/services/:serviceId/logs/stream',
     {
-      preHandler: async (req: FastifyRequest<{ Params: { serviceId: string } }>) => {
-        const { serviceId } = req.params
-        const [service] = await (req.server.ctx as AppContext).db
-          .select({ id: services.id })
-          .from(services)
-          .where(eq(services.id, serviceId))
-          .limit(1)
-        if (!service) throw { statusCode: 404, code: 'not_found', message: 'Service not found' }
-      },
+      preHandler: requireServicePermission('logs.read'),
     },
     async (_req: FastifyRequest<{ Params: { serviceId: string } }>, reply: FastifyReply) => {
       const { serviceId } = _req.params
       await logStreamHandler(serviceId, _req.server.ctx as AppContext, reply)
+      if (reply.raw.destroyed) return reply
+      const timer = setInterval(() => {
+        void sessionActive(_req.server.ctx.redis, _req.user).then(active => {
+          const exp = (_req.user as { exp?: number }).exp
+          if (!active || !exp || Date.now() >= exp * 1000) reply.raw.end()
+        }).catch(() => reply.raw.end())
+      }, 5_000)
+      timer.unref()
+      reply.raw.once('close', () => clearInterval(timer))
       return reply
     }
   )

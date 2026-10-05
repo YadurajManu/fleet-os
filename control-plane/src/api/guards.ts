@@ -4,6 +4,7 @@ import { nodes, orgMembers, fleets } from '../db/schema.js'
 import { hashToken, isAgentToken } from '../lib/tokens.js'
 import { can, type Permission } from '../auth/rbac.js'
 import { ApiError } from './errors.js'
+import { sessionActive } from '../auth/tokens.js'
 
 function bearer(req: FastifyRequest): string | null {
   const raw = req.headers.authorization
@@ -26,6 +27,7 @@ export async function requireUser(req: FastifyRequest, _reply: FastifyReply) {
     }
     const claims = req.user
     if (claims.typ !== 'access') throw ApiError.unauthorized('Access token required')
+    if (!await sessionActive(req.server.ctx.redis, claims)) throw ApiError.unauthorized('Session expired or revoked; sign in again')
     req.userId = claims.sub
   } catch (err) {
     if (err instanceof ApiError) throw err

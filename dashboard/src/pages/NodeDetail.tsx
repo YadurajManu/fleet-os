@@ -461,7 +461,8 @@ export default function NodeDetail() {
    * `tunnelConnected` is the same fact the server checks, not a proxy for it:
    * a node can be recently seen and still have no tunnel.
    */
-  const canOpenTerminal = node?.tunnelConnected === true
+  const canUseTerminal = fleet?.role === 'admin' || fleet?.role === 'owner'
+  const canOpenTerminal = canUseTerminal && node?.tunnelConnected === true
 
   // A session open when the tunnel drops is a panel that swallows keystrokes:
   // the control plane has nowhere left to forward them. `node` is refreshed by
@@ -469,7 +470,7 @@ export default function NodeDetail() {
   useEffect(() => {
     if (!canOpenTerminal) setShowTerminal(false)
   }, [canOpenTerminal])
-  const whyNoTerminal = node
+  const whyNoTerminal = !canUseTerminal ? 'Only fleet admins and owners can open a host terminal.' : node
     ? `${node.name} has no agent tunnel — last seen ${since(node.lastHeartbeatAt)}. A terminal needs its agent connected.`
     : 'This node is not reporting.'
 

@@ -5,6 +5,8 @@ import { nodes, orgMembers, fleets } from '../db/schema.js'
 import { and, eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import type { TunnelRegistry } from './registry.js'
+import { can } from '../auth/rbac.js'
+import { sessionActive } from '../auth/tokens.js'
 
 /**
  * Browser → Control Plane → Agent terminal proxy.
@@ -40,8 +42,8 @@ export function setupTerminalServer(
     }
 
     try {
-      const decoded = app.jwt.verify<{ sub: string; typ: string }>(token)
-      if (decoded.typ !== 'access') {
+      const decoded = app.jwt.verify<{ sub: string; typ: string; sid?: string; exp: number }>(token)
+      if (decoded.typ !== 'access' || !await sessionActive(ctx.redis, decoded)) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
         socket.destroy()
         return
@@ -57,7 +59,7 @@ export function setupTerminalServer(
         .where(and(eq(fleets.id, fleetId!), eq(orgMembers.userId, userId)))
         .limit(1)
 
-      if (!rows[0]) {
+      if (!rows[0] || !can(rows[0].role, 'node.terminal')) {
         socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
         socket.destroy()
         return
@@ -86,6 +88,13 @@ export function setupTerminalServer(
       // Upgrade to WebSocket
       wss.handleUpgrade(req, socket, head, (browserWs) => {
         const sessionId = randomUUID()
+        const authorizationTimer = setInterval(() => {
+          void sessionActive(ctx.redis, decoded).then(active => {
+            if (!active || Date.now() >= decoded.exp * 1000) browserWs.close(1008, 'Session expired or revoked')
+          }).catch(() => browserWs.close(1008, 'Session validation unavailable'))
+        }, 5_000)
+        authorizationTimer.unref()
+        browserWs.once('close', () => clearInterval(authorizationTimer))
 
         app.log.info(
           { nodeId, fleetId, userId, sessionId },

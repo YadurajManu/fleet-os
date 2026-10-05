@@ -23,7 +23,7 @@ import { recordAudit } from '../lib/audit.js'
 import { resolveSecrets } from '../secrets/store.js'
 import { ApiError } from './errors.js'
 import { openDeployment, phaseWriter, readProgress } from './deploy-progress.js'
-import { requireFleetPermission } from './guards.js'
+import { requireFleetPermission, requireUser } from './guards.js'
 
 export async function serviceRoutes(app: FastifyInstance) {
   const { db } = app.ctx
@@ -1284,6 +1284,7 @@ export async function serviceRoutes(app: FastifyInstance) {
  */
 export function requireServicePermission(permission: Parameters<typeof requireFleetPermission>[0]) {
   return async function guard(req: Parameters<ReturnType<typeof requireFleetPermission>>[0], reply: Parameters<ReturnType<typeof requireFleetPermission>>[1]) {
+    await requireUser(req, reply)
     const { serviceId } = req.params as { serviceId?: string }
     if (!serviceId) throw ApiError.badRequest('missing_service', 'Route is missing a service id')
 
