@@ -77,16 +77,14 @@ describe('welcome box and first-run help', () => {
   test('welcomeBox renders start steps and doc link', () => {
     const box = welcomeBox()
     assert.ok(box.includes('First time? Start here:'))
-    assert.ok(box.includes('fleet auth login'))
-    assert.ok(box.includes('fleet nodes pair'))
-    assert.ok(box.includes('fleet up'))
+    assert.ok(box.includes('fleet quickstart'))
     assert.ok(box.includes('https://fleet.plastikworld.xyz/#/docs'))
   })
 
   test('usage(true) appends welcome box', () => {
     const outWith = usage(true)
     assert.ok(outWith.includes('First time? Start here:'))
-    assert.ok(outWith.includes('fleet auth login'))
+    assert.ok(outWith.includes('fleet quickstart'))
   })
 
   test('usage(false) omits welcome box', () => {
