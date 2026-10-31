@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.26.0
+
+- Added `fleet quickstart` for guided sign-in, machine pairing, sample app setup, deployment, and readiness checks.
+
 ## 0.25.0
 
 - Added `fleet updates` with the running server revision, node agent versions, this computer's CLI version, and the separate update paths. Offline agent versions are explicitly marked as last reported.
