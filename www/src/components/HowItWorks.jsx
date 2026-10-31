@@ -4,6 +4,7 @@ import { STEPS } from '../lib/data'
 import { EASE } from '../lib/motion'
 import SectionHead from './ui/SectionHead'
 import StepVisual from './StepVisuals'
+import CopyLine from './ui/CopyLine'
 
 function Step({ step, index, onActive, active }) {
   const ref = useRef(null)
@@ -65,10 +66,22 @@ export default function HowItWorks() {
         <SectionHead
           index="01"
           kicker="how it works"
-          title="Six moving parts, and you touch two of them."
-          lede="Pair a machine, deploy a prebuilt image to check routing, then opt a node into builds when you need source deployments. The control plane coordinates placement and the route to your app."
+          title="From new account to first app with one guided command."
+          lede="Run the quickstart from any directory. Fleet signs you in, pairs a machine if needed, creates a small Nginx sample, and deploys the prebuilt image."
           max="max-w-[46ch]"
         />
+      </div>
+
+      <div className="rail pb-8">
+        <div className="grid gap-5 border-y border-[var(--color-line)] py-5 sm:grid-cols-[1fr_auto] sm:items-center">
+          <p className="max-w-[58ch] text-[13px] leading-[1.7] text-[var(--color-fg-muted)]">
+            If Fleet needs a machine, it prints a one-time install command for you to run on that target. No builder is needed for the sample; its URL is public when ingress and DNS are configured.
+          </p>
+          <div className="w-full sm:w-[260px]">
+            <CopyLine command="fleet quickstart" />
+            <p className="mt-2 font-mono text-[10px] text-[var(--color-fg-dim)]">sign in · pair · deploy</p>
+          </div>
+        </div>
       </div>
 
       <div className="rail relative grid gap-x-12 pb-24 lg:grid-cols-2 lg:pb-32">

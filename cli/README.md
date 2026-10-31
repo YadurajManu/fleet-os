@@ -27,6 +27,18 @@ npm link
 
 ## Quick Start
 
+For a guided first deploy, run this in a directory where Fleet can create a
+`fleet-quickstart` sample folder:
+
+```bash
+fleet quickstart
+```
+
+It signs in if needed, uses an online node or guides you through pairing one,
+then deploys a prebuilt Nginx sample. If it prints a pairing command, run that
+one-time command on the target machine while the CLI waits. HTTPS reachability
+still depends on ingress and DNS being configured.
+
 ### 1. Sign In
 ```bash
 # Hosted control plane (default: https://fleetapi.plastikworld.xyz)
@@ -85,6 +97,7 @@ fleet logs web --follow
 
 | Command | Description |
 | :--- | :--- |
+| `fleet quickstart` | Guided sign-in, machine pairing, sample app scaffold, and first deploy |
 | `fleet auth login` | Sign in and save secure local session |
 | `fleet auth logout` | Sign out and clear httpOnly session cookies |
 | `fleet config show` | Show active control plane and selected fleet |

@@ -14,6 +14,7 @@ import { domainsCommand } from './domains.js'
 import { downCommand } from './down.js'
 import { unpairCommand, agentCommand } from './unpair.js'
 import { uninstallCommand } from './uninstall.js'
+import { quickstartCommand } from './quickstart.js'
 import { secretsCommand } from './secrets.js'
 import { backupCommand, backupsCommand, restoreCommand } from './backups.js'
 import {
@@ -38,6 +39,7 @@ import {
 export type Command = { run(args: string[], flags: Flags): Promise<void> }
 
 export const commands: Record<string, Command> = {
+  quickstart: quickstartCommand,
   up: upCommand,
   open: openCommand,
   domains: domainsCommand,

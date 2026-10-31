@@ -24,7 +24,7 @@ export function compactWelcome(): string {
   return [
     `${c.signal(unicode ? '○─●─○' : 'o-@-o')}  ${c.bold('FLEET')}`,
     'Deploy to hardware you own.', '', c.bold('Start here'),
-    descriptionRows([['fleet auth login', 'Sign in'], ['fleet nodes pair', 'Connect a machine'], ['fleet up', 'Deploy your project']]),
+    descriptionRows([['fleet quickstart', 'Sign in, pair, and deploy a sample app']]),
     '', c.bold('Your fleet'),
     descriptionRows([['fleet status', 'Check health'], ['fleet services', 'View applications'], ['fleet logs <service>', 'Read application logs']]),
     '', c.bold('Need help?'),

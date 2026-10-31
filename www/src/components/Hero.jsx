@@ -146,7 +146,7 @@ export default function Hero() {
             >
               <InstallCommand />
               <p className="mt-2.5 font-mono text-[10px] tracking-[0.06em] text-[var(--color-fg-dim)]">
-                install → pair → deploy a prebuilt app. <a href="/docs" className="text-[var(--color-signal)] underline underline-offset-4">Start here</a>
+                install CLI → <code className="text-[var(--color-signal)]">fleet quickstart</code> → first app. <a href="/docs" className="text-[var(--color-signal)] underline underline-offset-4">Start here</a>
               </p>
             </motion.div>
           </motion.div>

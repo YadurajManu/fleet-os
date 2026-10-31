@@ -22,6 +22,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
   [
     'getting started',
     [
+      ['quickstart', 'Sign in, connect a machine if needed, and deploy a sample app with guided steps'],
       ['up [service]', 'Apply and deploy local source from the current project'],
       ['init', 'Read the repository — monorepo, databases, secrets — and write a fleet.yaml'],
       ['init --ai', 'The same, then have the control plane review the draft against the repository'],
@@ -122,7 +123,7 @@ const definitions = (rows: Array<[string, string]>): string =>
 
 export function welcomeBox(): string {
   if ((process.stdout.columns || 80) < 70) return `First time? Start here:\n${descriptionRows([
-    ['fleet auth login', 'Sign in'], ['fleet nodes pair', 'Connect a machine'], ['fleet up', 'Deploy a project'],
+    ['fleet quickstart', 'Sign in, pair, and deploy a sample app'],
   ])}\nDocs: https://fleet.plastikworld.xyz/#/docs`
   const tl = unicode ? '┌' : '+'
   const tr = unicode ? '┐' : '+'
@@ -135,9 +136,8 @@ export function welcomeBox(): string {
     '',
     c.bold('First time? Start here:'),
     '',
-    `${c.bold(c.signal('1.'))} fleet auth login`,
-    `${c.bold(c.signal('2.'))} fleet nodes pair`,
-    `${c.bold(c.signal('3.'))} fleet up`,
+    `${c.bold(c.signal('1.'))} fleet quickstart`,
+    `${c.dim('   guided sign-in, pairing, and sample deploy')}`,
     '',
     `Docs: ${c.dim('https://fleet.plastikworld.xyz/#/docs')}`,
     '',

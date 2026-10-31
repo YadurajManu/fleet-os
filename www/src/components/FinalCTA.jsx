@@ -14,19 +14,18 @@ export default function FinalCTA() {
             <Reveal className="mono-label">get started</Reveal>
             <Reveal i={1}>
               <h2 className="mt-6 text-[clamp(2.1rem,5vw,3.6rem)] font-semibold leading-[0.98] tracking-[-0.045em] text-balance">
-                The Pi is already on.
-                <span className="block text-[var(--color-fg-dim)]">Give it something to do.</span>
+                Your first app is one command away.
+                <span className="block text-[var(--color-fg-dim)]">Fleet guides the setup.</span>
               </h2>
             </Reveal>
             <Reveal i={2}>
               <p className="mt-6 max-w-[46ch] text-[15px] leading-[1.7] text-[var(--color-fg-muted)] text-pretty">
-                Open the dashboard, pair one machine, push a repo, get a URL. Add the laptop
-                and the VPS when you want the thing to survive one of them disappearing.
+                Run <code>fleet quickstart</code> to sign in, connect a machine if needed, and deploy a prebuilt Nginx sample. When pairing, run the one-time command it prints on the target machine. Public access depends on ingress and DNS being configured.
               </p>
             </Reveal>
 
             <Reveal i={3} className="mt-9 max-w-[520px]">
-              <CopyLine command="fleet nodes pair" />
+              <CopyLine command="fleet quickstart" />
             </Reveal>
 
             <Reveal i={4} className="mt-6 flex flex-wrap items-center gap-3">
@@ -54,11 +53,11 @@ export default function FinalCTA() {
               </div>
               <ul className="divide-y divide-[var(--color-line)]">
                 {[
-                  ['install agent', '~15s'],
-                  ['capability detected', 'automatic'],
-                  ['fleet.yaml written', 'fleet init'],
-                  ['first deploy', 'git push'],
-                  ['TLS + public URL', 'automatic'],
+                  ['sign in', 'guided'],
+                  ['pair a machine', 'if needed'],
+                  ['sample app', 'prebuilt Nginx'],
+                  ['builder node', 'not needed'],
+                  ['ingress + DNS', 'public URL'],
                   ['port forwarding', 'never'],
                 ].map(([k, v]) => (
                   <li key={k} className="flex items-center justify-between px-5 py-3 font-mono text-[11.5px]">

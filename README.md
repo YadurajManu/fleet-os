@@ -43,11 +43,10 @@ To operate your own control plane, start with [self-hosting](docs/self-hosting.m
 
 ```sh
 npm install -g @yadurajfleetos/cli
-fleet auth login
-fleet nodes pair
+fleet quickstart
 ```
 
-The login command uses Fleet's hosted control plane by default. For a self-hosted control plane, run `fleet auth login --api https://fleetapi.example.com` instead. Run the pairing command's generated installer on your node, then confirm it appears with `fleet nodes`. For Windows service installation, follow [agent setup](docs/agent-delegated-builds.md#enable-a-node-as-a-builder).
+Run this from a directory where you want the `fleet-quickstart` sample folder created. Quickstart signs in if needed, pairs a machine if the fleet has no online node, and deploys a prebuilt Nginx sample. When pairing, run the printed one-time installer command on the target machine while quickstart waits. For a self-hosted control plane, sign in first with `fleet auth login --api https://fleetapi.example.com`. For Windows service installation, follow [agent setup](docs/agent-delegated-builds.md#enable-a-node-as-a-builder).
 
 ### 2. Deploy a small app
 

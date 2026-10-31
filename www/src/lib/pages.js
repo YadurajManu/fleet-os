@@ -30,6 +30,14 @@ export const PAGES = {
       ]},
       { t: 'note', tone: 'signal', text: 'The password prompt is intentionally hidden. Your CLI profile, including its access token, is saved with owner-only permissions in ~/.config/fleet-os/config.json.' },
 
+      H('Guided first deploy'),
+      P('Run quickstart from a directory where you want Fleet to create a fleet-quickstart sample folder. It signs in if needed, pairs a machine when the fleet has no online node, and deploys a prebuilt Nginx image. If pairing is needed, run the one-time command it prints on the target machine while the CLI waits. The sample does not require a build-capable node.'),
+      { t: 'code', lang: 'sh', lines: [
+        '$ fleet quickstart',
+        '# Open the printed URL after the release reports running',
+      ]},
+      { t: 'note', tone: 'warn', text: 'The service URL is reachable only when the control plane has working HTTPS ingress and DNS. Quickstart does not configure either.' },
+
       H('2. Pair a machine'),
       P('In the dashboard, open Nodes and select Add a node, or run fleet nodes pair. Copy the generated command exactly onto the machine you want to add. The token is single-use and expires after ten minutes.'),
       { t: 'code', lang: 'sh', lines: [
