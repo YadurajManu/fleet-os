@@ -125,6 +125,7 @@ export async function fetchGitHubProfile(accessToken: string): Promise<GitHubPro
   }
 
   let verifiedEmail: string | null = null
+  const missingEmailPermission = emailsRes.status === 403
 
   if (emailsRes.ok) {
     const emails = (await emailsRes.json()) as Array<{
@@ -142,7 +143,9 @@ export async function fetchGitHubProfile(accessToken: string): Promise<GitHubPro
   const finalEmail = (verifiedEmail || '').toLowerCase().trim()
   if (!finalEmail) {
     throw new GitHubOAuthError(
-      'No verified email address found on your GitHub account. Please verify your email on GitHub and try again.',
+      missingEmailPermission
+        ? 'Fleet cannot read your GitHub email addresses. Enable the “Email addresses” user permission as read-only in the Fleet GitHub App settings, then try signing in again.'
+        : 'No verified email address was returned by GitHub. Confirm your email is verified and that Fleet has permission to read email addresses, then try again.',
       'no_verified_email'
     )
   }
