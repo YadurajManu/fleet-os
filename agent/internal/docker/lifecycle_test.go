@@ -15,6 +15,8 @@ func TestSplitTag(t *testing.T) {
 	}{
 		{"nginx", "nginx", "latest"},
 		{"localhost:5001/web@sha256:" + strings.Repeat("a", 64), "localhost:5001/web@sha256:" + strings.Repeat("a", 64), ""},
+		// A bare library image pinned by digest must be qualified for Docker 28+.
+		{"postgres@sha256:" + strings.Repeat("b", 64), "docker.io/library/postgres@sha256:" + strings.Repeat("b", 64), ""},
 		{"nginx:1.27", "nginx", "1.27"},
 		{"ghcr.io/you/app:v2", "ghcr.io/you/app", "v2"},
 		// A registry port must not be mistaken for a tag — this is the case

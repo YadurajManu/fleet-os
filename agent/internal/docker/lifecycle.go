@@ -222,6 +222,12 @@ func (c *Client) PullForPlatform(ctx context.Context, image string, auth string,
 func splitTag(image string) (string, string) {
 	// Digest references must reach Docker intact, without a tag override.
 	if strings.Contains(image, "@") {
+		// Docker 28+ rejects bare-name digest references like "postgres@sha256:...".
+		// Official library images must be qualified as "docker.io/library/<name>".
+		name := image[:strings.Index(image, "@")]
+		if !strings.Contains(name, "/") {
+			image = "docker.io/library/" + image
+		}
 		return image, ""
 	}
 	// Only split on a colon after the last slash, so a registry port

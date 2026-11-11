@@ -1,5 +1,5 @@
 import { and, eq, isNull, gt, inArray, ne, or } from 'drizzle-orm'
-import { recordDeployStage } from './deploy-progress.js'
+import { recordDeployStage, cleanReason } from './deploy-progress.js'
 import { publishLog } from './log-stream.js'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
@@ -555,6 +555,60 @@ export async function agentRoutes(app: FastifyInstance) {
         .update(nodes)
         .set({ advertiseAddr: hb.advertise_addr })
         .where(and(eq(nodes.id, nodeId), ne(nodes.advertiseAddr, hb.advertise_addr)))
+    }
+
+    // ── Surface agent-side failures ──────────────────────────────────
+    //
+    // The agent stores the last reconciliation error in its runtime telemetry.
+    // When a deploying service has been failing to start on the node (e.g. a
+    // pull that keeps returning "invalid reference format"), the deployment
+    // must eventually be marked failed rather than spinning in "deploying"
+    // forever with no user-visible feedback.
+    //
+    // The error format from the agent is "serviceName: errorDetail" for
+    // per-service failures, or a bare message for global reconcile errors.
+    // A grace period prevents a transient pull timeout from killing a deploy
+    // that would have succeeded on retry.
+    if (hb.runtime.last_reconcile_error) {
+      const errorText = hb.runtime.last_reconcile_error
+      const colonIdx = errorText.indexOf(': ')
+      const errorServiceName = colonIdx > 0 ? errorText.slice(0, colonIdx) : null
+      const errorDetail = colonIdx > 0 ? errorText.slice(colonIdx + 2) : errorText
+
+      if (errorServiceName) {
+        const RECONCILE_FAIL_GRACE_MS = 90_000
+        const stuckDeployments = await db
+          .select({
+            id: deployments.id,
+            name: services.name,
+            startedAt: deployments.startedAt,
+          })
+          .from(deployments)
+          .innerJoin(services, eq(services.id, deployments.serviceId))
+          .where(
+            and(
+              eq(deployments.nodeId, nodeId),
+              eq(deployments.status, 'deploying'),
+              eq(services.name, errorServiceName)
+            )
+          )
+
+        for (const dep of stuckDeployments) {
+          if (Date.now() - dep.startedAt.getTime() < RECONCILE_FAIL_GRACE_MS) continue
+          await db
+            .update(deployments)
+            .set({
+              status: 'failed',
+              failureReason: cleanReason(errorDetail),
+              finishedAt: new Date(),
+            })
+            .where(eq(deployments.id, dep.id))
+          req.log.warn(
+            { nodeId, service: dep.name, deploymentId: dep.id, error: errorDetail },
+            'deployment failed: agent reported reconciliation error'
+          )
+        }
+      }
     }
 
     // Drift: what the node says is not running, that we believe is. Debounced

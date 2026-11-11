@@ -19,5 +19,7 @@ test('digest references remove mutable tags while preserving registry ports', ()
     pinnedImage('registry.test:5000/app:latest', 'sha256:abc'),
     'registry.test:5000/app@sha256:abc'
   )
-  assert.equal(pinnedImage('alpine', 'sha256:abc'), 'alpine@sha256:abc')
+  // Bare library images are qualified so Docker 28+ does not reject the digest pull.
+  assert.equal(pinnedImage('alpine', 'sha256:abc'), 'docker.io/library/alpine@sha256:abc')
+  assert.equal(pinnedImage('postgres:16-alpine', 'sha256:abc'), 'docker.io/library/postgres@sha256:abc')
 })

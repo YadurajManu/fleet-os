@@ -134,7 +134,13 @@ export function manifestPlatforms(manifest: unknown): string[] {
   ]
 }
 export function pinnedImage(image: string, digest: string): string {
-  return `${image.split('@')[0]!.replace(/:[^/:]+$/, '')}@${digest}`
+  const base = image.split('@')[0]!.replace(/:[^/:]+$/, '')
+  // Docker 28+ rejects bare-name digest references (e.g. "postgres@sha256:...")
+  // with HTTP 400 "invalid reference format". Official Docker Hub library images
+  // (those with no slash in the name) must be fully qualified as
+  // "docker.io/library/<name>" when pinned by digest.
+  const qualified = base.includes('/') ? base : `docker.io/library/${base}`
+  return `${qualified}@${digest}`
 }
 export async function inspectImage(
   image: string,

@@ -45,7 +45,7 @@ export type EngineSpec = {
  */
 export const ENGINES: Record<string, EngineSpec> = {
   postgres: {
-    image: 'postgres',
+    image: 'docker.io/library/postgres',
     defaultVersion: '16-alpine',
     port: 5432,
     dataPath: '/var/lib/postgresql/data',
@@ -65,7 +65,7 @@ export const ENGINES: Record<string, EngineSpec> = {
     }),
   },
   mysql: {
-    image: 'mysql',
+    image: 'docker.io/library/mysql',
     defaultVersion: '8',
     port: 3306,
     dataPath: '/var/lib/mysql',
@@ -83,7 +83,7 @@ export const ENGINES: Record<string, EngineSpec> = {
     }),
   },
   mariadb: {
-    image: 'mariadb',
+    image: 'docker.io/library/mariadb',
     defaultVersion: '11',
     port: 3306,
     dataPath: '/var/lib/mysql',
@@ -99,7 +99,7 @@ export const ENGINES: Record<string, EngineSpec> = {
     }),
   },
   redis: {
-    image: 'redis',
+    image: 'docker.io/library/redis',
     defaultVersion: '7-alpine',
     port: 6379,
     dataPath: '/data',
@@ -113,7 +113,7 @@ export const ENGINES: Record<string, EngineSpec> = {
     serverEnv: () => ({}),
   },
   mongo: {
-    image: 'mongo',
+    image: 'docker.io/library/mongo',
     defaultVersion: '7',
     port: 27017,
     dataPath: '/data/db',
