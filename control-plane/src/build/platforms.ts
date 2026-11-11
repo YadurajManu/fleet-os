@@ -56,8 +56,8 @@ export function selectBuilder(
       n.canBuild &&
       n.connected &&
       n.active < n.maxConcurrentBuilds &&
-      n.freeCpu >= 2 &&
-      n.freeMemBytes >= 2147483648 &&
+      (n.freeCpu >= 0.5 || (n.freeCpu > 0 && n.active === 0)) &&
+      n.freeMemBytes >= 1073741824 &&
       n.buildCacheFreeBytes - (n.buildDiskReserveBytes ?? 0) >=
         (n.buildDiskBytes ?? 20 * 1073741824) * (n.active + 1)
   )
