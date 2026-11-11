@@ -117,9 +117,9 @@ export default function ExplainFailure({
       )}
 
       {out && out.status !== 'ok' && (
-        <p className="fade-up mt-3 text-[12.5px] leading-relaxed text-[var(--color-fg-muted)]">
+        <p className="fade-up mt-3 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-[var(--color-fg-muted)]">
           {out.status === 'rate_limited'
-            ? `That is ${out.limit} explanations today — the limit resets in ${Math.ceil((out.resetsInSec ?? 0) / 3600)} hours. Answers already generated are still free to read.`
+            ? `That is ${out.limit} explanations today — the limit resets in ${Math.ceil((out.resetsInSec ?? 0) / 3600)} hours. Answers already generated are still free to read.\n${out.reason ?? ''}`
             : out.reason}
         </p>
       )}

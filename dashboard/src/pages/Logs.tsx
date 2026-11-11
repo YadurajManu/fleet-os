@@ -33,7 +33,7 @@ export default function Logs() {
 
   const logs = usePoll(
     () =>
-      api<{ node: { name: string }; lines: string[]; diagnostic: string | null }>(
+      api<{ node: { name: string } | null; lines: string[]; diagnostic: string | null }>(
         `/services/${selected}/logs`
       ),
     selected ? `/services/${selected}/logs` : null,

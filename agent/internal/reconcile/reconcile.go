@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -179,7 +180,29 @@ type Action struct {
 
 // Reconcile makes one pass: start what should run, replace what is running the
 // wrong deployment, and stop what is no longer wanted.
-func (e *Engine) Reconcile(ctx context.Context, desired *client.DesiredState) ([]Action, error) {
+func (e *Engine) Reconcile(ctx context.Context, desired *client.DesiredState) (actions []Action, reconcileErr error) {
+	defer func() {
+		if reconcileErr != nil && desired != nil {
+			for _, svc := range desired.Services {
+				e.stageError(svc, reconcileErr.Error(), desired.RegistryAuth)
+			}
+		}
+	}()
+	// Retired deployments must not leave stale errors in future heartbeats.
+	e.stagesMu.Lock()
+	for id := range e.stages {
+		keep := false
+		for _, svc := range desired.Services {
+			if svc.DeploymentID == id {
+				keep = true
+				break
+			}
+		}
+		if !keep {
+			delete(e.stages, id)
+		}
+	}
+	e.stagesMu.Unlock()
 	// Told before anything is started, so a service that comes up between here
 	// and the next pass is already being watched when its first heartbeat is
 	// assembled.
@@ -226,7 +249,7 @@ func (e *Engine) Reconcile(ctx context.Context, desired *client.DesiredState) ([
 		}
 	}
 
-	actions := make([]Action, 0, len(desired.Services)+len(running))
+	actions = make([]Action, 0, len(desired.Services)+len(running))
 	wanted := make(map[string]struct{}, len(desired.Services))
 	removed := make(map[string]struct{}, len(running))
 
@@ -234,6 +257,7 @@ func (e *Engine) Reconcile(ctx context.Context, desired *client.DesiredState) ([
 		wanted[svc.DeploymentID] = struct{}{}
 
 		if svc.Image == "" {
+			e.stageError(svc, "no image in desired state", desired.RegistryAuth)
 			actions = append(actions, Action{svc.Name, "failed", "no image in desired state"})
 			continue
 		}
@@ -245,6 +269,7 @@ func (e *Engine) Reconcile(ctx context.Context, desired *client.DesiredState) ([
 		// the network as a reason to replace, or those containers stay broken
 		// until something else happens to redeploy them.
 		if present && isUp(existing.State) && docker.OnFleetNetwork(existing) {
+			e.stage(svc, client.DeployStage{Stage: "waiting_health"})
 			actions = append(actions, Action{svc.Name, "unchanged", existing.State})
 			continue
 		}
@@ -255,6 +280,7 @@ func (e *Engine) Reconcile(ctx context.Context, desired *client.DesiredState) ([
 			// down before bringing it back, so the name is free.
 			verb = "replaced"
 			if err := e.Docker.Remove(ctx, existing.ID); err != nil {
+				e.stageError(svc, "remove old: "+err.Error(), desired.RegistryAuth)
 				actions = append(actions, Action{svc.Name, "failed", "remove old: " + err.Error()})
 				continue
 			}
@@ -262,6 +288,7 @@ func (e *Engine) Reconcile(ctx context.Context, desired *client.DesiredState) ([
 		}
 
 		if err := e.start(ctx, svc, desired.RegistryAuth); err != nil {
+			e.stageError(svc, err.Error(), desired.RegistryAuth)
 			actions = append(actions, Action{svc.Name, "failed", err.Error()})
 			continue
 		}
@@ -439,6 +466,31 @@ func (e *Engine) stage(svc client.DesiredService, s client.DeployStage) {
 	e.stagesMu.Unlock()
 }
 
+// stageError preserves the failed operation and strips assigned credentials before telemetry.
+func (e *Engine) stageError(svc client.DesiredService, detail, registryAuth string) {
+	values := []string{registryAuth}
+	for _, value := range svc.Env {
+		values = append(values, value)
+	}
+	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+	for _, value := range values {
+		if value != "" {
+			detail = strings.ReplaceAll(detail, value, "[redacted]")
+		}
+	}
+	if len(detail) > 2000 {
+		detail = detail[:2000]
+	}
+	e.stagesMu.Lock()
+	s := e.stages[svc.DeploymentID]
+	e.stagesMu.Unlock()
+	if s.Stage == "" {
+		s.Stage = "starting"
+	}
+	s.Error = detail
+	e.stage(svc, s)
+}
+
 // Stages drains what the deploys on this node are doing, for one heartbeat.
 //
 // Terminal stages are removed as they are read: the control plane only needs
@@ -450,7 +502,7 @@ func (e *Engine) Stages() []client.DeployStage {
 	out := make([]client.DeployStage, 0, len(e.stages))
 	for id, s := range e.stages {
 		out = append(out, s)
-		if s.Stage == "waiting_health" {
+		if s.Stage == "waiting_health" && s.Error == "" {
 			delete(e.stages, id)
 		}
 	}

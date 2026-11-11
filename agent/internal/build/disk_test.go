@@ -51,3 +51,33 @@ func TestPruningPreservesUnrelatedAndCurrentVolumes(t *testing.T) {
 		t.Fatal(removed, err)
 	}
 }
+
+func TestMeasureBuildDiskRetriesTransientErrors(t *testing.T) {
+	calls := 0
+	used, err := measureBuildDisk(func() ([]byte, error) {
+		calls++
+		if calls < 3 {
+			return []byte("1 /var/lib/buildkit"), errors.New("file disappeared")
+		}
+		return []byte("42 /var/lib/buildkit\n"), nil
+	})
+	if err != nil || used != 42*1024 || calls != 3 {
+		t.Fatal(used, calls, err)
+	}
+}
+
+func TestMeasureBuildDiskFailsClosed(t *testing.T) {
+	calls := 0
+	_, err := measureBuildDisk(func() ([]byte, error) {
+		calls++
+		return []byte("1 /var/lib/buildkit"), errors.New("permission denied")
+	})
+	if err == nil || calls != 3 {
+		t.Fatal(calls, err)
+	}
+	for _, output := range []string{"", "oops /var/lib/buildkit", "-1 /var/lib/buildkit", "9223372036854775807 /var/lib/buildkit"} {
+		if _, err := measureBuildDisk(func() ([]byte, error) { return []byte(output), nil }); err == nil {
+			t.Fatalf("accepted %q", output)
+		}
+	}
+}

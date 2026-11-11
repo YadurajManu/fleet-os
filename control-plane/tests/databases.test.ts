@@ -44,7 +44,7 @@ services:
     const db = m.services.find((s) => s.name === 'main')!
     assert.ok(db, 'the database should appear as a service')
 
-    assert.equal(db.image, 'postgres:16')
+    assert.equal(db.image, 'docker.io/library/postgres:16')
     // Never published on the node's interface. A database reachable from the
     // whole LAN because a port was bound is the worst default available here.
     assert.equal(db.internal, true)

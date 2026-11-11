@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,6 +33,31 @@ func watchDisk(ctx context.Context, stop context.CancelFunc, interval time.Durat
 		}
 	}()
 	return result
+}
+
+// BuildKit can unlink files during du traversal. Retry failed samples, but
+// never treat partial output as a successful measurement or disable the budget.
+func measureBuildDisk(run func() ([]byte, error)) (int64, error) {
+	var out []byte
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		out, err = run()
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return 0, fmt.Errorf("cannot monitor build disk usage after 3 attempts: %w", err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return 0, fmt.Errorf("cannot measure build disk usage: missing du output")
+	}
+	kb, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil || kb < 0 || kb > (1<<63-1)/1024 {
+		return 0, fmt.Errorf("cannot measure build disk usage: invalid du size")
+	}
+	return kb * 1024, nil
 }
 
 // Recent Buildx renamed --keep-storage to --max-used-space. Support either

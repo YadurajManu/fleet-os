@@ -94,6 +94,15 @@ func run() error {
 		return printJSON(report)
 	}
 
+	saved, err := state.Load(*statePath)
+	if err != nil {
+		return err
+	}
+
+	if err := checkPairingState(saved, flag.CommandLine, *registerOnly, *pairingToken); err != nil {
+		return err
+	}
+
 	// Before anything else: a binary staged by a previous run is installed
 	// here, and we restart onto it.
 	//
@@ -115,11 +124,6 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	serviceStopHook(stop)
-
-	saved, err := state.Load(*statePath)
-	if err != nil {
-		return err
-	}
 
 	if saved == nil {
 		saved, err = register(ctx, log, *controlPlane, *pairingToken, *statePath)
@@ -306,6 +310,23 @@ func run() error {
 		return nil
 	}
 	return err
+}
+
+// Never consume or discard credentials when an explicit pairing request conflicts with saved state.
+func checkPairingState(saved *state.State, flags *flag.FlagSet, registerOnly bool, token string) error {
+	if saved == nil {
+		return nil
+	}
+	explicit := registerOnly && token != ""
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "token" {
+			explicit = true
+		}
+	})
+	if explicit {
+		return fmt.Errorf("this agent is already registered; the supplied pairing token was not used. To pair again, choose a new --state path or follow the registration reset procedure for your platform. Existing credentials were kept")
+	}
+	return nil
 }
 
 func register(ctx context.Context, log *slog.Logger, controlPlane, token, statePath string) (*state.State, error) {

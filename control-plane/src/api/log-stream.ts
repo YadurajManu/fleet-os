@@ -1,11 +1,12 @@
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { ServerResponse } from 'http'
 import type { Redis } from 'ioredis'
 import type { AppContext } from './context.js'
-import { services, nodes } from '../db/schema.js'
+import { services } from '../db/schema.js'
 import { requireServicePermission } from './services.routes.js'
 import { sessionActive } from '../auth/tokens.js'
+import { readServiceLogs } from './service-logs.js'
 
 const CHANNEL_PREFIX = 'fleet:logs:'
 
@@ -86,52 +87,13 @@ export async function logStreamHandler(
   const { name: serviceName, fleetId } = service
   const channel = logChannel(fleetId, serviceId)
   const redis = ctx.redis
-  const sameNamed = await ctx.db
-    .select({ id: services.id })
-    .from(services)
-    .where(and(eq(services.fleetId, fleetId), eq(services.name, serviceName)))
-  // Old agents did not report a service UUID. Preserve their tails only when
-  // the name identifies exactly one service; otherwise omitting a tail is
-  // safer than attributing another service's output to this one.
-  const allowLegacyName = sameNamed.length === 1
-
-  // Seed: pull recent logs from each node's heartbeat snapshot.
-  let seed: LogEntry[] = []
-  try {
-    const nodeRows = await ctx.db
-      .select({ id: nodes.id })
-      .from(nodes)
-      .where(eq(nodes.fleetId, fleetId))
-      .limit(50)
-
-    for (const node of nodeRows) {
-      const raw = await redis.get(`node:${node.id}:hb`).catch(() => null)
-      if (!raw) continue
-      try {
-        const payload = JSON.parse(raw) as { logs?: Array<{ service: string; service_id?: string; text: string }>; at?: number }
-        const logs = payload.logs ?? []
-        for (const entry of logs) {
-          if (entry.service_id === serviceId || (!entry.service_id && allowLegacyName && entry.service === serviceName)) {
-            seed.push({
-              service: entry.service,
-              text: entry.text,
-              nodeId: node.id,
-              at: payload.at ?? Date.now(),
-            })
-          }
-        }
-      } catch {
-        // Skip malformed heartbeat.
-      }
-    }
-  } catch {
-    // Seed is optional.
-  }
-
-  seed = seed.slice(-200)
-
-  const buildSeed = await redis.lrange(`build:logs:${serviceId}`, 0, 199).catch(() => [])
-  for (const line of buildSeed.reverse()) { try { seed.push(JSON.parse(line)) } catch {} }
+  // Use the same latest-attempt selection and retained fallback as one-shot logs.
+  const snapshot = await readServiceLogs(ctx, service)
+  const seed: LogEntry[] = snapshot.lines.length ? [{
+    service: serviceName, serviceId, deploymentId: snapshot.deploymentId ?? undefined,
+    nodeId: snapshot.node?.id ?? 'control-plane', at: snapshot.capturedAt ? Date.parse(snapshot.capturedAt) : Date.now(),
+    text: [...(snapshot.diagnostic ? [snapshot.diagnostic] : []), ...snapshot.lines].join('\n'),
+  }] : []
   // Subscribe before sending headers so connection failures remain ordinary API errors.
   const subscriber = await getSubscriber(redis, channel)
   if (reply.raw.destroyed) {

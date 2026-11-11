@@ -47,7 +47,7 @@ export default function ServiceDetail() {
     8000
   )
   const preview = usePoll(() => api<Preview>(`/services/${serviceId}/placement-preview`), `/services/${serviceId}/placement-preview`, 10000)
-  const logs = usePoll(() => api<{ node: { name: string }; lines: string[]; diagnostic: string | null }>(`/services/${serviceId}/logs`), `/services/${serviceId}/logs`, 2000)
+  const logs = usePoll(() => api<{ node: { name: string } | null; lines: string[]; diagnostic: string | null }>(`/services/${serviceId}/logs`), `/services/${serviceId}/logs`, 2000)
 
   const service = services.data?.services.find((s) => s.id === serviceId)
   const serviceLoaded = Boolean(service)

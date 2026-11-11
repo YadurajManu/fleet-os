@@ -1,3 +1,4 @@
+import { readServiceLogs } from '../api/service-logs.js'
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { auditLog, deployments, nodes, placementEvents, services } from '../db/schema.js'
 import type { AppContext } from '../api/context.js'
@@ -179,25 +180,8 @@ export const TOOLS = {
     const svc = await findService(ctx, fleetId, args.service)
     if (!svc) return fail(`no service named "${args.service}" in this fleet`)
 
-    const [live] = await ctx.db
-      .select({ nodeId: deployments.nodeId })
-      .from(deployments)
-      .where(
-        and(eq(deployments.serviceId, svc.id), inArray(deployments.status, ['deploying', 'running']))
-      )
-      .orderBy(desc(deployments.startedAt))
-      .limit(1)
-
-    if (!live?.nodeId) return ok({ service: svc.name, lines: [], note: 'no live deployment to read a log from' })
-
-    const hb = await ctx.heartbeats.last(live.nodeId).catch(() => null)
-    const entry = hb?.logs?.find((l) => l.service === svc.name)
-    return ok({
-      service: svc.name,
-      // The tail, not the log: the last lines are where a crash says why.
-      lines: entry?.text.split(/\r?\n/).filter(Boolean).slice(-40) ?? [],
-      note: entry ? null : 'the agent has not reported a log tail for this service',
-    })
+    const result = await readServiceLogs(ctx, svc)
+    return ok({ ...result, lines: result.lines.slice(-40), note: result.diagnostic })
   },
 
   /**

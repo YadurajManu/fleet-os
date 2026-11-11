@@ -80,9 +80,10 @@ const heartbeat = z.object({
   deploys: z
     .array(
       z.object({
-        deployment_id: z.string().max(64),
+        deployment_id: z.string().uuid(),
         service: z.string().max(128),
         stage: z.enum(['pulling', 'creating', 'starting', 'waiting_health']),
+        error: z.string().max(2000).optional(),
         layers: z.number().int().nonnegative().optional(),
         done: z.number().int().nonnegative().optional(),
         cached: z.number().int().nonnegative().optional(),
@@ -516,7 +517,7 @@ export async function agentRoutes(app: FastifyInstance) {
           await db.transaction(async (tx) => {
             await tx
               .update(deployments)
-              .set({ status: 'running', activatedAt: new Date(), finishedAt: new Date() })
+              .set({ status: 'running', failureReason: null, activatedAt: new Date(), finishedAt: new Date() })
               .where(eq(deployments.id, row.id))
 
             // A new release is a new program, and its predecessor's appetite
@@ -558,69 +559,50 @@ export async function agentRoutes(app: FastifyInstance) {
         .where(and(eq(nodes.id, nodeId), ne(nodes.advertiseAddr, hb.advertise_addr)))
     }
 
-    // ── Surface agent-side failures ──────────────────────────────────
-    //
-    // The agent stores the last reconciliation error in its runtime telemetry.
-    // When a deploying service has been failing to start on the node (e.g. a
-    // pull that keeps returning "invalid reference format"), the deployment
-    // must eventually be marked failed rather than spinning in "deploying"
-    // forever with no user-visible feedback.
-    //
-    // The error format from the agent is "serviceName: errorDetail" for
-    // per-service failures, or a bare message for global reconcile errors.
-    // A grace period prevents a transient pull timeout from killing a deploy
-    // that would have succeeded on retry.
-    if (hb.runtime.last_reconcile_error) {
-      const errorText = hb.runtime.last_reconcile_error
-      const colonIdx = errorText.indexOf(': ')
-      const errorServiceName = colonIdx > 0 ? errorText.slice(0, colonIdx) : null
-      const errorDetail = colonIdx > 0 ? errorText.slice(colonIdx + 2) : errorText
-
-      if (errorServiceName) {
-        const RECONCILE_FAIL_GRACE_MS = 90_000
-        const stuckDeployments = await db
-          .select({
-            id: deployments.id,
-            name: services.name,
-            startedAt: deployments.startedAt,
-          })
-          .from(deployments)
-          .innerJoin(services, eq(services.id, deployments.serviceId))
-          .where(
-            and(
-              eq(deployments.nodeId, nodeId),
-              eq(deployments.status, 'deploying'),
-              eq(services.name, errorServiceName)
-            )
-          )
-
-        for (const dep of stuckDeployments) {
-          if (Date.now() - dep.startedAt.getTime() < RECONCILE_FAIL_GRACE_MS) continue
-          await db
-            .update(deployments)
-            .set({
-              status: 'failed',
-              failureReason: cleanReason(errorDetail),
-              finishedAt: new Date(),
-            })
-            .where(eq(deployments.id, dep.id))
-          req.log.warn(
-            { nodeId, service: dep.name, deploymentId: dep.id, error: errorDetail },
-            'deployment failed: agent reported reconciliation error'
-          )
+    // Attribute errors by immutable deployment ID and authenticated node, never by name.
+    // Pull failures arrive before a container exists, so this must be outside drift checks.
+    for (const reported of hb.deploys) {
+      const stage = { ...reported }
+      const [dep] = await db.select({ id: deployments.id, serviceId: deployments.serviceId })
+        .from(deployments)
+        .where(and(eq(deployments.id, stage.deployment_id), eq(deployments.nodeId, nodeId), eq(deployments.status, 'deploying')))
+        .limit(1)
+      if (!dep) continue
+      // Older agents only send a name-prefixed runtime error. Show it only
+      // alongside an exact stage and an unambiguous service; never terminate on it.
+      const legacy = !stage.error && hb.runtime.last_reconcile_error?.startsWith(stage.service + ': ')
+      if (legacy) {
+        const matches = await db.select({ id: services.id }).from(services)
+          .where(and(eq(services.fleetId, fleetId), eq(services.name, stage.service))).limit(2)
+        if (matches.length === 1 && matches[0]!.id === dep.serviceId) {
+          stage.error = hb.runtime.last_reconcile_error!.slice(stage.service.length + 2)
         }
       }
+      recordDeployStage(app.ctx, stage)
+      const reason = stage.error ? cleanReason(stage.error) : null
+      // Grace starts at the first observed error, not before a potentially long build.
+      const errorKey = 'deploy:reconcile-error:' + dep.id
+      let failingSince: number | null = null
+      if (reason) {
+        await redis.set(errorKey, String(Date.now()), 'EX', 600, 'NX').catch(() => null)
+        const first = await redis.get(errorKey).catch(() => null)
+        failingSince = first && Number.isFinite(Number(first)) ? Number(first) : null
+      } else {
+        await redis.del(errorKey).catch(() => {})
+      }
+      const terminal = !legacy && Boolean(reason) && (
+        (failingSince !== null && Date.now() - failingSince >= 90_000) ||
+        /invalid reference format|manifest unknown|no matching manifest|no image in desired state/i.test(reason!))
+      await db.update(deployments).set({
+        failureReason: reason,
+        ...(terminal ? { status: 'failed' as const, finishedAt: new Date() } : {}),
+      }).where(and(eq(deployments.id, dep.id), eq(deployments.nodeId, nodeId), eq(deployments.status, 'deploying')))
     }
 
     // Drift: what the node says is not running, that we believe is. Debounced
     // through Redis so a container restarting between two beats does not fire
     // an alert on every heartbeat.
     if (hb.containers.length) {
-      // Straight through to the progress line the CLI polls. Not persisted:
-      // this is where a deploy is *now*, and the durable record is the
-      // deployment row's status.
-      for (const stage of hb.deploys) recordDeployStage(app.ctx, stage)
-
       const drifted = await detectDrift(app.ctx, nodeId, fleetId, hb.containers, {
         onEvent: async (e) => {
           const key = `drift:${nodeId}:${e.subject}`

@@ -227,6 +227,16 @@ export const secretsCommand = {
         )
       }
 
+      chosen = chosen.filter((entry) => {
+        if (entry.value.trim()) return true
+        console.log(`${glyph.warn} ${c.yellow('skipping empty')}  ${c.bold(entry.key)} (line ${entry.line})`)
+        return false
+      })
+      if (!chosen.length) {
+        console.log(c.dim('No non-empty secrets to store.'))
+        return
+      }
+
       if (flags['dry-run']) {
         const scope = service ? ` for ${c.bold(service)}` : ''
         console.log(`\n  ${c.dim(`would store from ${file}${scope}, chosen by ${basis}`)}\n`)

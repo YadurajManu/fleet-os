@@ -1,0 +1,185 @@
+Chronological record of every issue, UX friction point, documentation gap, reliability failure, and missing feature encountered while deploying Raunak onto Fleet OS as a first-time external user.
+- ID: Sequential identifier (F-001, F-002, ...)
+- Timestamp: ISO 8601 UTC timestamp
+- Phase: Phase 1 (Control Plane) / Phase 2 (CLI & Pairing) / Phase 3 (Prepare Raunak) / Phase 4 (Deploy) / Phase 5 (Lifecycle)
+- Action: What was being attempted + exact command run
+- Expected vs Actual: Trimmed outputs and behavioral differences
+- Severity: BLOCKER / MAJOR / MINOR / PAPERCUT
+- Category: CLI UX / docs / reliability / security / performance / missing feature / error message / observability
+- Workaround used: Smallest user-facing workaround applied
+- Suggested fix: Product/maintainer fix recommendation
+- Action: Tried to view or switch fleets using fleet use without knowing the exact fleet name. Command run: fleet use
+- Expected: Interactive selection or listing of available fleets for the authenticated user/org.
+- Actual: Exited with code 2: error  usage: fleet use <fleet-name-or-id>. Running fleet fleets or fleet orgs fails with unknown command.
+- Severity: MINOR
+- Category: CLI UX / missing feature
+- Workaround used: Called the public REST API endpoint /fleets with bearer token to find fleet IDs and names.
+- Suggested fix: Make fleet use with no args list accessible fleets and highlight the active one, or implement a top-level fleet fleets command.
+- Action: Tested pairing error handling with an invalid/malformed pairing token against /agent/register.
+- Expected: Descriptive 401 error such as "Pairing token is invalid, unrecognised or expired".
+- Actual: {"error":{"code":"unauthorized","message":"A pairing token is required to register"}}
+- Severity: PAPERCUT
+- Category: error message / API
+- Workaround used: Inspected install script source to check expected JSON payload fields.
+- Suggested fix: Differentiate missing token from invalid token in the registration controller error response.
+- Action: Tested node re-pairing when an existing agent.json exists in FLEET_STATE_DIR. Command run: fleet-agent --token <token> --register-only
+- Expected: Agent should detect the explicit --token flag and re-register or update credentials, or fail saying state already exists unless --reset is passed.
+- Actual: Agent silently ignored --token, logged msg="resuming as registered node" with the old credentials, and exited 0.
+- Severity: MAJOR
+- Category: reliability / CLI UX
+- Workaround used: Must pass --reset or delete agent.json manually for the token to take effect.
+- Suggested fix: If --token is explicitly provided and doesn't match the active state, require confirmation or --reset instead of silently ignoring the new token and exiting 0.
+- Action: Attempted to rename auto-generated node name sayyestoheaven-2 or ip-172-26-11-9 to a cleaner identifier. Command run: fleet nodes rename sayyestoheaven-2 mac-arm64
+- Expected: Node renamed or friendly alias assigned.
+- Actual: Exited with code 2: error  usage: fleet nodes [ls|pair|upgrade|cordon|uncordon|rm]
+- Severity: MINOR
+- Category: missing feature / CLI UX
+- Workaround used: None available via CLI; had to accept sayyestoheaven-2 and cloud provider default hostnames like ip-172-26-11-9.
+- Suggested fix: Add fleet nodes rename <old> <new> command in CLI and control plane API.
+- Action: Re-pairing a previously known node/hostname (sayyestoheaven) with --reset.
+- Expected: Control plane recognizes the same host/machine and updates/re-activates the existing node record or asks to replace it.
+- Actual: Control plane silently created a duplicate node name with an incremented suffix (sayyestoheaven-2), leaving the original offline/stale until manually pruned with fleet nodes rm --force.
+- Severity: MINOR
+- Category: CLI UX / reliability
+- Workaround used: Had to run fleet nodes rm sayyestoheaven --force to delete the old record.
+- Suggested fix: Re-pairing a host with matching hardware/hostname should offer to rebind/re-key the existing node identity instead of silently appending -2.
+- Action: Configured agent as a builder on a dev machine with 30GB free disk (config.json with "builder": true).
+- Expected: Node becomes build-eligible for native architecture builds.
+- Actual: Node stayed canBuild: false. Fleet OS calculates reserve as max(configured reserve, 10% of filesystem capacity). On a 500GB SSD, 10% is 50GB, unconditionally disqualifying laptops with 20-40GB free regardless of user configuration.
+- Severity: MAJOR
+- Category: reliability / docs
+- Workaround used: Had to prune 21GB of docker build cache; builds remain ineligible on nodes under 10% total capacity.
+- Suggested fix: Allow overriding the 10% rule with an explicit min_free_bytes ceiling or cap the automatic reserve on large disks.
+- Action: Imported local project environment variables into fleet secrets. Command run: fleet secrets import .env
+- Expected: Read key-value pairs, ignore or warn on empty values, and import valid secrets.
+- Actual: Abruptly halted on empty environment variables (KEY=) with raw internal API schema error: error Send the secret as { value }.
+- Severity: MAJOR
+- Category: reliability / CLI UX
+- Workaround used: Wrote a custom Node.js script filtering out empty/whitespace values before piping into fleet secrets set <KEY>.
+- Suggested fix: fleet secrets import should skip empty variables with a ! warning: skipping empty KEY message rather than failing the entire batch with an unhandled API error.
+- Action: Attempted to inspect, clone, or copy existing secrets from another fleet, project, or deployment. Command run: fleet secrets --help
+- Expected: Ability to replicate or export secrets between environments or services.
+- Actual: Fleet secret store is strictly write-only (Values cannot be read back — only replaced). No CLI command exists to copy or duplicate secrets to a new stage or test host.
+- Severity: MINOR
+- Category: missing feature / CLI UX
+- Workaround used: Manually repopulated secrets from local .env.server using individual stdin pipes.
+- Suggested fix: Add fleet secrets clone --from <fleet/svc> --to <fleet/svc> or scoped secret references.
+- Action: Expressed multi-stage Dockerfile targets in fleet.yaml manifest. Attempted: build: { context: ., target: wa-gateway }
+- Expected: Support for multi-stage Dockerfile targets and build args.
+- Actual: fleet validate rejected it: Invalid input: expected string, received object. build: strictly takes a string directory path.
+- Severity: MAJOR
+- Category: missing feature / docs
+- Workaround used: Specified prebuilt/named image tags or command entrypoint overrides.
+- Suggested fix: Expand build schema to support { context: string, target?: string, dockerfile?: string, args?: Record<string, string> }.
+- Action: Deployed managed postgres database service via fleet deploy db --yes.
+- Expected: Clear streaming progress: pulling image -> creating volume -> starting container -> health check -> done.
+- Actual: CLI and Dashboard hung for exactly 10 minutes (606 seconds timeout), then failed with generic timeout: x waiting for the container — the node never reported this container within the rollout window, and this service has nothing else running. Running fleet explain db only printed: "the node never reported this container within the rollout window..." is already the whole reason — there is no log to read.
+- Severity: BLOCKER
+- Category: error message / observability / reliability
+- Workaround used: Queried raw node telemetry via fleet status --json which uncovered the actual root cause that neither fleet explain nor fleet logs reported: lastReconcileError: "db: pull: docker 400: {\"message\":\"invalid reference format\"}".
+- Suggested fix: Surface lastReconcileError directly in fleet explain, fleet deployments, and dashboard rollout step cards so users don't wait 10 minutes for a timeout when a pull fails instantly.
+- Action: Automatic managed database image resolution by the control plane for engine: postgres@16.
+- Expected: Control plane resolves a valid Docker registry reference (e.g. docker.io/library/postgres:16-alpine or registry:5001/postgres@sha256:...).
+- Actual: Control plane generated a malformed reference without a host/repository qualifier: postgres@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657. When the agent executed docker pull, Docker daemon rejected it with HTTP 400 invalid reference format.
+- Severity: BLOCKER
+- Category: reliability / control-plane scheduler
+- Workaround used: File bug report with control-plane maintainer to normalize image digests with registry prefix docker.io/library/ or internal registry host.
+- Suggested fix: Ensure image resolver prepends the registry namespace (docker.io/library/ or $REGISTRY_URL/) when pinning images by digest.
+- Action: Ran fleet diagnose "why is service db stuck at waiting for the container" to get root cause.
+- Expected: AI diagnosis explains why the deployment is stuck.
+- Actual: Exited with ! inconclusive provider returned 404: This model is unavailable for free. The paid version is available now - use this slug instead: nvidia/nemotron-3-super-120b-a12b.
+- Severity: MAJOR
+- Category: reliability / CLI UX
+- Workaround used: None via CLI; had to parse raw JSON status telemetry.
+- Suggested fix: Update default AI model fallback in control-plane configuration.
+- Action: Packaged and uploaded source snapshot for fleet deploy web --yes containing local mobile APK build artifacts (~135MB).
+- Expected: Successful upload or meaningful error explaining file size limits.
+- Actual: packaging web… uploaded 135MB of build context — failed: error HTTP 413: <html><title>413 Request Entity Too Large</title>.... Cloudflare Tunnel gateway rejected requests > 100MB.
+- Severity: MAJOR
+- Category: CLI UX / error message / missing feature
+- Workaround used: Added public/downloads/*.apk to .dockerignore to reduce context to 5.7MB.
+- Suggested fix: Implement .fleetignore support, check snapshot size prior to network transfer, and warn if payload approaches the 100MB proxy boundary.
+- Action: Ran fleet deploy wa-gateway --plan and fleet deploy web --plan for services with unpushed custom images.
+- Expected: Plan inspection succeeds or falls back gracefully if image is not yet on public Docker Hub.
+- Actual: Immediate HTTP 500 internal error: checking deployment plan… failed: error Something went wrong.
+- Severity: BLOCKER
+- Category: reliability / control-plane API
+- Workaround used: Control-plane maintainer wrapped inspectImage() in try/catch fallback (commit abcd87b).
+- Suggested fix: Gracefully treat registry inspect failures for unpushed images as unpinned rather than crashing the route handler with 500.
+- Action: Ran fleet deploy web --yes on a 2-core VPS (ip-172-26-11-9) after enabling builder mode (canBuild: true).
+- Expected: Agent build runner assigns build job to ip-172-26-11-9 and executes BuildKit build.
+- Actual: Immediate failure: x building the image — no build-capable linux/amd64 agent online with available CPU/memory/concurrency and disk budget plus reserve.
+- Severity: BLOCKER
+- Category: control-plane scheduler / architecture
+- Workaround used: Control-plane maintainer updated selectBuilder thresholds in control-plane/src/build/platforms.ts (commit 142b1ed).
+- Suggested fix: In control-plane/src/build/platforms.ts (selectBuilder), change n.freeCpu >= 2 to (n.freeCpu >= 0.5 || (n.freeCpu > 0 && n.active === 0)) and n.freeMemBytes >= 1073741824. On a 2-core node running managed databases (db 0.5 + cache 0.5 = 1.0 committed CPU), freeCpu is 2 - 1.0 = 1.0. Hardcoding freeCpu >= 2 permanently starves all 2-core nodes from acting as builders once any service is placed on them.
+- Action: Monitored delegated BuildKit build during fleet deploy web --yes on ip-172-26-11-9.
+- Expected: Build completes compilation and pushes image to registry.
+- Actual: After 49 seconds of active building, the build was killed: x building the image — cannot monitor build disk usage: exit status 1 49s.
+- Severity: BLOCKER
+- Category: reliability / agent build runner
+- Workaround used: Investigated root cause in agent codebase (agent/internal/build/executor.go and disk.go).
+- Suggested fix: watchDisk executes docker exec <buildkit-container> du -sk /var/lib/buildkit on a 3-second timer. Linux du returns exit code 1 if any transient file is deleted/unlinked during directory traversal (standard BuildKit cache churning). The error sampler must tolerate transient non-zero exits or retry before invoking stop(), or read /proc disk stats rather than invoking du synchronously.
+- Action: Attempted to inspect failure logs for a failed deployment via fleet logs web.
+- Expected: View recent stdout/stderr output from the build attempt or container crash.
+- Actual: Exited with error  No active node for "web".
+- Severity: MAJOR
+- Category: observability / CLI UX
+- Workaround used: Had to run fleet status --json or search control plane Redis keys directly.
+- Suggested fix: If no live container is running, fleet logs should fall back to streaming the stored build/deploy failure logs from Redis (build:logs:<serviceId>) or deployment records rather than immediately exiting with an error.
+- Action: Ran fleet explain web to diagnose why the deployment failed.
+- Expected: Comprehensive failure diagnostic explaining what failed, the exit code, and actionable advice.
+- Actual: Output printed: "cannot monitor build disk usage: exit status 1" is already the whole reason — there is no log to read.
+- Severity: MINOR
+- Category: observability / CLI UX
+- Workaround used: Inspected agent Go source code directly to decipher the error message.
+- Suggested fix: fleet explain should surface the exact command executed, exit code, stderr output, and a link to documentation or suggested remediation steps.
+- Action: Attempted to run database migrations (pnpm db:migrate) against the newly provisioned Fleet-managed PostgreSQL database.
+- Expected: A CLI command like fleet exec <service> -- <command> or fleet run <service> <command> to run one-off tasks in the private network.
+- Actual: No exec or run command exists in the Fleet CLI (fleet --help). The managed Postgres database is configured as internal: true, accessible only on the private Docker network fleet on the node, meaning migrations cannot be triggered from the CLI.
+- Severity: MAJOR
+- Category: missing feature / developer workflow
+- Workaround used: Database migrations must either be baked into container entrypoints (which delays web boot and causes concurrency races on multi-replica services) or executed manually on the host.
+- Suggested fix: Add fleet exec <service> -- <cmd> or a dedicated fleet task run <service> -- <cmd> capability for running ad-hoc tasks, migrations, and seeds in the service's network environment.
+- Action: Providing compile-time frontend environment variables (NEXT_PUBLIC_FIREBASE_*) during image build.
+- Expected: Seamless injection of build arguments from configured project secrets or manifest build: configuration.
+- Actual: fleet.yaml manifest does not support referencing secrets in build_args:. Secrets declared in secrets: are only injected as runtime environment variables during docker run. Because Next.js compiles client bundles at build time, NEXT_PUBLIC_* variables are missing unless hardcoded into the repository Dockerfile or exposed as unencrypted build args.
+- Severity: MAJOR
+- Category: build system / security
+- Workaround used: Must declare fallback ARG values in Dockerfile or bake them into the build context.
+- Suggested fix: Allow secret references in build_secrets: or build_args: (e.g. build_args: { NEXT_PUBLIC_API_KEY: "${secret:API_KEY}" }) using BuildKit --secret mounts.
+- Action: Declared separate services (web, worker, wa-gateway) sharing a single monorepo Dockerfile with multi-stage targets.
+- Expected: Each service builds only its respective target stage (--target wa-gateway, --target worker).
+- Actual: Because build: only accepts a directory path string (F-009), every service triggers a build of the default final stage (web), compiling the entire Next.js application, running webpack/turbopack, and generating unnecessary artifacts for background workers.
+- Severity: MINOR
+- Category: performance / build system
+- Workaround used: Overrode container command: in fleet.yaml (["pnpm", "worker"] and ["pnpm", "--filter", "@raunak/wa-gateway", "start"]), running the heavy web image as the base for background workers.
+- Suggested fix: Support build: { context: ".", target: "wa-gateway", dockerfile: "Dockerfile" } in fleet.yaml.
+- Action: Monitored BuildKit memory consumption during compilation of a production Next.js application on a 4GB RAM VPS.
+- Expected: BuildKit respects host headroom without hitting strict container memory quotas.
+- Actual: agent/internal/build/executor.go hardcodes --driver-opt memory=%d to build_memory_bytes (default 2GB). Next.js compilation, TypeScript typechecking, and Prisma code generation peak well above 2GB of memory usage, risking container OOM kills during the build.
+- Severity: MAJOR
+- Category: reliability / resource management
+- Workaround used: Configured NODE_OPTIONS="--max-old-space-size=1536" in build scripts where possible.
+- Suggested fix: Make BuildKit memory allocation dynamically adapt to available host RAM or expose a configurable build_memory parameter per-service in fleet.yaml.
+- Action: Setting dozens of application secrets individually via CLI after fleet secrets import failed (F-007).
+- Expected: CLI supports setting multiple key-value pairs in a single invocation (e.g. fleet secrets set KEY1=val1 KEY2=val2).
+- Actual: fleet secrets set only accepts a single <key> argument, reading the value from prompt or stdin. Setting 33 secrets required 33 individual subshell invocations or a custom scripting wrapper.
+- Severity: PAPERCUT
+- Category: CLI UX
+- Workaround used: Scripted sequential echo -n "$val" | fleet secrets set "$key" in a shell loop.
+- Suggested fix: Allow fleet secrets set KEY=VALUE [KEY2=VALUE2...] and support flags like --from-env-file <path>.
+- Action: Re-attaching to a long-running deployment after terminal disconnection or timeout.
+- Expected: A command like fleet deploy attach <deployment-id> or fleet deploy --watch to resume following live deployment progress.
+- Actual: Once the CLI process disconnects or exits, there is no way to stream the active deployment's build and rollout phases. Running fleet deploy web again issues a completely new deployment rather than attaching to the active one.
+- Severity: MINOR
+- Category: CLI UX / observability
+- Workaround used: Polled fleet deployments web and fleet status manually to observe status changes.
+- Suggested fix: Add fleet deploy attach [service] or have fleet deploy prompt to attach if a rollout is already in progress.
+- Action: Inspected cluster health using default human output of fleet status.
+- Expected: High-level summary accompanied by reasons for degradation and clear node capability metrics.
+- Actual: fleet status printed ! 0 node(s) offline · 3 service(s) affected and truncated failure notes, omitting critical debugging data like lastReconcileError, exact disk bytes, builder headroom, and tunnel state.
+- Severity: PAPERCUT
+- Category: CLI UX / observability
+- Workaround used: Had to run fleet status --json and pipe into Python or grep to extract underlying status fields.
+- Suggested fix: Include a --verbose flag on fleet status that outputs detailed node telemetry, error reasons, and builder capabilities without requiring JSON parsing.

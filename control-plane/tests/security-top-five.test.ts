@@ -51,7 +51,7 @@ describe('security audit top-five regressions', () => {
     const url = `/services/${serviceId}/logs/stream`
     assert.equal((await app.inject({ method: 'GET', url })).statusCode, 401)
     assert.equal((await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${outsider.accessToken}` } })).statusCode, 404)
-    await ctx.redis.lpush(`build:logs:${serviceId}`, JSON.stringify({ text: 'authorized-seed' }))
+    await ctx.redis.lpush(`build:logs:${serviceId}`, JSON.stringify({ serviceId, service: 'api', nodeId, text: 'authorized-seed', at: Date.now() }))
     const abort = new AbortController()
     try {
       const res = await fetch(`${base}${url}`, { headers: { cookie: `fleet_access_token=${account.accessToken}` }, signal: abort.signal })

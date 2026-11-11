@@ -296,6 +296,44 @@ func TestAServiceWithNoImageFailsWithoutTouchingAnything(t *testing.T) {
 	}
 }
 
+func TestReconcileFailureIsReportedWithoutAContainerAndClearsOnRecovery(t *testing.T) {
+	d := newFakeDaemon(t)
+	e := d.engine(t)
+	s := svc("web", "failed-deployment")
+	s.Image = ""
+	if _, err := e.Reconcile(t.Context(), desire(s)); err != nil {
+		t.Fatal(err)
+	}
+	stages := e.Stages()
+	if len(stages) != 1 || stages[0].DeploymentID != s.DeploymentID || stages[0].Error != "no image in desired state" {
+		t.Fatalf("missing exact failure: %+v", stages)
+	}
+	if len(e.Stages()) != 1 {
+		t.Fatal("error lost before heartbeat acknowledgement")
+	}
+	s.Image = "nginx:1.27"
+	if _, err := e.Reconcile(t.Context(), desire(s)); err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range e.Stages() {
+		if stage.Error != "" {
+			t.Fatalf("stale error: %+v", stage)
+		}
+	}
+}
+
+func TestStageErrorsPreserveOperationAndRedactAssignedSecrets(t *testing.T) {
+	e := &Engine{}
+	s := svc("web", "one")
+	s.Env = map[string]string{"PASSWORD": "secret-value"}
+	e.stage(s, client.DeployStage{Stage: "creating"})
+	e.stageError(s, "create: secret-value registry-credential", "registry-credential")
+	stages := e.Stages()
+	if len(stages) != 1 || stages[0].Stage != "creating" || stages[0].Error != "create: [redacted] [redacted]" {
+		t.Fatalf("unsafe error: %+v", stages)
+	}
+}
+
 func TestListReportsTheDeploymentSoPromotionCanTellReleasesApart(t *testing.T) {
 	d := newFakeDaemon(t, managed("web", "dep1", true), managed("web", "dep2", true))
 	containers, err := d.engine(t).List(t.Context())

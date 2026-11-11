@@ -314,19 +314,13 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult stri
 	// Desktop cannot supply host filesystem project quotas; sampling may overshoot
 	// between checks. Never call this a filesystem hard quota.
 	diskExceeded := watchDisk(buildCtx, stop, 3*time.Second, func(check context.Context) error {
-		out, err := capability.DockerCommand(check, "exec", "buildx_buildkit_"+builder+"0", "du", "-sk", "/var/lib/buildkit").Output()
-		if err != nil {
-			return fmt.Errorf("cannot monitor build disk usage: %w", err)
-		}
-		fields := strings.Fields(string(out))
-		if len(fields) == 0 {
-			return fmt.Errorf("cannot measure build disk usage")
-		}
-		kb, err := strconv.ParseInt(fields[0], 10, 64)
+		used, err := measureBuildDisk(func() ([]byte, error) {
+			return capability.DockerCommand(check, "exec", "buildx_buildkit_"+builder+"0", "du", "-sk", "/var/lib/buildkit").Output()
+		})
 		if err != nil {
 			return err
 		}
-		if kb*1024 >= a.DiskBytes {
+		if used >= a.DiskBytes {
 			return fmt.Errorf("disk budget exceeded")
 		}
 		space, err := capability.ProbeDisk(check, e.Root, e.Config.ReserveBytes, builder)

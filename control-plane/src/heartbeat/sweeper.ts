@@ -135,6 +135,7 @@ export async function failStalledRollouts(
     .select({
       id: deployments.id,
       serviceId: deployments.serviceId,
+      failureReason: deployments.failureReason,
       nodeId: deployments.nodeId,
     })
     .from(deployments)
@@ -202,7 +203,7 @@ export async function failStalledRollouts(
       // promote it here rather than destroying what is already working.
       await ctx.db
         .update(deployments)
-        .set({ status: 'running', activatedAt: new Date(), finishedAt: new Date() })
+        .set({ status: 'running', failureReason: null, activatedAt: new Date(), finishedAt: new Date() })
         .where(eq(deployments.id, row.id))
       rescued.push(row.id)
       ;(opts.log?.warn ?? opts.log?.info)?.(
@@ -216,11 +217,11 @@ export async function failStalledRollouts(
       .update(deployments)
       .set({
         status: 'failed',
-        failureReason: container
+        failureReason: row.failureReason || (container
           ? `the container is ${container.state} and never reported healthy within the rollout window`
           : hasFallback.has(row.serviceId)
             ? 'the node never reported this container within the rollout window; the previous release was left running'
-            : 'the node never reported this container within the rollout window, and this service has nothing else running',
+            : 'the node never reported this container within the rollout window, and this service has nothing else running'),
         finishedAt: new Date(),
       })
       .where(eq(deployments.id, row.id))

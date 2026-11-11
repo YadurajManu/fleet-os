@@ -101,7 +101,7 @@ fleet logs web --follow
 | `fleet auth login` | Sign in and save secure local session |
 | `fleet auth logout` | Sign out and clear httpOnly session cookies |
 | `fleet config show` | Show active control plane and selected fleet |
-| `fleet use <fleet>` | Choose default fleet |
+| `fleet use [fleet]` | List accessible fleets and the active fleet, or choose a default fleet |
 | `fleet nodes pair` | Generate single-use pairing token for a new node |
 | `fleet nodes` | List nodes, status, and resource usage |
 | `fleet status` | One-screen overview of fleet health |
@@ -163,3 +163,11 @@ release and published Windows agent binary/checksum. See
 Use `--no-animation`, `--ascii`, and `--color auto|always|never` to adapt output.
 Automatic colors respect `NO_COLOR`; CI and redirected output never animate.
 Terminal fonts and backgrounds stay under your control.
+
+Secret imports skip empty or whitespace-only values with a warning and keep importing non-empty values. Use `fleet secrets import .env --all --dry-run` to preview keys without uploading values.
+
+Deployment progress shows the underlying reconciliation error while retries are in progress. Invalid image references fail without waiting for the full rollout timeout. `fleet explain <service>` provides the recorded cause and next steps, including for a pending rollout that has reported an error.
+
+`fleet logs <service>` and `fleet logs <service> --follow` fall back to retained build/deployment output when no container is available. Retained output is labeled; build logs are kept for up to 24 hours.
+
+An explicit pairing token with an existing agent identity now produces an error instead of silently resuming. Existing credentials are preserved. Normal agent restarts continue to use saved credentials.

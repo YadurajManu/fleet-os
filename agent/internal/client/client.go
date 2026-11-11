@@ -91,6 +91,7 @@ type DeployStage struct {
 	DeploymentID string `json:"deployment_id"`
 	Service      string `json:"service"`
 	Stage        string `json:"stage"`
+	Error        string `json:"error,omitempty"`
 	// Pull progress, aggregated across layers. Zero outside "pulling".
 	Layers  int   `json:"layers,omitempty"`
 	Done    int   `json:"done,omitempty"`

@@ -740,9 +740,10 @@ export const logsCommand = {
     if (flags.since) console.error(c.dim('note: agent log tails are live snapshots; --since is limited to the current retained tail.'))
     let previous = ''
     const render = async () => {
-      const { body } = await request<{ lines: string[]; node: { name: string }; diagnostic: string | null }>('GET', `/services/${service.id}/logs`)
+      const { body } = await request<{ lines: string[]; node: { name: string } | null; diagnostic: string | null }>('GET', `/services/${service.id}/logs`)
       const next = body.lines.join('\n')
-      if (!next) { if (body.diagnostic) console.log(c.yellow(`waiting: ${body.diagnostic}`)); return }
+      if (body.diagnostic) console.log(c.dim(body.diagnostic))
+      if (!next) return
       const output = next.startsWith(previous) ? next.slice(previous.length) : next
       if (output) process.stdout.write(output + (output.endsWith('\n') ? '' : '\n'))
       previous = next
@@ -1424,14 +1425,16 @@ export const explainCommand = {
       const name = args[0]
       if (!name) throw new CliError('name a service, or pass --deploy <id>', EXIT.usage)
       const service = await findService(id, name, projectFlag(flags))
-      const { body } = await request<{ deployments: Array<{ id: string; status: string }> }>(
+      const { body } = await request<{ deployments: Array<{ id: string; status: string; failureReason?: string | null }> }>(
         'GET',
         `/services/${service.id}/deployments`
       )
       // The most recent failure, which is what someone asking "why did that
       // fail" means — not the most recent deployment, which may since have
       // succeeded.
-      const failed = body.deployments.find((d) => d.status === 'failed')
+      const latest = body.deployments[0]
+      const failed = latest?.status === 'deploying' && latest.failureReason
+        ? latest : body.deployments.find((d) => d.status === 'failed')
       if (!failed) {
         throw new CliError(`"${name}" has no failed deployment to explain.`, EXIT.usage)
       }
@@ -1479,11 +1482,12 @@ export function printExplanation(r: ExplainResponse): void {
       `\n  ${c.yellow('daily limit reached')} ${c.dim(`— ${r.limit} explanations a day, resets in ${hours}h.`)}`
     )
     console.log(c.dim('  Answers already generated are still free to read.'))
+    if (r.reason) console.log(`\n  ${r.reason}`)
     return
   }
 
   // disabled / not_worth_it / failed all carry a reason worth printing as-is.
-  if (r.reason) console.log(`\n  ${c.dim(r.reason)}`)
+  if (r.reason) console.log(`\n  ${r.reason}`)
 }
 
 /** Wrap to a width, on spaces, so a paragraph reads in a terminal. */

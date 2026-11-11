@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.26.1
+
+- `fleet use` lists accessible fleets and marks the active fleet when no name is supplied.
+- Secret imports warn and skip empty values instead of aborting the batch.
+- Deployment progress shows reconciliation failures immediately, including failures before container creation.
+- `fleet logs` and `--follow` fall back to retained build/deployment output when no active container is available.
+- `fleet explain` preserves failure evidence and provides actionable advice for short errors and unavailable AI providers.
+
+The deployment diagnostics and retained-log fallbacks require the matching control-plane update. Agent 0.3.1 reports deployment-scoped errors, rejects conflicting explicit pairing tokens without changing saved credentials, and retries transient build disk measurements.
+
 ## 0.26.0
 
 - Added `fleet quickstart` for guided sign-in, machine pairing, sample app setup, deployment, and readiness checks.

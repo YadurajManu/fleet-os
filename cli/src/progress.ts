@@ -53,6 +53,7 @@ export async function fetchProgress(serviceId: string): Promise<DeployProgress |
  * the informative half and the redraw region is narrow.
  */
 export function progressLine(p: DeployProgress): string | undefined {
+  if (p.status === 'deploying' && p.failureReason) return `reconciliation failed: ${p.failureReason}; retrying`
   if (!p.detail) return undefined
   const counter = p.step && p.ofSteps ? `${p.step}/${p.ofSteps} ` : ''
   const platform = p.platform ? `${p.platform.replace(/^linux\//, '')} ` : ''

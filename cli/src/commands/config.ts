@@ -1,6 +1,6 @@
 import { CliError, EXIT, request } from '../api.js'
 import { loadProfile, saveProfile } from '../config.js'
-import { c, keyValues } from '../render.js'
+import { c, keyValues, table } from '../render.js'
 import { glyph, rule, task } from '../ui.js'
 import type { Flags } from '../args.js'
 
@@ -42,12 +42,20 @@ export const configCommand = {
 export const useCommand = {
   async run(args: string[], flags: Flags) {
     const [target] = args
-    if (!target) throw new CliError('usage: fleet use <fleet-name-or-id>', EXIT.usage)
 
     const profile = await loadProfile()
     const fleets = await task('finding fleets you can access', async () =>
       (await request<{ fleets: FleetSummary[] }>('GET', '/fleets')).body.fleets
     )
+    if (!target) {
+      if (flags.json) return console.log(JSON.stringify({ fleets, activeFleetId: profile.fleetId ?? null }, null, 2))
+      if (!fleets.length) return console.log('No accessible fleets. Create one in the dashboard.')
+      console.log(table(['fleet', 'id', 'role', 'active'], fleets.map((fleet) => [
+        fleet.name, fleet.id, fleet.role, fleet.id === profile.fleetId ? '*' : '',
+      ])))
+      console.log(c.dim('Select one with fleet use <fleet-name-or-id>.'))
+      return
+    }
     const matches = fleets.filter((fleet) => fleet.id === target || fleet.id.startsWith(target) || fleet.name === target)
     if (!matches.length) {
       throw new CliError(

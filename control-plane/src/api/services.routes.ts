@@ -23,6 +23,7 @@ import { allocateHostPort, invalidateRoutesForService, invalidateRouteHosts } fr
 import { recordAudit } from '../lib/audit.js'
 import { resolveSecrets } from '../secrets/store.js'
 import { ApiError } from './errors.js'
+import { readServiceLogs } from './service-logs.js'
 import { openDeployment, phaseWriter, readProgress } from './deploy-progress.js'
 import { requireFleetPermission, requireUser } from './guards.js'
 
@@ -229,37 +230,11 @@ export async function serviceRoutes(app: FastifyInstance) {
    * ports back into private networks. */
   app.get(
     '/services/:serviceId/logs',
-    { preHandler: requireServicePermission('service.read') },
+    { preHandler: requireServicePermission('logs.read') },
     async (req) => {
       const { service } = await loadService(app, req.params as { serviceId: string })
       const query = z.object({ node: z.string().uuid().optional() }).parse(req.query ?? {})
-      const current = await db
-        .select({ nodeId: deployments.nodeId, nodeName: nodes.name })
-        .from(deployments).leftJoin(nodes, eq(nodes.id, deployments.nodeId))
-        .where(and(eq(deployments.serviceId, service.id), inArray(deployments.status, ['deploying', 'running'])))
-        .orderBy(desc(deployments.startedAt)).limit(1)
-      const target = query.node
-        ? (await db.select({ id: nodes.id, name: nodes.name }).from(nodes).where(eq(nodes.id, query.node)).limit(1))[0]
-        : current[0]?.nodeId ? { id: current[0].nodeId, name: current[0].nodeName ?? 'unknown' } : null
-      if (!target) throw ApiError.unprocessable('logs_unavailable', `No active node for "${service.name}"`)
-      const hb = await app.ctx.heartbeats.last(target.id)
-      const [sameNamed] = await db
-        .select({ count: count() })
-        .from(services)
-        .where(and(eq(services.fleetId, service.fleetId), eq(services.name, service.name)))
-      // A name-only tail is from an old agent. It is usable only while the
-      // name resolves to this single service; otherwise returning no tail is
-      // safer than returning another project's output.
-      const legacyNameIsUnique = Number(sameNamed?.count ?? 0) === 1
-      const log = hb?.logs?.find((entry) => entry.service_id === service.id || (!entry.service_id && legacyNameIsUnique && entry.service === service.name))
-      return {
-        service: service.name,
-        node: { id: target.id, name: target.name },
-        capturedAt: hb ? new Date(hb.at).toISOString() : null,
-        available: Boolean(log),
-        lines: log?.text.split(/\r?\n/).filter(Boolean) ?? [],
-        diagnostic: log ? null : 'The agent has not reported a container log tail yet. Confirm Docker is available and the service has started.',
-      }
+      return readServiceLogs(app.ctx, service, query.node)
     }
   )
 
@@ -1130,7 +1105,7 @@ export async function serviceRoutes(app: FastifyInstance) {
     if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(deploymentId)) throw ApiError.notFound('Deployment')
     const [deployment] = await db.select().from(deployments).where(and(eq(deployments.id, deploymentId), eq(deployments.serviceId, service.id))).limit(1)
     if (!deployment) throw ApiError.notFound('Deployment')
-    const progress = await readProgress(app.ctx, service.id).catch(() => null)
+    const progress = await readProgress(app.ctx, service.id, deploymentId).catch(() => null)
     return { deployment, progress: progress?.deploymentId === deploymentId ? progress : null }
   })
 

@@ -193,9 +193,10 @@ export function recordDeployStage(
     current?: number
     total?: number
     pull_ms?: number
+    error?: string
   }
 ): void {
-  const detail = describeStage(stage)
+  const detail = stage.error ? `reconciliation failed: ${cleanReason(stage.error)}; retrying` : describeStage(stage)
   void ctx.redis
     .set(
       lineKey(stage.deployment_id),
@@ -276,7 +277,8 @@ export type DeployProgress = {
  */
 export async function readProgress(
   ctx: AppContext,
-  serviceId: string
+  serviceId: string,
+  deploymentId?: string
 ): Promise<DeployProgress | null> {
   const [row] = await ctx.db
     .select({
@@ -289,7 +291,7 @@ export async function readProgress(
     })
     .from(deployments)
     .leftJoin(nodes, eq(nodes.id, deployments.nodeId))
-    .where(eq(deployments.serviceId, serviceId))
+    .where(and(eq(deployments.serviceId, serviceId), deploymentId ? eq(deployments.id, deploymentId) : undefined))
     .orderBy(desc(deployments.startedAt))
     .limit(1)
 
@@ -331,6 +333,10 @@ export async function readProgress(
     failureReason: row.failureReason,
   }
 
+  if (row.status === 'deploying' && row.failureReason) {
+    progress.detail = `reconciliation failed: ${row.failureReason}; retrying`
+    return progress
+  }
   if (!BUILD_PHASES.has(row.status)) return progress
 
   // A stale line must not decorate a row that has moved on, so it is only read

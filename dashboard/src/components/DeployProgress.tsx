@@ -141,14 +141,14 @@ export default function DeployProgress({
 
       {/* The build's own output, which is the part that actually takes minutes. */}
       {sub && !failed && (
-        <p className="mt-2.5 truncate border-t border-[var(--color-line)] pt-2 font-mono text-[10.5px] text-[var(--color-fg-dim)]">
+        <p role="status" className="mt-2.5 whitespace-pre-wrap break-words border-t border-[var(--color-line)] pt-2 font-mono text-[10.5px] text-[var(--color-fg-dim)]">
           {sub}
         </p>
       )}
 
       {failed && progress.failureReason && (
-        <p className="mt-2.5 border-t border-[var(--color-line)] pt-2 font-mono text-[10.5px] leading-relaxed text-[var(--color-down)]">
-          {progress.failureReason.split('\n').find((l) => l.trim())?.slice(0, 200)}
+        <p role="alert" className="mt-2.5 whitespace-pre-wrap break-words border-t border-[var(--color-line)] pt-2 font-mono text-[10.5px] leading-relaxed text-[var(--color-down)]">
+          {progress.failureReason}
         </p>
       )}
     </div>

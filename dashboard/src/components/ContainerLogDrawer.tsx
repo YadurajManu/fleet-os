@@ -34,7 +34,7 @@ export default function ContainerLogDrawer({
   // Poll service logs if serviceId is known
   const logs = usePoll(
     () =>
-      api<{ node: { name: string }; lines: string[]; diagnostic: string | null }>(
+      api<{ node: { name: string } | null; lines: string[]; diagnostic: string | null }>(
         `/services/${serviceId}/logs`
       ),
     serviceId ? `/services/${serviceId}/logs` : null,

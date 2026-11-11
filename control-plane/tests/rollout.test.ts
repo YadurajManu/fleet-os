@@ -401,6 +401,104 @@ services:
       assert.equal(row?.agentVersion, '9.9.9')
     })
 
+  test('reconcile errors surface without containers, clear on recovery, and fail only the exact deployment', async () => {
+    const servingBefore = (await live()).filter(row => row.status === 'running')
+    assert.ok(servingBefore.length)
+    const [dep] = await ctx.db.insert(deployments).values({ serviceId, nodeId, status: 'deploying', imageTags: ['nginx:1.27-alpine'], startedAt: new Date(Date.now() + 1000) }).returning()
+    const report = (error?: string, id = dep!.id) => app.inject({
+      method: 'POST', url: '/agent/heartbeat', headers: { authorization: 'Bearer ' + agentToken },
+      payload: { cpu_pct: 1, ram_used_mb: 100, disk_used_mb: 1000,
+        runtime: { docker_available: true }, containers: [],
+        deploys: [{ deployment_id: id, service: 'web', stage: 'pulling', ...(error ? { error } : {}) }] },
+    })
+    assert.equal((await report('pull: temporary registry failure')).statusCode, 200)
+    const progress = await app.inject({ method: 'GET', url: '/services/' + serviceId + '/progress', headers: { authorization: 'Bearer ' + token } })
+    assert.equal(progress.json().progress.deploymentId, dep!.id)
+    assert.equal(progress.json().progress.status, 'deploying')
+    assert.match(progress.json().progress.detail, /temporary registry failure/)
+    const explained = await app.inject({ method: 'POST', url: '/fleets/' + fleetId + '/deployments/' + dep!.id + '/explain', headers: { authorization: 'Bearer ' + token } })
+    assert.equal(explained.statusCode, 200)
+    assert.match(explained.json().reason, /temporary registry failure/)
+    await report()
+    const [recovered] = await ctx.db.select().from(deployments).where(eq(deployments.id, dep!.id))
+    assert.equal(recovered!.failureReason, null)
+    await report('pull: invalid reference format')
+    const [failed] = await ctx.db.select().from(deployments).where(eq(deployments.id, dep!.id))
+    assert.equal(failed!.status, 'failed')
+    assert.match(failed!.failureReason!, /invalid reference format/)
+    const rows = await live()
+    for (const serving of servingBefore) assert.equal(rows.find(row => row.id === serving.id)?.status, 'running')
+    // Late progress cannot overwrite the durable terminal verdict.
+    await report()
+    const [stillFailed] = await ctx.db.select().from(deployments).where(eq(deployments.id, dep!.id))
+    assert.equal(stillFailed!.status, 'failed')
+  })
+
+  test('failed deployment logs work without an assigned node and reject another attempt output', async () => {
+    const [dep] = await ctx.db.insert(deployments).values({ serviceId, status: 'failed', failureReason: 'cannot monitor build disk usage: exit status 1', startedAt: new Date(Date.now() + 2000) }).returning()
+    const key = 'build:logs:' + serviceId
+    await ctx.redis.del(key)
+    await ctx.redis.lpush(key, JSON.stringify({ serviceId, service: 'web', deploymentId: dep!.id, text: 'current build output', nodeId: 'builder', at: Date.now() }))
+    await ctx.redis.lpush(key, JSON.stringify({ serviceId, service: 'web', deploymentId: second, text: 'unrelated attempt output', nodeId: 'builder', at: Date.now() }))
+    try {
+      const res = await app.inject({ method: 'GET', url: '/services/' + serviceId + '/logs', headers: { authorization: 'Bearer ' + token } })
+      assert.equal(res.statusCode, 200)
+      assert.equal(res.json().node, null)
+      assert.equal(res.json().source, 'build')
+      assert.match(res.json().lines.join('\n'), /current build output/)
+      assert.match(res.json().lines.join('\n'), /exit status 1/)
+      assert.doesNotMatch(res.json().lines.join('\n'), /unrelated attempt/)
+      const unauthenticated = await app.inject({ method: 'GET', url: '/services/' + serviceId + '/logs' })
+      assert.equal(unauthenticated.statusCode, 401)
+    } finally { await ctx.redis.del(key) }
+  })
+
+  test('a node cannot report another node deployment failure', async () => {
+    const [dep] = await ctx.db.insert(deployments).values({ serviceId, nodeId: null, status: 'deploying' }).returning()
+    await app.inject({ method: 'POST', url: '/agent/heartbeat', headers: { authorization: 'Bearer ' + agentToken },
+      payload: { cpu_pct: 1, ram_used_mb: 100, disk_used_mb: 1000, runtime: { docker_available: true }, containers: [],
+        deploys: [{ deployment_id: dep!.id, service: 'web', stage: 'pulling', error: 'pull: invalid reference format' }] } })
+    const [unchanged] = await ctx.db.select().from(deployments).where(eq(deployments.id, dep!.id))
+    assert.equal(unchanged!.status, 'deploying')
+    assert.equal(unchanged!.failureReason, null)
+    await ctx.db.delete(deployments).where(eq(deployments.id, dep!.id))
+  })
+
+  test('retry grace starts at the error rather than at build start', async () => {
+    const [dep] = await ctx.db.insert(deployments).values({ serviceId, nodeId, status: 'deploying', startedAt: new Date(Date.now() - 20 * 60_000) }).returning()
+    const errorKey = 'deploy:reconcile-error:' + dep!.id
+    const report = () => app.inject({ method: 'POST', url: '/agent/heartbeat', headers: { authorization: 'Bearer ' + agentToken },
+      payload: { cpu_pct: 1, ram_used_mb: 100, disk_used_mb: 1000, runtime: { docker_available: true }, containers: [],
+        deploys: [{ deployment_id: dep!.id, service: 'web', stage: 'pulling', error: 'temporary registry failure' }] } })
+    try {
+      await report()
+      const [retrying] = await ctx.db.select().from(deployments).where(eq(deployments.id, dep!.id))
+      assert.equal(retrying!.status, 'deploying')
+      await ctx.redis.set(errorKey, String(Date.now() - 91_000), 'EX', 600)
+      await report()
+      const [failed] = await ctx.db.select().from(deployments).where(eq(deployments.id, dep!.id))
+      assert.equal(failed!.status, 'failed')
+      assert.equal(failed!.failureReason, 'temporary registry failure')
+    } finally { await ctx.redis.del(errorKey) }
+  })
+
+  test('ambiguous legacy service names cannot attach errors to another project', async () => {
+    const [duplicate] = await ctx.db.insert(services).values({ fleetId, name: 'web', project: 'another-project', requestRamMb: 128 }).returning()
+    const [dep] = await ctx.db.insert(deployments).values({ serviceId, nodeId, status: 'deploying' }).returning()
+    try {
+      await app.inject({ method: 'POST', url: '/agent/heartbeat', headers: { authorization: 'Bearer ' + agentToken },
+        payload: { cpu_pct: 1, ram_used_mb: 100, disk_used_mb: 1000,
+          runtime: { docker_available: true, last_reconcile_error: 'web: pull: invalid reference format' }, containers: [],
+          deploys: [{ deployment_id: dep!.id, service: 'web', stage: 'pulling' }] } })
+      const [unchanged] = await ctx.db.select().from(deployments).where(eq(deployments.id, dep!.id))
+      assert.equal(unchanged!.status, 'deploying')
+      assert.equal(unchanged!.failureReason, null)
+    } finally {
+      await ctx.db.delete(deployments).where(eq(deployments.id, dep!.id))
+      await ctx.db.delete(services).where(eq(services.id, duplicate!.id))
+    }
+  })
+
   test('the failure says what happened', async () => {
     const [row] = await ctx.db
       .select({ reason: deployments.failureReason })

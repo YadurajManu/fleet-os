@@ -3,6 +3,8 @@ import type { AppContext } from '../api/context.js'
 import { deployments, deploymentExplanations, services } from '../db/schema.js'
 import { signatureOf, tail, worthExplaining } from './signature.js'
 import { diagnose } from './diagnose.js'
+import { retainedBuildLogs } from '../api/service-logs.js'
+import { cleanReason } from '../api/deploy-progress.js'
 
 /**
  * Explaining a failed deploy, at most once per distinct failure.
@@ -29,7 +31,7 @@ export type ExplainOutcome =
   | { status: 'ok'; summary: string; steps: string[]; cached: boolean; hits: number; model: string }
   | { status: 'not_worth_it'; reason: string }
   | { status: 'disabled'; reason: string }
-  | { status: 'rate_limited'; used: number; limit: number; resetsInSec: number }
+  | { status: 'rate_limited'; used: number; limit: number; resetsInSec: number; reason: string }
   | { status: 'failed'; reason: string }
 
 /**
@@ -66,6 +68,7 @@ export async function explainDeployment(
 ): Promise<ExplainOutcome> {
   const [row] = await ctx.db
     .select({
+      serviceId: services.id,
       failureReason: deployments.failureReason,
       status: deployments.status,
       serviceName: services.name,
@@ -79,18 +82,13 @@ export async function explainDeployment(
 
   if (!row) return { status: 'failed', reason: 'That deployment is not in this fleet.' }
 
-  if (!worthExplaining(row.failureReason)) {
-    // A one-word status is already the explanation. Spending a call to restate
-    // "node_down_pinned" as a sentence helps nobody and costs money.
-    return {
-      status: 'not_worth_it',
-      reason: row.failureReason
-        ? `"${row.failureReason}" is already the whole reason — there is no log to read.`
-        : 'This deployment recorded no failure output.',
-    }
+  const build = await retainedBuildLogs(ctx, row.serviceId, opts.deploymentId)
+  const evidence = [row.failureReason, ...build.map(entry => entry.text)].filter(Boolean).join('\n')
+  if (!worthExplaining(evidence) || row.status === 'deploying') {
+    return { status: 'not_worth_it', reason: describeRecordedFailure(row.serviceName, evidence, row.status) }
   }
 
-  const logTail = tail(row.failureReason!)
+  const logTail = tail(evidence)
   /**
    * Scoped to the fleet, which the log signature alone is not.
    *
@@ -106,7 +104,7 @@ export async function explainDeployment(
    * Older entries keep their unscoped keys and simply stop matching. They were
    * three rows, and a cache that misses is slow rather than wrong.
    */
-  const signature = explanationKey(opts.fleetId, row.failureReason!)
+  const signature = explanationKey(opts.fleetId, evidence)
 
   // 1. Cache. Free, so it happens before any limit is consulted.
   const [cached] = await ctx.db
@@ -142,7 +140,7 @@ export async function explainDeployment(
   if (!apiKey) {
     return {
       status: 'disabled',
-      reason: 'This control plane has no explanation provider configured.',
+      reason: describeRecordedFailure(row.serviceName, evidence, row.status) + '\nAI explanation is unavailable because no provider is configured.',
     }
   }
 
@@ -156,6 +154,7 @@ export async function explainDeployment(
   if (used > limit) {
     return {
       status: 'rate_limited',
+      reason: describeRecordedFailure(row.serviceName, evidence, row.status),
       used: used - 1,
       limit: DAILY_LIMIT,
       resetsInSec: secondsUntilUtcMidnight(),
@@ -193,7 +192,7 @@ export async function explainDeployment(
       await ctx.redis.decr(key)
       return {
         status: 'failed',
-        reason: found.status === 'disabled' ? found.reason : found.reason,
+        reason: describeRecordedFailure(row.serviceName, evidence, row.status) + '\nAI explanation unavailable: ' + found.reason,
       }
     }
 
@@ -212,7 +211,7 @@ export async function explainDeployment(
     // from the reader's point of view, and a provider outage must not burn a
     // day's worth of attempts.
     await ctx.redis.decr(key)
-    return { status: 'failed', reason: (err as Error).message }
+    return { status: 'failed', reason: describeRecordedFailure(row.serviceName, evidence, row.status) + '\nAI explanation unavailable: ' + (err as Error).message }
   }
 
   await ctx.db
@@ -230,4 +229,20 @@ export async function explainDeployment(
     .onConflictDoNothing()
 
   return { status: 'ok', summary: out.summary, steps: out.steps, cached: false, hits: 1, model: out.model }
+}
+
+/** Observed evidence and concrete next steps remain available without an AI provider. */
+export function describeRecordedFailure(service: string, evidence: string, status: string): string {
+  if (!evidence.trim()) return status === 'deploying'
+    ? 'This deployment is still starting; the agent has not reported a reconciliation error yet.'
+    : 'No failure output was retained for this deployment. Build logs expire after 24 hours.'
+  const next = /invalid reference format|manifest unknown|no matching manifest/i.test(evidence)
+    ? 'Check the image repository, tag or digest and target architecture in fleet.yaml, then deploy again.'
+    : /cannot monitor build disk usage|cannot measure build disk usage/i.test(evidence)
+      ? 'Check that Docker and the Fleet BuildKit container are available and the agent is up to date. Retry the build; if it repeats, inspect the retained build output and disk space on the builder.'
+      : /disk budget|disk reserve|insufficient disk/i.test(evidence)
+        ? 'Free space on the builder or adjust the configured build disk budget and reserve, then retry.'
+        : 'Inspect the retained output below and the service configuration before retrying.'
+  return [status === 'deploying' ? 'The node reported a reconciliation error; the deployment is still retrying.' : 'Recorded deployment failure:',
+    cleanReason(evidence), next, 'Retained logs: fleet logs ' + service].join('\n')
 }
