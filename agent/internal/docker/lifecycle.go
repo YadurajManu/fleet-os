@@ -220,15 +220,16 @@ func (c *Client) PullForPlatform(ctx context.Context, image string, auth string,
 }
 
 func splitTag(image string) (string, string) {
-	// Digest references must reach Docker intact, without a tag override.
-	if strings.Contains(image, "@") {
-		// Docker 28+ rejects bare-name digest references like "postgres@sha256:...".
-		// Official library images must be qualified as "docker.io/library/<name>".
-		name := image[:strings.Index(image, "@")]
-		if !strings.Contains(name, "/") {
-			image = "docker.io/library/" + image
+	// Digest references: Docker Engine API /images/create requires the repository
+	// in fromImage and the digest (e.g. sha256:...) in the tag parameter. Passing
+	// fromImage=repo@sha256:... fails with 400 "invalid reference format".
+	if at := strings.Index(image, "@"); at != -1 {
+		ref := image[:at]
+		digest := image[at+1:]
+		if !strings.Contains(ref, "/") {
+			ref = "docker.io/library/" + ref
 		}
-		return image, ""
+		return ref, digest
 	}
 	// Only split on a colon after the last slash, so a registry port
 	// (registry:5000/img) is not mistaken for a tag.

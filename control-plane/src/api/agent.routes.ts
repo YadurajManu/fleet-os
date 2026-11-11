@@ -1,5 +1,6 @@
 import { and, eq, isNull, gt, inArray, ne, or } from 'drizzle-orm'
 import { recordDeployStage, cleanReason } from './deploy-progress.js'
+import { isEngineImage } from '../manifest/databases.js'
 import { publishLog } from './log-stream.js'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
@@ -807,7 +808,9 @@ export async function agentRoutes(app: FastifyInstance) {
         service_id: r.serviceId,
         name: r.service,
         deployment_id: r.deploymentId,
-        image: r.imageTags[0] ?? r.image ?? null,
+        image: (r.image && isEngineImage(r.image) && !r.image.includes('@'))
+          ? r.image
+          : (r.imageTags[0] ?? r.image ?? null),
         platform: targetNode?.platform && r.imagePlatforms.includes(targetNode.platform) ? targetNode.platform : r.allowEmulation ? r.imagePlatforms[0] : undefined,
         health_check_path: r.healthCheckPath,
         health_interval_sec: r.healthIntervalSec,

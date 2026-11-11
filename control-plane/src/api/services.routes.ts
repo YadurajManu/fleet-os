@@ -1,5 +1,6 @@
 import { planPlatforms } from '../build/platforms.js'
 import { inspectImage, pinnedImage } from '../build/manifests.js'
+import { isEngineImage } from '../manifest/databases.js'
 import { compareSnapshots } from '../build/snapshot.js'
 import { and, eq, ne, desc, inArray, gte, count, isNotNull } from 'drizzle-orm'
 import { z } from 'zod'
@@ -688,7 +689,8 @@ export async function serviceRoutes(app: FastifyInstance) {
       if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
         const metadata = await inspectImage(requestedImage, app.ctx.config)
         service.imagePlatforms = metadata.platforms
-        resolvedImage = pinnedImage(requestedImage, metadata.digest)
+        // Managed database engines retain their standard tagged reference directly in imageTags
+        resolvedImage = isEngineImage(requestedImage) ? requestedImage : pinnedImage(requestedImage, metadata.digest)
         await db.update(services).set({imagePlatforms:metadata.platforms}).where(eq(services.id,service.id))
       }
       const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)

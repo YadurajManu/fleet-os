@@ -1,4 +1,5 @@
 import { inspectImage, pinnedImage } from '../build/manifests.js'
+import { isEngineImage } from '../manifest/databases.js'
 import type { BuildRequest } from '../build/runner.js'
 import { planPlatforms } from '../build/platforms.js'
 import { and, eq, inArray } from 'drizzle-orm'
@@ -36,7 +37,7 @@ export async function deployFromPush(
   if (ctx.config.BUILD_MODE === 'agent' && resolvedImage) {
     const metadata = await inspectImage(resolvedImage,ctx.config)
     service.imagePlatforms = metadata.platforms
-    resolvedImage = pinnedImage(resolvedImage,metadata.digest)
+    resolvedImage = isEngineImage(resolvedImage) ? resolvedImage : pinnedImage(resolvedImage,metadata.digest)
     await ctx.db.update(services).set({imagePlatforms:metadata.platforms}).where(eq(services.id,service.id))
   }
 

@@ -129,6 +129,14 @@ export const ENGINES: Record<string, EngineSpec> = {
   },
 }
 
+/** Check if an image name belongs to one of the managed database engines. */
+export function isEngineImage(image: string): boolean {
+  return Object.values(ENGINES).some((spec) => {
+    const bare = spec.image.replace(/^docker\.io\/library\//, '')
+    return image.startsWith(spec.image) || image.startsWith(bare)
+  })
+}
+
 export type DatabaseDecl = {
   name: string
   engine: string

@@ -14,9 +14,9 @@ func TestSplitTag(t *testing.T) {
 		image, wantRef, wantTag string
 	}{
 		{"nginx", "nginx", "latest"},
-		{"localhost:5001/web@sha256:" + strings.Repeat("a", 64), "localhost:5001/web@sha256:" + strings.Repeat("a", 64), ""},
-		// A bare library image pinned by digest must be qualified for Docker 28+.
-		{"postgres@sha256:" + strings.Repeat("b", 64), "docker.io/library/postgres@sha256:" + strings.Repeat("b", 64), ""},
+		{"localhost:5001/web@sha256:" + strings.Repeat("a", 64), "localhost:5001/web", "sha256:" + strings.Repeat("a", 64)},
+		// A bare library image pinned by digest must be qualified for Docker 28+ and split into ref + digest.
+		{"postgres@sha256:" + strings.Repeat("b", 64), "docker.io/library/postgres", "sha256:" + strings.Repeat("b", 64)},
 		{"nginx:1.27", "nginx", "1.27"},
 		{"ghcr.io/you/app:v2", "ghcr.io/you/app", "v2"},
 		// A registry port must not be mistaken for a tag — this is the case
@@ -124,13 +124,14 @@ func TestCompareVersions(t *testing.T) {
 }
 
 func TestPullPreservesDigestReference(t *testing.T) {
-	image := "registry.example:5000/app@sha256:" + strings.Repeat("a", 64)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	image := "registry.example:5000/app@" + digest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("fromImage"); got != image {
+		if got := r.URL.Query().Get("fromImage"); got != "registry.example:5000/app" {
 			t.Errorf("fromImage = %q", got)
 		}
-		if r.URL.Query().Has("tag") {
-			t.Error("digest pull must not send tag")
+		if got := r.URL.Query().Get("tag"); got != digest {
+			t.Errorf("tag = %q, want %q", got, digest)
 		}
 		if got := r.URL.Query().Get("platform"); got != "linux/arm64" {
 			t.Errorf("platform = %q", got)
