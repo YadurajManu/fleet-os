@@ -35,10 +35,15 @@ export async function deployFromPush(
 
   let resolvedImage = service.image
   if (ctx.config.BUILD_MODE === 'agent' && resolvedImage) {
-    const metadata = await inspectImage(resolvedImage,ctx.config)
-    service.imagePlatforms = metadata.platforms
-    resolvedImage = isEngineImage(resolvedImage) ? resolvedImage : pinnedImage(resolvedImage,metadata.digest)
-    await ctx.db.update(services).set({imagePlatforms:metadata.platforms}).where(eq(services.id,service.id))
+    try {
+      const metadata = await inspectImage(resolvedImage, ctx.config)
+      service.imagePlatforms = metadata.platforms
+      resolvedImage = isEngineImage(resolvedImage) ? resolvedImage : pinnedImage(resolvedImage, metadata.digest)
+      await ctx.db.update(services).set({ imagePlatforms: metadata.platforms }).where(eq(services.id, service.id))
+    } catch (err) {
+      app.log.warn({ err, image: resolvedImage }, 'inspectImage failed in deployFromPush; proceeding with unpinned tag')
+      service.imagePlatforms = []
+    }
   }
 
   if (!resolvedImage) service.imagePlatforms = []

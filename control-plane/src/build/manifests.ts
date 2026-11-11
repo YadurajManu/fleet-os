@@ -210,9 +210,10 @@ export async function inspectImage(
         throw new Error('no supported Linux image platform')
       return { platforms, digest }
     })
-  } catch {
+  } catch (err: any) {
+    const detail = err?.message ? `: ${err.message}` : ''
     throw new Error(
-      'Cannot inspect image manifest platforms; check the image reference and registry access'
+      `Cannot inspect image manifest platforms; check the image reference and registry access${detail}`
     )
   }
 }

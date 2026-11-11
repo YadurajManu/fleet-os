@@ -417,8 +417,13 @@ export async function serviceRoutes(app: FastifyInstance) {
       const { nodes: snapshot, placements, antiAffinityBy } = await fleetSnapshot(app.ctx, fleetId)
       const requestedImage = service.image
       if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
-        const metadata = await inspectImage(requestedImage, app.ctx.config)
-        service.imagePlatforms = metadata.platforms
+        try {
+          const metadata = await inspectImage(requestedImage, app.ctx.config)
+          service.imagePlatforms = metadata.platforms
+        } catch (err) {
+          req.log.warn({ err, image: requestedImage }, 'inspectImage failed during placement preview')
+          service.imagePlatforms = []
+        }
       }
       const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
       return { service: service.name, decision }
@@ -687,11 +692,17 @@ export async function serviceRoutes(app: FastifyInstance) {
       let resolvedImage: string | undefined
       const requestedImage = body.image ?? service.image
       if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
-        const metadata = await inspectImage(requestedImage, app.ctx.config)
-        service.imagePlatforms = metadata.platforms
-        // Managed database engines retain their standard tagged reference directly in imageTags
-        resolvedImage = isEngineImage(requestedImage) ? requestedImage : pinnedImage(requestedImage, metadata.digest)
-        await db.update(services).set({imagePlatforms:metadata.platforms}).where(eq(services.id,service.id))
+        try {
+          const metadata = await inspectImage(requestedImage, app.ctx.config)
+          service.imagePlatforms = metadata.platforms
+          // Managed database engines retain their standard tagged reference directly in imageTags
+          resolvedImage = isEngineImage(requestedImage) ? requestedImage : pinnedImage(requestedImage, metadata.digest)
+          await db.update(services).set({ imagePlatforms: metadata.platforms }).where(eq(services.id, service.id))
+        } catch (err) {
+          req.log.warn({ err, image: requestedImage }, 'inspectImage failed; proceeding with unpinned tag')
+          service.imagePlatforms = []
+          resolvedImage = requestedImage
+        }
       }
       const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
       if (decision.outcome !== 'placed') {
