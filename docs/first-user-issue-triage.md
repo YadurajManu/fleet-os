@@ -81,3 +81,18 @@ Validation after command execution was authorized:
 The integration pass corrected the idle-service diagnostic, restored retained-log fallback when a service has no deployment row, updated the security fixture to include real log metadata, and corrected stale rollout/database test expectations.
 
 Production rollout uses the existing backup-and-rollback upgrade script. Agent release files are verified in staging, previous files are backed up, and checksums are switched last. Existing fleet/node automatic-upgrade policies remain unchanged. npm publication is separate: the operator requested the command to publish CLI 0.26.1. Native Windows runtime behavior and a real application build remain outside this validation.
+
+## Production verification — 2026-11-11
+
+Deployed application revision: **7f39da830947e0c11440e5476afc68b15380f491**. Control-plane health reports that revision with Postgres and Redis healthy. Dashboard asset changed from index-DSLSPYw-.js to index-CaTLiLYD.js.
+
+All six agent artifacts were published and their public checksum manifest matches the locally built release. Both installed agents (sayyestoheaven-2 and ip-172-26-11-9) were explicitly updated to **0.3.1**, preserving saved identity files byte-for-byte. Both subsequently reported live heartbeats and connected tunnels. The existing db and cache containers remained running. Fleet automatic agent upgrades remain disabled.
+
+- Server database backup and rollback: /var/backups/fleet-os/upgrade-bCTLJkyy/ (run rollback.sh with sudo on the server if needed).
+- Previously published agent files: /var/backups/fleet-os/agent-before-0.3.1-QyYGsEC0/.
+- Previous installed Linux agent: /var/backups/fleet-os/installed-agent-before-0.3.1-N1PJ11Hr/.
+- Previous installed Mac agent: ~/Library/Application Support/fleet-os/release-backups/before-0.3.1/.
+
+CI run: https://github.com/YadurajManu/fleet-os/actions/runs/43025772846. Control plane, CLI, dashboard, agent, Windows installer, ingress config and upgrade-script jobs all passed. The unchanged marketing job still fails npm audit, as it did on the previous production revision; marketing source/dependencies were not changed in this release.
+
+CLI 0.26.1 is committed and packaged, **not published to npm**. The operator requested the publication command separately. F-001/F-007 client changes require installing that version after publication; the new backend diagnostics are already live. Isolated release-test containers were stopped and removed after validation.
