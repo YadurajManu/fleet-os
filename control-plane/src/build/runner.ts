@@ -36,6 +36,9 @@ export type BuildRequest = {
   contextRoot?: string
   serviceName: string
   buildContext: string
+  dockerfile?: string
+  target?: string
+  buildArgs?: Record<string, string>
   gitSha: string
   /** Every architecture present among the fleet's eligible nodes (FR-3). */
   platforms: string[]

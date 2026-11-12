@@ -153,7 +153,15 @@ const serviceFields = z
   .object({
     /** Source repository used for push-triggered deploys. */
     repo: z.string().min(1, 'repo must be a repository URL').optional(),
-    build: z.string().optional(),
+    build: z.union([
+      z.string().min(1),
+      z.object({
+        context: z.string().min(1),
+        dockerfile: z.string().min(1).refine(p => !/^(?:[\\/]|[A-Za-z]:)/.test(p) && !p.split(/[\\/]/).includes('..') && !p.includes('\0'), 'Dockerfile must stay inside the build context').default('Dockerfile'),
+        target: z.string().regex(/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/).optional(),
+        args: z.record(z.string().regex(ENV_NAME), z.string()).default({}),
+      }).strict(),
+    ]).optional(),
     build_args: z.record(z.string().regex(ENV_NAME), z.string()).default({}),
     build_secrets: z.array(z.string().regex(ENV_NAME)).default([]),
     image: z.string().optional(),
@@ -220,6 +228,10 @@ const serviceSchema = serviceFields
   .transform((val) => ({
     ...val,
     port: val.container_port ?? val.port,
+    build: typeof val.build === 'string' ? val.build : val.build?.context,
+    buildDockerfile: typeof val.build === 'object' ? val.build.dockerfile : 'Dockerfile',
+    buildTarget: typeof val.build === 'object' ? val.build.target : undefined,
+    build_args: { ...val.build_args, ...(typeof val.build === 'object' ? val.build.args : {}) },
     // Both spellings of `volume` collapse to a name and an optional path here,
     // so nothing downstream has to know there were two.
     volume: typeof val.volume === 'string' ? val.volume : val.volume?.name,

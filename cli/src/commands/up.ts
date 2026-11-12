@@ -144,6 +144,7 @@ export const upCommand = {
         fleetId,
         gitSha,
         buildContext: buildContexts.get(service.name),
+        dockerfile: planned.find(p => p.name === service.name)?.dockerfile,
         wait: !flags['no-wait'],
         ...(typeof flags.node === 'string' ? { node: flags.node } : {}),
         rootDir: typeof flags.file === 'string' ? dirname(flags.file) : rootDir,
@@ -180,6 +181,7 @@ async function deployOne(
     fleetId: string
     gitSha?: string
     buildContext?: string
+    dockerfile?: string
     wait: boolean
     rootDir: string
     manifestPath: string
@@ -192,7 +194,7 @@ async function deployOne(
   let manifestHash: string | undefined
   if (opts.buildContext) {
     const dir = join(opts.rootDir, opts.buildContext)
-    const preview = await localPreview(service.id, dir, opts.manifestPath)
+    const preview = await localPreview(service.id, dir, opts.manifestPath, opts.dockerfile)
     printLocalPreview(service.name, dir, preview, true)
     manifestHash = preview.manifestHash
     const uploaded = await task(

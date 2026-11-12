@@ -77,6 +77,9 @@ export async function deployFromPush(
       await phases.set('building')
       const built = await ctx.builds.build({
         serviceName: service.name,
+        dockerfile: service.buildDockerfile,
+        target: service.buildTarget ?? undefined,
+        buildArgs: service.buildArgs,
         buildContext: service.buildContext ?? '.',
         gitSha,
         platforms: ctx.config.BUILD_MODE === 'agent' ? planPlatforms(toServiceSpec(service), snapshot, placements, antiAffinityBy) : platformsFor(arches),

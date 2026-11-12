@@ -117,6 +117,8 @@ export async function syncManifest(
         name: svc.name,
         repoUrl: svc.repo ?? null,
         buildContext: svc.build ?? null,
+        buildDockerfile: svc.buildDockerfile,
+        buildTarget: svc.buildTarget ?? null,
         image: svc.image ?? null,
         placementPolicy: svc.placement,
         pinnedNodeId: svc.node ? nodeByName.get(svc.node)! : null,

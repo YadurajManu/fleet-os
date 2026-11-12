@@ -334,6 +334,12 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult stri
 	})
 	metadata := filepath.Join(dir, "metadata.json")
 	args := []string{"buildx", "build", "--builder", builder, "--platform", a.Platform, "--push", "--provenance=false", "--progress=plain", "--network=default", "--tag", a.RegistryTarget, "--file", dockerfile, "--metadata-file", metadata}
+	if a.Target != "" {
+		if !regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`).MatchString(a.Target) {
+			return "", fmt.Errorf("invalid build target")
+		}
+		args = append(args, "--target", a.Target)
+	}
 	for k, v := range a.BuildArgs {
 		if !safeID.MatchString(k) {
 			return "", fmt.Errorf("invalid build arg name")

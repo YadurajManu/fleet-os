@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
-import { request } from './api.js'
+import { request, CliError, EXIT } from './api.js'
 import { packContext, snapshotArchive, humanBytes, ignorePatterns } from './archive.js'
 import { compareSnapshots, type Snapshot } from './snapshot.js'
 
@@ -24,9 +24,12 @@ async function gitContext(dir: string): Promise<string | null> {
   }
 }
 
-export async function localPreview(serviceId: string, dir: string, manifestPath?: string) {
-  const archive = await packContext(dir)
+export async function localPreview(serviceId: string, dir: string, manifestPath?: string, dockerfile?: string) {
+  const archive = await packContext(dir, dockerfile)
   const snapshot = await snapshotArchive(archive)
+  if (dockerfile && !Object.hasOwn(snapshot.files, dockerfile.replace(/^\.\//, ''))) {
+    throw new CliError(`The selected Dockerfile ${dockerfile} is missing or excluded. Adjust .fleetignore/.dockerignore to include its directory; excluded folders are never silently included.`, EXIT.usage)
+  }
   const { body } = await request<Baseline>('GET', `/services/${serviceId}/source-baseline`)
   const previous = body.release?.buildContext?.snapshot
   const diff = compareSnapshots(snapshot, previous)
@@ -36,7 +39,7 @@ export async function localPreview(serviceId: string, dir: string, manifestPath?
   return {
     archive, snapshot, previous: body.release, diff, manifestHash,
     git: await gitContext(dir),
-    ignored: await ignorePatterns(dir),
+    ignored: await ignorePatterns(dir, dockerfile),
   }
 }
 

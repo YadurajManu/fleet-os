@@ -232,6 +232,13 @@
       "when": 1791230400000,
       "tag": "0032_operations_incidents",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794409534439,
+      "tag": "0033_build_targets",
+      "breakpoints": true
     }
   ]
 }

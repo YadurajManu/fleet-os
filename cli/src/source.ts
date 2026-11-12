@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { parse as parseYaml } from 'yaml'
+import { planFromManifest } from './plan.js'
 
 /**
  * The few files a service is built from, for an investigation to read.
@@ -130,15 +130,16 @@ export async function sourceFor(root: string, buildContext: string): Promise<str
  * on every turn.
  */
 export async function localSource(root: string, manifestPath = 'fleet.yaml'): Promise<Record<string, string>> {
-  let doc: { services?: Record<string, { build?: string }> }
+  let planned: ReturnType<typeof planFromManifest>
   try {
-    doc = parseYaml(await readFile(join(root, manifestPath), 'utf8')) ?? {}
+    planned = planFromManifest(await readFile(join(root, manifestPath), 'utf8'))
   } catch {
     return {}
   }
 
   const out: Record<string, string> = {}
-  for (const [name, svc] of Object.entries(doc.services ?? {})) {
+  for (const svc of planned) {
+    const name = svc.name
     if (!svc?.build) continue
     const found = await sourceFor(root, svc.build)
     if (found) out[name] = found

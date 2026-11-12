@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
-import { access, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, stat, realpath } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import type { BuildProgress, BuildRequest, BuildResult, BuildRunner } from './runner.js'
 import { BuildUnavailableError } from './runner.js'
 
@@ -120,6 +120,8 @@ export class BuildxRunner implements BuildRunner {
     await this.login()
 
     const context = await this.resolveContext(req.buildContext, req.contextRoot)
+    const dockerfile = await realpath(containedContext(context, req.dockerfile ?? 'Dockerfile'))
+    containedContext(await realpath(context), relative(await realpath(context), dockerfile))
     const tag = this.tagFor(req)
     const pushing = this.opts.pushToRegistry !== false && Boolean(this.opts.registry)
 
@@ -226,6 +228,9 @@ export class BuildxRunner implements BuildRunner {
         args.push('--load')
       }
 
+      args.push('--file', dockerfile)
+      for (const [key, value] of Object.entries(req.buildArgs ?? {})) args.push('--build-arg', key + '=' + value)
+      if (req.target) args.push('--target', req.target)
       args.push(context)
 
       // One line per group, not per build line. Enough to answer "why was this

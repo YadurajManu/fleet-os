@@ -20,6 +20,7 @@ type Assignment struct {
 	Platform         string            `json:"platform"`
 	Source           Source            `json:"source"`
 	Dockerfile       string            `json:"dockerfile"`
+	Target           string            `json:"target,omitempty"`
 	BuildArgs        map[string]string `json:"build_args,omitempty"`
 	Secrets          map[string]string `json:"secrets,omitempty"`
 	RegistryTarget   string            `json:"registry_target"`

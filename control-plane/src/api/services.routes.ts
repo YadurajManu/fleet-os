@@ -430,7 +430,7 @@ export async function serviceRoutes(app: FastifyInstance) {
       }
 
       const { service } = await loadService(app, req.params as { serviceId: string })
-      const uploaded = await extractContext(app.ctx.config.BUILD_WORKDIR, archive)
+      const uploaded = await extractContext(app.ctx.config.BUILD_WORKDIR, archive, service.buildDockerfile)
 
       req.log.info(
         { service: service.name, contextId: uploaded.id, bytes: archive.length },
@@ -827,6 +827,9 @@ export async function serviceRoutes(app: FastifyInstance) {
             const built = await app.ctx.builds.build({
               deploymentId, serviceId: service.id, fleetId,
               serviceName: service.name,
+              dockerfile: service.buildDockerfile,
+              target: service.buildTarget ?? undefined,
+              buildArgs: service.buildArgs,
               // An upload *is* the context: the CLI resolved `build: ./api`
               // against the manifest's directory before packing, so the archive
               // root is already the directory to build. Joining the path on

@@ -20,6 +20,7 @@ import { recordCanaryHealthy, evaluateCanaryHealth } from '../heartbeat/watchdog
 
 /** The capability report an agent sends at registration (tech doc §7). */
 const engineCapability = {
+  build_targets: z.boolean().default(false),
   platform: z.string().regex(/^linux\/(amd64|arm64|arm\/v7)$/).optional(),
   variant: z.enum(['v7']).optional(),
   engine_kind: z.enum(['native', 'docker-desktop']).optional(),
@@ -292,7 +293,7 @@ export async function agentRoutes(app: FastifyInstance) {
     } else if (/^v?0\.[012]\./.test(hb.agent_version ?? '')) {
       // A rolled-back agent may inherit a node that previously opted in.
       // Old agents cannot handle build messages or explicit execution platforms.
-      await db.update(nodes).set({canBuild:false,platform:null,platforms:[],engineKind:null,variant:null,effectiveCpu:null,effectiveMemBytes:null,buildCacheFreeBytes:0}).where(eq(nodes.id,nodeId))
+      await db.update(nodes).set({buildTargets:false,canBuild:false,platform:null,platforms:[],engineKind:null,variant:null,effectiveCpu:null,effectiveMemBytes:null,buildCacheFreeBytes:0}).where(eq(nodes.id,nodeId))
     }
     const fleetId = req.agentFleetId!
     const logServiceIds = hb.logs.flatMap((entry) => entry.service_id ? [entry.service_id] : [])
@@ -817,6 +818,7 @@ export async function agentRoutes(app: FastifyInstance) {
 function engineValues(cap: z.infer<typeof capability>) {
   return {
     platform: cap.platform, variant: cap.variant ?? null, engineKind: cap.engine_kind,
+    buildTargets: cap.build_targets,
     effectiveCpu: cap.effective_cpu, effectiveMemBytes: cap.effective_mem_bytes,
     canBuild: Boolean(cap.can_build && cap.platform && cap.effective_cpu && cap.effective_mem_bytes),
     platforms: cap.platforms, maxConcurrentBuilds: cap.max_concurrent_builds, buildCacheFreeBytes: cap.build_cache_free_bytes, buildDiskReserveBytes: cap.build_disk_reserve_bytes, buildDiskBytes: cap.build_disk_bytes,

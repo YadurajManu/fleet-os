@@ -129,7 +129,8 @@ export function assertValidContextId(id: string): void {
  */
 export async function extractContext(
   workdir: string,
-  archive: Buffer
+  archive: Buffer,
+  dockerfile = 'Dockerfile'
 ): Promise<UploadedContext> {
   if (archive.length === 0) {
     throw ApiError.badRequest('empty_context', 'The build context archive is empty')
@@ -156,7 +157,7 @@ export async function extractContext(
     if (entry.split('/').includes('..')) {
       throw ApiError.unprocessable('unsafe_context', `The archive escapes its own directory: ${entry}`)
     }
-    if (entry.replace(/^\.\//, '') === 'Dockerfile') hasDockerfile = true
+    if (entry.replace(/^\.\//, '') === dockerfile.replace(/^\.\//, '')) hasDockerfile = true
   }
 
   // Caught here rather than several minutes into a build, where it surfaces as
@@ -167,7 +168,7 @@ export async function extractContext(
   if (!hasDockerfile) {
     throw ApiError.unprocessable(
       'no_dockerfile',
-      'The build context has no Dockerfile at its root. If your .dockerignore excludes it, that line is for local builds — the Dockerfile has to travel with a context that is built elsewhere.'
+      `The build context is missing ${dockerfile}. Include the configured Dockerfile inside the context and check .fleetignore and .dockerignore.`
     )
   }
 

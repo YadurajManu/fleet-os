@@ -31,6 +31,7 @@ export type BuildAssignment = {
     context?: string
   }
   dockerfile: string
+  target?: string
   build_args?: Record<string, string>
   secrets?: Record<string, string>
   registry_target: string

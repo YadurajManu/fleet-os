@@ -201,6 +201,8 @@ export type Service = {
    * on the server to build.
    */
   buildContext: string | null
+  buildDockerfile?: string
+  buildTarget?: string | null
   placementPolicy: 'pinned' | 'preferred' | 'flexible'
   pinnedNodeId: string | null
   requestRamMb: number

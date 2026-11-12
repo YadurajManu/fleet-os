@@ -288,7 +288,7 @@ export class AgentBuildRunner implements BuildRunner {
         return {
           id: n.id,
           platform: n.platform,
-          canBuild: n.canBuild && n.status === 'online' && !excluded.has(n.id),
+          canBuild: n.canBuild && n.status === 'online' && !excluded.has(n.id) && (!req.target || n.buildTargets),
           connected: this.ctx.tunnels.has(n.id),
           active: active.filter((j) => j.builderNodeId === n.id).length,
           maxConcurrentBuilds: n.maxConcurrentBuilds,
@@ -310,7 +310,7 @@ export class AgentBuildRunner implements BuildRunner {
       )
       if (!builder)
         throw new BuildUnavailableError(
-          `no build-capable ${job.platform} agent online with available CPU/memory/concurrency and disk budget plus reserve`
+          `no build-capable ${job.platform} agent online with available CPU/memory/concurrency and disk budget plus reserve${req.target ? "; the builder must support build targets (upgrade its agent)" : ""}`
         )
       const [assigned] = await tx
         .update(buildJobs)
@@ -412,7 +412,8 @@ export class AgentBuildRunner implements BuildRunner {
         },
         build_args: buildArgs,
         secrets: buildSecrets,
-        dockerfile: 'Dockerfile',
+        dockerfile: req.dockerfile ?? 'Dockerfile',
+        target: req.target,
         registry_target: `${pushOrigin.host}/${repo}:${req.gitSha.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 40) || 'source'}-${job.platform.replaceAll('/', '-')}-${job.id.slice(0, 8)}-${job.attempt}`,
         registry_username: 'build',
         registry_password: signGrant(
@@ -572,6 +573,8 @@ export class AgentBuildRunner implements BuildRunner {
         .update(
           JSON.stringify([
             req.sourceKey ?? checksum,
+            req.dockerfile ?? service.buildDockerfile,
+            req.target ?? service.buildTarget,
             service.buildArgs,
             secrets.values,
           ])

@@ -11,6 +11,27 @@ import { composeToFleet } from '../src/compose.js'
 import { buildContextOf } from '../src/source-edit.js'
 import { parse as parseYaml } from 'yaml'
 
+test('object build plans and defaults keep the context and selected Dockerfile', () => {
+  const [plan] = planFromManifest('defaults:\n  build: {context: ., dockerfile: docker/Worker}\nservices:\n  worker: {}\n')
+  assert.equal(plan!.build, '.')
+  assert.equal(plan!.dockerfile, 'docker/Worker')
+  assert.equal(planFromManifest('services:\n  web: {build: ./web}\n')[0]!.build, './web')
+})
+
+test('Compose imports retain build targets, Dockerfiles and arguments', () => {
+  const result = composeToFleet('services:\n  worker:\n    build: {context: ., dockerfile: docker/Worker, target: worker, args: {MODE: public}}\n', { fleet: 'test' })
+  const build = parseYaml(result.manifest).services.worker.build
+  assert.deepEqual(build, { context: '.', dockerfile: 'docker/Worker', target: 'worker', args: { MODE: 'public' } })
+})
+
+test('source editing resolves an object-form build context through the shared plan', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'fleet-object-context-'))
+  try {
+    await writeFile(join(dir, 'fleet.yaml'), 'services:\n  worker:\n    build: {context: ./workers, target: worker}\n')
+    assert.equal(await buildContextOf(dir, 'worker'), './workers')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
 test('.fleetignore and .dockerignore both apply while the selected Dockerfile travels', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'fleet-ignore-'))
   try {

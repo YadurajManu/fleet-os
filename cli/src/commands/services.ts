@@ -414,14 +414,14 @@ async function buildContextFor(
   serviceName: string,
   manifestPath?: string,
   baseDir?: string
-): Promise<string | undefined> {
+): Promise<{ path: string; dockerfile?: string } | undefined> {
   try {
     const file = manifestPath ?? (baseDir ? join(baseDir, 'fleet.yaml') : 'fleet.yaml')
     const source = await readFile(file, 'utf8')
-    const buildRel = planFromManifest(source).find((s) => s.name === serviceName)?.build
-    if (!buildRel) return undefined
+    const planned = planFromManifest(source).find((s) => s.name === serviceName)
+    if (!planned?.build) return undefined
     const dir = baseDir ?? (manifestPath ? dirname(manifestPath) : process.cwd())
-    return join(dir, buildRel)
+    return { path: join(dir, planned.build), dockerfile: planned.dockerfile }
   } catch {
     return undefined
   }
@@ -437,7 +437,8 @@ export const deployCommand = {
     const gitSha = typeof flags.sha === 'string' ? flags.sha : undefined
     const baseDir = typeof flags.dir === 'string' ? flags.dir : undefined
     const manifestFile = typeof flags.file === 'string' ? flags.file : typeof flags.manifest === 'string' ? flags.manifest : undefined
-    const buildPath = await buildContextFor(service.name, manifestFile, baseDir)
+    const build = await buildContextFor(service.name, manifestFile, baseDir)
+    const buildPath = build?.path
 
     const plan = await task('checking deployment plan', async () => deployPlan(fleetId, service))
     const viable = plan.outcome === 'placed' && Boolean(plan.nodeName)
@@ -463,7 +464,7 @@ export const deployCommand = {
     }
     if (flags.plan || flags['dry-run']) return
     const preview = buildPath
-      ? await task(`checking local source for ${c.bold(service.name)}`, () => localPreview(service.id, buildPath, manifestFile ?? join(baseDir ?? process.cwd(), 'fleet.yaml')))
+      ? await task(`checking local source for ${c.bold(service.name)}`, () => localPreview(service.id, buildPath, manifestFile ?? join(baseDir ?? process.cwd(), 'fleet.yaml'), build?.dockerfile))
       : null
     if (preview && !flags.json) printLocalPreview(service.name, buildPath!, preview)
     if (!flags.yes && !flags.y && !(await confirmDeploy())) {
@@ -543,9 +544,10 @@ export const changesCommand = {
     const service = await findService(fleetId, name, projectFlag(flags))
     const baseDir = typeof flags.dir === 'string' ? flags.dir : undefined
     const manifestFile = typeof flags.file === 'string' ? flags.file : undefined
-    const buildPath = await buildContextFor(service.name, manifestFile, baseDir)
+    const build = await buildContextFor(service.name, manifestFile, baseDir)
+    const buildPath = build?.path
     if (!buildPath) throw new CliError(`No local build context for ${service.name} in fleet.yaml. Run this from the project directory.`, EXIT.usage)
-    const preview = await localPreview(service.id, buildPath, manifestFile ?? join(baseDir ?? process.cwd(), 'fleet.yaml'))
+    const preview = await localPreview(service.id, buildPath, manifestFile ?? join(baseDir ?? process.cwd(), 'fleet.yaml'), build?.dockerfile)
     if (flags.json) console.log(JSON.stringify({ snapshot: preview.snapshot, diff: preview.diff, previous: preview.previous?.id ?? null, bytes: preview.archive.length }, null, 2))
     else {
       printLocalPreview(service.name, buildPath, preview)

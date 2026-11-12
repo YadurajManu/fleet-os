@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolve, relative, join } from 'node:path'
-import { parse as parseYaml } from 'yaml'
+import { planFromManifest } from './plan.js'
 
 const run = promisify(execFile)
 
@@ -44,10 +44,7 @@ export type EditCheck =
 /** Where a service's build context is, according to the local manifest. */
 export async function buildContextOf(root: string, service: string): Promise<string | null> {
   try {
-    const doc = parseYaml(await readFile(join(root, 'fleet.yaml'), 'utf8')) as {
-      services?: Record<string, { build?: string }>
-    }
-    return doc?.services?.[service]?.build ?? null
+    return planFromManifest(await readFile(join(root, 'fleet.yaml'), 'utf8')).find(s => s.name === service)?.build ?? null
   } catch {
     return null
   }

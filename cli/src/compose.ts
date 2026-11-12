@@ -292,7 +292,11 @@ export function composeToFleet(
     if (svc.build != null && !image) {
       const b = asRecord(svc.build)
       const context = typeof svc.build === 'string' ? svc.build : typeof b?.context === 'string' ? b.context : '.'
-      lines.push(`    build: ${scalar(context)}`)
+      if (b && (b.target || b.dockerfile || b.args)) {
+        const args = readEnv(b.args)
+        lines.push(`    build: ${JSON.stringify({ context, ...(typeof b.dockerfile === 'string' ? { dockerfile: b.dockerfile } : {}), ...(typeof b.target === 'string' ? { target: b.target } : {}), ...(Object.keys(args).length ? { args } : {}) })}`)
+        if (Object.values(args).some(value => /\$/.test(value))) questions.push(`${name}: build arguments contain variable references; replace them with public literal values, or adapt the Dockerfile to use build_secrets for credentials.`)
+      } else lines.push(`    build: ${scalar(context)}`)
     } else if (image) {
       lines.push(`    image: ${scalar(image)}`)
       if (svc.build != null) {

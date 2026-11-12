@@ -13,6 +13,7 @@ import (
 
 // EngineReport describes the Linux container engine, never the agent host.
 type EngineReport struct {
+	BuildTargets          bool     `json:"build_targets"`
 	BuildDiskBytes        int64    `json:"build_disk_bytes"`
 	Platform              string   `json:"platform"`
 	Variant               string   `json:"variant,omitempty"`
@@ -91,7 +92,7 @@ func FromDockerInfo(body []byte) (EngineReport, string, error) {
 	if strings.Contains(strings.ToLower(info.OperatingSystem), "docker desktop") {
 		kind = "docker-desktop"
 	}
-	return EngineReport{BuildDiskBytes: 20 << 30, Platform: p, Variant: variant, EngineKind: kind, EffectiveCPU: info.NCPU, EffectiveMemBytes: info.MemTotal, Platforms: []string{p}, MaxConcurrentBuilds: 1}, arch, nil
+	return EngineReport{BuildTargets: true, BuildDiskBytes: 20 << 30, Platform: p, Variant: variant, EngineKind: kind, EffectiveCPU: info.NCPU, EffectiveMemBytes: info.MemTotal, Platforms: []string{p}, MaxConcurrentBuilds: 1}, arch, nil
 }
 
 func DockerCommand(ctx context.Context, args ...string) *exec.Cmd {

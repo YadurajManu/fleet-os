@@ -280,3 +280,28 @@ test('shared build storage cannot be used as an implicit source context', async 
     /shared build workdir is not a source context/
   )
 })
+
+test('target and Dockerfile reach the builder and a different target invalidates cached output', async () => {
+  await ctx.db.update(nodes).set({ buildTargets: true }).where(eq(nodes.id, nodeId))
+  const assignments: BuildAssignment[] = []
+  let handled: Promise<void> | undefined
+  ctx.tunnels.sendBuild = (node, msg) => {
+    const assignment = msg as BuildAssignment
+    if (assignment.type !== 'build.assign') return true
+    assignments.push(assignment)
+    handled = runner.handleMessage(node, { type: 'build.result', version: 1, job_id: assignment.job_id, attempt: assignment.attempt, status: 'succeeded', digest })
+    return true
+  }
+  for (const target of ['worker', 'web', 'web']) {
+    const req = await request('same-source-with-stages')
+    req.target = target
+    req.dockerfile = 'Dockerfile'
+    await runner.build(req)
+    await handled
+  }
+  assert.deepEqual(assignments.map(a => [a.dockerfile, a.target]), [['Dockerfile', 'worker'], ['Dockerfile', 'web']])
+  await ctx.db.update(nodes).set({ buildTargets: false }).where(eq(nodes.id, nodeId))
+  const unsupported = await request('old-agent-target')
+  unsupported.target = 'worker'
+  await assert.rejects(runner.build(unsupported), /must support build targets/)
+})

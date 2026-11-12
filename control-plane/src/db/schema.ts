@@ -228,6 +228,8 @@ export const nodes = pgTable(
     effectiveMemBytes: bigint('effective_mem_bytes', { mode: 'number' }),
     reliabilityScore: real('reliability_score').notNull().default(0.5),
     canBuild: boolean('can_build').notNull().default(false),
+    buildTargets: boolean('build_targets').notNull().default(false),
+    taskRun: boolean('task_run').notNull().default(false),
     platforms: text('platforms').array().notNull().default([]),
     maxConcurrentBuilds: integer('max_concurrent_builds').notNull().default(1),
     buildDiskBytes: bigint('build_disk_bytes', { mode: 'number' }).notNull().default(21474836480),
@@ -365,6 +367,8 @@ export const services = pgTable(
 
     repoUrl: text('repo_url'),
     buildContext: text('build_context'),
+    buildDockerfile: text('build_dockerfile').notNull().default('Dockerfile'),
+    buildTarget: text('build_target'),
     buildArgs: jsonb('build_args').$type<Record<string, string>>().notNull().default({}),
     buildSecretRefs: text('build_secret_refs').array().notNull().default([]),
     image: text('image'), // set instead of buildContext for prebuilt images

@@ -30,6 +30,7 @@ export type PlannedService = {
   name: string
   /** Build context path, relative to the manifest. Absent for a prebuilt image. */
   build?: string
+  dockerfile?: string
   affinity: string[]
   /**
    * A managed database from the `databases:` block rather than a service.
@@ -51,14 +52,16 @@ export type PlannedService = {
 export function planFromManifest(source: string): PlannedService[] {
   const doc = parseYaml(source) as {
     services?: Record<string, unknown>
+    defaults?: Record<string, unknown>
     databases?: Record<string, unknown>
   } | null
 
   const services = Object.entries(doc?.services ?? {}).map(([name, raw]) => {
-    const body = (raw ?? {}) as { build?: unknown; affinity?: unknown }
+    const body = { ...doc?.defaults, ...(raw ?? {}) as object } as { build?: unknown; affinity?: unknown }
     return {
       name,
-      build: typeof body.build === 'string' ? body.build : undefined,
+      build: typeof body.build === 'string' ? body.build : typeof body.build === 'object' && body.build !== null && 'context' in body.build && typeof body.build.context === 'string' ? body.build.context : undefined,
+      dockerfile: typeof body.build === 'object' && body.build !== null && 'dockerfile' in body.build && typeof body.build.dockerfile === 'string' ? body.build.dockerfile : undefined,
       affinity: Array.isArray(body.affinity) ? body.affinity.filter((a) => typeof a === 'string') : [],
     }
   })
