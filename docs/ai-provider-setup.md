@@ -34,7 +34,9 @@ explicitly accept a paid model before changing the environment.
 
 Model and credential errors stop with recovery advice. Schema degradation is
 not retried for a known model rejection. Rate-limit retries remain bounded;
-existing caching and daily limits remain in effect. Supporting both providers
+all attempts and backoff share the original request deadline. If a retry cannot
+fit, Fleet stops with a deadline message rather than restarting the timeout.
+Existing caching and daily limits remain in effect. Supporting both providers
 does not pool their quotas, reduce the tokens required for a prompt, or enable
 automatic paid failover. To activate Groq, the operator must supply its key in
 the server environment and choose a model. Existing OpenRouter credentials may

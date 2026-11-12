@@ -80,6 +80,7 @@ export async function openDeployment(
     serviceId: string
     nodeId: string | null
     gitSha: string | null
+    warnings?: string[]
     /**
      * What the builder was given, when this deploy uploaded a context.
      *
@@ -96,6 +97,7 @@ export async function openDeployment(
       serviceId: input.serviceId,
       nodeId: input.nodeId,
       gitSha: input.gitSha,
+      warnings: input.warnings ?? [],
       buildContext: input.buildContext ?? null,
       status: 'queued',
     })

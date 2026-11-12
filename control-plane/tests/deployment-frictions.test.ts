@@ -182,9 +182,31 @@ test('image inspection failure still schedules an image-only deployment', async 
     const [deployment] = await ctx.db.select().from(deployments).where(eq(deployments.id, res.json().deployment.id))
     assert.equal(deployment!.status, 'deploying')
     assert.deepEqual(deployment!.imageTags, ['private.example/unavailable:latest'])
+    assert.match(deployment!.warnings.join(' '), /compatibility could not be verified/)
+    assert.match(res.json().warnings.join(' '), /compatibility could not be verified/)
+    const preview = await app.inject({ method: 'GET', url: `/services/${serviceId}/placement-preview`, headers: { authorization: `Bearer ${account.accessToken}` } })
+    assert.match(preview.json().decision.warnings.join(' '), /compatibility could not be verified/)
   } finally {
     if (path === undefined) delete process.env.PATH; else process.env.PATH = path
     ctx.config.BUILD_MODE = mode
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('cross-fleet copying authorizes both scopes and preserves encrypted values and destinations', async () => {
+  const headers = { authorization: `Bearer ${account.accessToken}` }
+  await app.inject({ method: 'PUT', url: `/fleets/${outsider.fleet.id}/secrets/CROSS_COPY`, headers: { authorization: `Bearer ${outsider.accessToken}` }, payload: { value: 'cross-fleet-private-value' } })
+  const input = { method: 'POST' as const, url: `/fleets/${account.fleet.id}/secrets/clone`, headers, payload: { key: 'CROSS_COPY', fromFleetId: outsider.fleet.id, toServiceId: serviceId } }
+  assert.equal((await app.inject(input)).statusCode, 404)
+  await ctx.db.insert(orgMembers).values({ orgId: outsider.org.id, userId: account.user.id, role: 'viewer' })
+  assert.equal((await app.inject(input)).statusCode, 403)
+  await ctx.db.update(orgMembers).set({ role: 'deployer' }).where(eq(orgMembers.orgId, outsider.org.id))
+  const copied = await app.inject(input)
+  assert.equal(copied.statusCode, 201, copied.body)
+  assert.doesNotMatch(copied.body, /cross-fleet-private-value|ciphertext|wrappedDek/)
+  const { resolveSecrets } = await import('../src/secrets/store.js')
+  assert.equal((await resolveSecrets(ctx, account.fleet.id, serviceId, ['CROSS_COPY'])).values.CROSS_COPY, 'cross-fleet-private-value')
+  assert.equal((await app.inject(input)).statusCode, 409)
+  const wrongScope = await app.inject({ ...input, payload: { ...input.payload, fromServiceId: serviceId } })
+  assert.equal(wrongScope.statusCode, 404)
 })

@@ -2,6 +2,14 @@
 
 Prepared and committed locally; not pushed, published or deployed:
 
+Follow-up note: five additional fixes are now committed locally on top of this prepared
+release. They add migration 0035 (CPU capability and durable inspection warnings).
+The earlier CLI tarball and agent binaries must be rebuilt from the reviewed final
+revision before publishing; the counts below describe the earlier preparation.
+Latest follow-up checks are 663 server, 215 CLI and 28 dashboard tests, plus Go tests
+and vet. Include migrations 0033, 0034 and 0035 in the server rollout and verify
+`build_cpu_millis` on the canary agent before using fractional CPU assignments.
+
 | Component | Prepared version | Validation |
 | --- | --- | --- |
 | CLI | 0.27.0 | 214 tests, build, package in /tmp/yadurajfleetos-cli-0.27.0.tgz |

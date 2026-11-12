@@ -34,7 +34,7 @@ type Secret = {
 }
 
 export default function Secrets() {
-  const { fleet } = useAuth()
+  const { fleet, fleets } = useAuth()
   const id = fleet?.id
   const { data, error, loading, refetch } = usePoll(
     () => api<{ secrets: Secret[] }>(`/fleets/${id}/secrets`),
@@ -48,11 +48,14 @@ export default function Secrets() {
 
   const [copying, setCopying] = useState<Secret | null>(null)
   const [copyTo, setCopyTo] = useState('fleet')
+  const [copyFleetId, setCopyFleetId] = useState('')
   const [copyKey, setCopyKey] = useState('')
   const [copyDone, setCopyDone] = useState('')
   const [removing, setRemoving] = useState<Secret | null>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<unknown>(null)
+  const destinationFleetId = copyFleetId || id
+  const destinationServices = usePoll(() => api<{ services: Array<{ id: string; name: string }> }>(`/fleets/${destinationFleetId}/services`), copying ? `/fleets/${destinationFleetId}/services` : null)
 
   const secrets = data?.secrets ?? []
 
@@ -133,7 +136,7 @@ export default function Secrets() {
                     {since(s.updatedAt)}
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    <Button variant="ghost" onClick={() => { setCopying(s); setCopyKey(s.key); setCopyTo('fleet'); setActionError(null); setCopyDone('') }}>copy</Button>
+                    <Button variant="ghost" onClick={() => { setCopying(s); setCopyKey(s.key); setCopyTo('fleet'); setCopyFleetId(id ?? ''); setActionError(null); setCopyDone('') }}>copy</Button>
                     <Button variant="ghost" onClick={() => setRemoving(s)}>
                       remove
                     </Button>
@@ -151,13 +154,15 @@ export default function Secrets() {
         try {
           const fromServiceId = copying.service ? idOf(copying.service) : null
           if (copying.service && !fromServiceId) throw new Error('Source service is unavailable. Refresh and try again.')
-          await api(`/fleets/${id}/secrets/clone`, { method: 'POST', body: { key: copying.key, fromServiceId, toServiceId: copyTo === 'fleet' ? null : copyTo, toKey: copyKey } })
-          setCopyDone(`${copyKey} copied. Redeploy affected services to use it.`); setCopying(null); refetch()
+          await api(`/fleets/${destinationFleetId}/secrets/clone`, { method: 'POST', body: { key: copying.key, fromFleetId: id, fromServiceId, toServiceId: copyTo === 'fleet' ? null : copyTo, toKey: copyKey } })
+          setCopyDone(`${copyKey} copied. Declare it in the destination manifest's secrets or build_secrets, then redeploy affected services.`); setCopying(null); refetch()
         } catch (err) { setActionError(err) } finally { setBusy(false) }
       }}>
         <h2>Copy {copying.key}</h2>
         <p>The value stays hidden. Existing destination values are never overwritten.</p>
-        <label>Destination <select value={copyTo} onChange={e => setCopyTo(e.target.value)}><option value="fleet">Every service in this fleet</option>{services.data?.services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+        <label>Destination fleet <select disabled={busy} value={destinationFleetId} onChange={e => { setCopyFleetId(e.target.value); setCopyTo('fleet') }}>{fleets.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>
+        <label>Destination scope <select disabled={busy || destinationServices.loading} value={copyTo} onChange={e => setCopyTo(e.target.value)}><option value="fleet">Every service in destination fleet</option>{destinationServices.data?.services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+        <ErrorNote error={destinationServices.error} />
         <label>Key <input required pattern="[A-Z_][A-Z0-9_]{0,127}" value={copyKey} onChange={e => setCopyKey(e.target.value)} /></label>
         <button disabled={busy} type="submit">{busy ? 'Copying…' : 'Copy secret'}</button>{' '}
         <button disabled={busy} type="button" onClick={() => setCopying(null)}>Cancel</button>

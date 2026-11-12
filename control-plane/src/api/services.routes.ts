@@ -1,5 +1,5 @@
 import { planPlatforms } from '../build/platforms.js'
-import { inspectImage, pinnedImage } from '../build/manifests.js'
+import { IMAGE_INSPECTION_WARNING, inspectImage, pinnedImage } from '../build/manifests.js'
 import { isEngineImage } from '../manifest/databases.js'
 import { compareSnapshots } from '../build/snapshot.js'
 import { and, eq, ne, desc, inArray, gte, count, isNotNull } from 'drizzle-orm'
@@ -391,16 +391,19 @@ export async function serviceRoutes(app: FastifyInstance) {
       const { service, fleetId } = await loadService(app, req.params as { serviceId: string })
       const { nodes: snapshot, placements, antiAffinityBy } = await fleetSnapshot(app.ctx, fleetId)
       const requestedImage = service.image
+      const inspectionWarnings: string[] = []
       if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
         try {
           const metadata = await inspectImage(requestedImage, app.ctx.config)
           service.imagePlatforms = metadata.platforms
         } catch (err) {
           req.log.warn({ err, image: requestedImage }, 'inspectImage failed during placement preview')
+          inspectionWarnings.push(IMAGE_INSPECTION_WARNING)
           service.imagePlatforms = []
         }
       }
       const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
+      decision.warnings.push(...inspectionWarnings)
       return { service: service.name, decision }
     }
   )
@@ -666,6 +669,7 @@ export async function serviceRoutes(app: FastifyInstance) {
       if (!body.image && !service.image) service.imagePlatforms = []
       let resolvedImage: string | undefined
       const requestedImage = body.image ?? service.image
+      const inspectionWarnings: string[] = []
       if (app.ctx.config.BUILD_MODE === 'agent' && requestedImage) {
         try {
           const metadata = await inspectImage(requestedImage, app.ctx.config)
@@ -675,11 +679,13 @@ export async function serviceRoutes(app: FastifyInstance) {
           await db.update(services).set({ imagePlatforms: metadata.platforms }).where(eq(services.id, service.id))
         } catch (err) {
           req.log.warn({ err, image: requestedImage }, 'inspectImage failed; proceeding with unpinned tag')
+          inspectionWarnings.push(IMAGE_INSPECTION_WARNING)
           service.imagePlatforms = []
           resolvedImage = requestedImage
         }
       }
       const decision = place(toServiceSpec(service), snapshot, placements, antiAffinityBy)
+      decision.warnings.push(...inspectionWarnings)
       if (decision.outcome !== 'placed') {
         // Exit code 3 in the CLI. The rejection list is the useful part.
         throw new ApiError(422, 'no_eligible_node', decision.summary, {
@@ -796,6 +802,7 @@ export async function serviceRoutes(app: FastifyInstance) {
         }
       }
       const deploymentId = await openDeployment(app.ctx, {
+        warnings: inspectionWarnings,
         serviceId: service.id,
         nodeId: decision.nodeId,
         gitSha: body.gitSha ?? null,

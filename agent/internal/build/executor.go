@@ -173,7 +173,14 @@ func redact(s string, a Assignment) string {
 }
 
 func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult string, buildErr error) {
-	if a.CPU < 1 || a.CPU > e.Config.CPU || a.MemoryBytes < 256<<20 || a.MemoryBytes > e.Config.MemoryBytes || a.DiskBytes < 1<<30 || a.DiskBytes > e.Config.DiskBytes {
+	cpuMillis := a.CPUMillis
+	if cpuMillis == 0 {
+		if a.CPU < 1 || a.CPU > e.Config.CPU {
+			return "", fmt.Errorf("requested build limits exceed agent limits")
+		}
+		cpuMillis = a.CPU * 1000
+	}
+	if cpuMillis < 10 || cpuMillis > e.Config.CPU*1000 || a.MemoryBytes < 256<<20 || a.MemoryBytes > e.Config.MemoryBytes || a.DiskBytes < 1<<30 || a.DiskBytes > e.Config.DiskBytes {
 		return "", fmt.Errorf("requested build limits exceed agent limits")
 	}
 	if _, _, _, err := capability.NormalizePlatform("linux", strings.TrimPrefix(a.Platform, "linux/")); err != nil {
@@ -305,7 +312,7 @@ func (e *Executor) execute(ctx context.Context, a Assignment) (digestResult stri
 		}
 	}()
 	// BuildKit gets its own cgroup; Dockerfile RUN steps inherit its limits.
-	if err = run("buildx", "create", "--name", builder, "--driver", "docker-container", "--driver-opt", fmt.Sprintf("memory=%d,cpu-period=100000,cpu-quota=%d", a.MemoryBytes, a.CPU*100000), "--buildkitd-flags", fmt.Sprintf("--oci-worker-gc-keepstorage %d", a.DiskBytes/(1<<20)), "--bootstrap"); err != nil {
+	if err = run("buildx", "create", "--name", builder, "--driver", "docker-container", "--driver-opt", fmt.Sprintf("memory=%d,cpu-period=100000,cpu-quota=%d", a.MemoryBytes, cpuMillis*100), "--buildkitd-flags", fmt.Sprintf("--oci-worker-gc-keepstorage %d", a.DiskBytes/(1<<20)), "--bootstrap"); err != nil {
 		return "", fmt.Errorf("create isolated BuildKit: %w", err)
 	}
 	buildCtx, stop := context.WithCancel(ctx)

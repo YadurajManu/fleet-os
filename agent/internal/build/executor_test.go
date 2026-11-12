@@ -22,6 +22,20 @@ func archive(name string, kind byte) []byte {
 	_ = gz.Close()
 	return b.Bytes()
 }
+
+func TestFractionalCPUAssignmentValidation(t *testing.T) {
+	e := New(t.TempDir(), capability.BuilderConfig{CPU: 2, MemoryBytes: 2 << 30, DiskBytes: 20 << 30}, func(Event) {})
+	for _, millis := range []int{-1, 1, 2001} {
+		_, err := e.execute(context.Background(), Assignment{CPU: 1, CPUMillis: millis, MemoryBytes: 256 << 20, DiskBytes: 1 << 30})
+		if err == nil || !strings.Contains(err.Error(), "requested build limits") {
+			t.Fatalf("invalid CPU %d accepted: %v", millis, err)
+		}
+	}
+	_, err := e.execute(context.Background(), Assignment{CPU: 1, CPUMillis: 250, Platform: "invalid", MemoryBytes: 256 << 20, DiskBytes: 1 << 30})
+	if err == nil || strings.Contains(err.Error(), "requested build limits") {
+		t.Fatalf("fractional CPU rejected before platform validation: %v", err)
+	}
+}
 func TestExtractionRejectsTraversalAndLinks(t *testing.T) {
 	for _, name := range []string{"../escape", "/tmp/escape", "C:/escape", "..\\escape"} {
 		if extract(bytes.NewReader(archive(name, tar.TypeReg)), t.TempDir()) == nil {

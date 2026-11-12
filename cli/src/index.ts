@@ -110,6 +110,7 @@ const OPTIONS: Array<[string, string]> = [
   ['--verbose', 'Show connection, disk availability and last reported runtime errors'],
   ['--replace <node>', 'Pair a stopped replacement machine using its existing node identity'],
   ['--from-service <name>', 'Copy a secret from this service scope'],
+  ['--from-fleet <id>', 'Copy from an authorized source fleet; --fleet selects the destination'],
   ['--as <KEY>', 'Choose another destination key when copying a secret'],
   ['--no-wait', 'Return once scheduled, without following the rollout'],
   ['--message <text>', 'Attach a short note to a local snapshot release'],

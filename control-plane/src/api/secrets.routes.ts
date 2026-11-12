@@ -10,7 +10,8 @@
 import { and, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
-import { services, fleets, secrets } from '../db/schema.js'
+import { services, fleets, secrets, orgMembers } from '../db/schema.js'
+import { can } from '../auth/rbac.js'
 import { setSecret, listSecrets, deleteSecret, assertValidKey } from '../secrets/store.js'
 import { recordAudit } from '../lib/audit.js'
 import { ApiError } from './errors.js'
@@ -24,22 +25,29 @@ export async function secretRoutes(app: FastifyInstance) {
 
   app.post('/fleets/:fleetId/secrets/clone', { preHandler: requireFleetPermission('secret.write') }, async (req, reply) => {
     const { fleetId } = req.params as { fleetId: string }
-    const parsed = z.object({ key: z.string(), fromServiceId: z.uuid().nullable().default(null), toServiceId: z.uuid().nullable().default(null), toKey: z.string().optional() }).strict().safeParse(req.body)
+    const parsed = z.object({ key: z.string(), fromFleetId: z.uuid().optional(), fromServiceId: z.uuid().nullable().default(null), toServiceId: z.uuid().nullable().default(null), toKey: z.string().optional() }).strict().safeParse(req.body)
     if (!parsed.success) throw ApiError.badRequest('invalid_clone', 'Choose a source key and destination scope in this fleet.')
     const input = parsed.data
+    const fromFleetId = input.fromFleetId ?? fleetId
     const key = input.toKey ?? input.key
     assertValidKey(input.key); assertValidKey(key)
     const result = await db.transaction(async tx => {
-      for (const serviceId of [input.fromServiceId, input.toServiceId]) {
+      const [sourceAccess] = await tx.select({ role: orgMembers.role, orgId: fleets.orgId }).from(fleets)
+        .innerJoin(orgMembers, eq(orgMembers.orgId, fleets.orgId))
+        .where(and(eq(fleets.id, fromFleetId), eq(orgMembers.userId, req.userId!))).limit(1)
+      if (!sourceAccess) throw ApiError.notFound('Source fleet')
+      if (!can(sourceAccess.role, 'secret.write')) throw ApiError.forbidden('Your source fleet role cannot copy secret values')
+      for (const [serviceId, scopeFleet] of [[input.fromServiceId, fromFleetId], [input.toServiceId, fleetId]] as const) {
         if (!serviceId) continue
-        const [service] = await tx.select({ id: services.id }).from(services).where(and(eq(services.id, serviceId), eq(services.fleetId, fleetId)))
+        const [service] = await tx.select({ id: services.id }).from(services).where(and(eq(services.id, serviceId), eq(services.fleetId, scopeFleet)))
         if (!service) throw ApiError.notFound('Service')
       }
-      const [source] = await tx.select().from(secrets).where(and(eq(secrets.fleetId, fleetId), eq(secrets.key, input.key), input.fromServiceId ? eq(secrets.serviceId, input.fromServiceId) : isNull(secrets.serviceId)))
+      const [source] = await tx.select().from(secrets).where(and(eq(secrets.fleetId, fromFleetId), eq(secrets.key, input.key), input.fromServiceId ? eq(secrets.serviceId, input.fromServiceId) : isNull(secrets.serviceId)))
       if (!source) throw ApiError.notFound('Source secret')
       const [created] = await tx.insert(secrets).values({ fleetId, serviceId: input.toServiceId, key, encryptedValue: source.encryptedValue }).onConflictDoNothing().returning({ key: secrets.key })
       if (!created) throw ApiError.conflict('secret_exists', 'Destination already has this key. Choose another key; the existing value was preserved.')
-      await recordAudit(tx, { orgId: req.orgId!, actorUserId: req.userId, action: 'secret.cloned', targetType: 'fleet', targetId: fleetId, metadata: { key, fromServiceId: input.fromServiceId, toServiceId: input.toServiceId } })
+      await recordAudit(tx, { orgId: req.orgId!, actorUserId: req.userId, action: 'secret.cloned', targetType: 'fleet', targetId: fleetId, metadata: { key, fromFleetId, fromServiceId: input.fromServiceId, toServiceId: input.toServiceId } })
+      if (fromFleetId !== fleetId) await recordAudit(tx, { orgId: sourceAccess.orgId, actorUserId: req.userId, action: 'secret.copied_out', targetType: 'fleet', targetId: fromFleetId, metadata: { key: input.key, toFleetId: fleetId } })
       return { key, scope: input.toServiceId ? 'service' : 'fleet' }
     })
     return reply.code(201).send(result)

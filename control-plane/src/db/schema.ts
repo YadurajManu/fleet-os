@@ -229,6 +229,7 @@ export const nodes = pgTable(
     reliabilityScore: real('reliability_score').notNull().default(0.5),
     canBuild: boolean('can_build').notNull().default(false),
     buildTargets: boolean('build_targets').notNull().default(false),
+    buildCpuMillis: boolean('build_cpu_millis').notNull().default(false),
     taskRun: boolean('task_run').notNull().default(false),
     platforms: text('platforms').array().notNull().default([]),
     maxConcurrentBuilds: integer('max_concurrent_builds').notNull().default(1),
@@ -525,6 +526,7 @@ export const deployments = pgTable(
     /** Host port the agent publishes this container on, so ingress can reach it. */
     hostPort: integer('host_port'),
     failureReason: text('failure_reason'),
+    warnings: text('warnings').array().notNull().default([]),
     /**
      * What the builder was given, when this deployment uploaded a context.
      *

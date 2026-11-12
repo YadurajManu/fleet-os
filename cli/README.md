@@ -229,7 +229,17 @@ It does not move local data volumes: restore them before starting stateful servi
 Restart an already paired agent normally; never re-pair it just to restart it.
 A duplicate hostname is refused with recovery instructions.
 
-Secret copying works between fleet and service scopes within the selected fleet.
+Secret copying works between fleet and service scopes, including across fleets:
+
+```sh
+fleet secrets clone DATABASE_URL --from-fleet <source-id> --fleet <destination-id> --to worker
+```
+
+Both fleets require permission to write secrets. Source service scopes use
+`--from-service`; destination scopes use `--to service-name` or `--to fleet`.
 Values never leave the server, and destination values are never overwritten.
 Use another destination key if it already exists. Redeploy affected services after
 copying; running containers keep their current environment.
+
+Node commands prefer exact names and IDs. A shortened ID matching more than one
+node is refused with a candidate list, before any rename, revocation or replacement.

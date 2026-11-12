@@ -305,3 +305,25 @@ test('target and Dockerfile reach the builder and a different target invalidates
   unsupported.target = 'worker'
   await assert.rejects(runner.build(unsupported), /must support build targets/)
 })
+
+test('fractional CPU assignments respect free capacity and concurrent slots', async () => {
+  await ctx.db.update(nodes).set({ effectiveCpu: 1, maxConcurrentBuilds: 2, buildCpuMillis: true }).where(eq(nodes.id, nodeId))
+  let observed: BuildAssignment | undefined
+  ctx.tunnels.sendBuild = (node, msg) => {
+    const assignment = msg as BuildAssignment
+    if (assignment.type === 'build.assign') {
+      observed = assignment
+      void runner.handleMessage(node, { type: 'build.result', version: 1, job_id: assignment.job_id, attempt: assignment.attempt, status: 'succeeded', digest })
+    }
+    return true
+  }
+  try {
+    await runner.build(await request('fractional-cpu-assignment'))
+    assert.equal(observed?.cpu_millis, 500)
+    assert.equal(observed?.cpu, 1)
+    await ctx.db.update(nodes).set({ buildCpuMillis: false }).where(eq(nodes.id, nodeId))
+    await assert.rejects(runner.build(await request('legacy-agent-small-cpu')), /no build-capable/)
+  } finally {
+    await ctx.db.update(nodes).set({ effectiveCpu: 8, maxConcurrentBuilds: 1, buildCpuMillis: false }).where(eq(nodes.id, nodeId))
+  }
+})

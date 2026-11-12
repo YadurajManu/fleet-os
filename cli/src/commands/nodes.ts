@@ -128,7 +128,11 @@ export const nodesCommand = {
 /** Names are what people type; ids are what the API wants. */
 async function findNode(fleetId: string, name: string): Promise<Node> {
   const { body } = await request<{ nodes: Node[] }>('GET', `/fleets/${fleetId}/nodes`)
-  const match = body.nodes.find((n) => n.name === name || n.id === name || n.id.startsWith(name))
+  const exact = body.nodes.find((n) => n.id === name) ?? body.nodes.find((n) => n.name === name)
+  if (exact) return exact
+  const candidates = name ? body.nodes.filter(n => n.id.startsWith(name)) : []
+  if (candidates.length > 1) throw new CliError(`Node ID "${name}" is ambiguous. Use a full ID or exact name:\n${candidates.map(n => `  ${n.name} (${n.id})`).join('\n')}`, EXIT.usage)
+  const match = candidates[0]
   if (!match) {
     throw new CliError(
       `No node called "${name}". Known nodes: ${body.nodes.map((n) => n.name).join(', ') || 'none'}`,

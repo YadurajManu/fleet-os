@@ -38,6 +38,7 @@ export type Builder = {
   active: number
   maxConcurrentBuilds: number
   freeCpu: number
+  supportsCpuMillis?: boolean
   freeMemBytes: number
   buildDiskBytes?: number
   buildDiskReserveBytes?: number
@@ -56,7 +57,7 @@ export function selectBuilder(
       n.canBuild &&
       n.connected &&
       n.active < n.maxConcurrentBuilds &&
-      (n.freeCpu >= 0.5 || (n.freeCpu > 0 && n.active === 0)) &&
+      buildCpuLimit(n.freeCpu, n.maxConcurrentBuilds, Boolean(n.supportsCpuMillis)) > 0 &&
       n.freeMemBytes >= 1073741824 &&
       n.buildCacheFreeBytes - (n.buildDiskReserveBytes ?? 0) >=
         (n.buildDiskBytes ?? 20 * 1073741824) * (n.active + 1)
@@ -82,4 +83,11 @@ export function selectBuilder(
 export function buildMemoryLimit(freeBytes: number): number {
   if (!Number.isFinite(freeBytes) || freeBytes < 1073741824) throw new Error('Builder needs at least 1 GiB of uncommitted memory per build slot')
   return Math.floor(freeBytes * 0.75)
+}
+
+/** Milliseconds of CPU per second, shared across all configured build slots. */
+export function buildCpuLimit(freeCpu: number, slots: number, fractional: boolean): number {
+  if (!Number.isFinite(freeCpu) || !Number.isInteger(slots) || slots < 1 || freeCpu <= 0) return 0
+  const millis = Math.floor(Math.min(2, freeCpu / slots) * 1000)
+  return fractional ? (millis >= 10 ? millis : 0) : Math.floor(millis / 1000) * 1000
 }

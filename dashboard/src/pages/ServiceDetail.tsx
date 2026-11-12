@@ -17,11 +17,12 @@ type Preview = {
   decision:
     | {
         outcome: 'placed'
+        warnings?: string[]
         nodeName: string
         candidates: Array<{ nodeName: string; score: number; breakdown: { headroom: number; reliability: number; load: number }; freeRamMb: number }>
         rejected: Array<{ nodeName: string; code: string; detail: string }>
       }
-    | { outcome: 'no_eligible_node'; summary: string; rejected: Array<{ nodeName: string; code: string; detail: string }> }
+    | { outcome: 'no_eligible_node'; warnings?: string[]; summary: string; rejected: Array<{ nodeName: string; code: string; detail: string }> }
 }
 
 /** Whether a failure is a log worth reading, or already the whole answer. */
@@ -318,6 +319,7 @@ export default function ServiceDetail() {
 
         {/* Why here, and where it would go next — the scheduler, made legible. */}
         <Panel title="placement decision">
+          {decision?.warnings?.map(warning => <p role="status" key={warning} className="px-5 py-3 text-sm text-[var(--color-warn)]">{warning}</p>)}
           {!decision ? (
             <div className="px-5 py-6"><LinesSkeleton lines={3} /></div>
           ) : decision.outcome === 'no_eligible_node' ? (
@@ -390,6 +392,7 @@ export default function ServiceDetail() {
                 <span className="min-w-[70px] font-mono text-[11.5px]">{d.gitSha?.slice(0, 7) ?? '—'}</span>
                 <span className="min-w-[120px] font-mono text-[11.5px] text-[var(--color-fg-muted)]">{d.nodeName ?? '—'}</span>
                 <StatusPill status={d.status} />
+                {d.warnings?.map(warning => <span key={warning} className="block text-xs text-[var(--color-warn)]">{warning}</span>)}
                 {d.failureReason && !isReadable(d.failureReason) && (
                   <span className="font-mono text-[10.5px] text-[var(--color-down)]">{d.failureReason}</span>
                 )}

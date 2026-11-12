@@ -39,6 +39,7 @@ export type BuildAssignment = {
   registry_password: string
   timeout_ms: number
   cpu: number
+  cpu_millis?: number
   memory_bytes: number
   disk_bytes: number
 }

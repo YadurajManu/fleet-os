@@ -145,3 +145,16 @@ import replaces existing selected keys in the chosen scope. If it stops, complet
 writes remain; the error lists completed and pending keys and the `--only` retry
 selection. An interrupted request may have committed remotely; retrying that same
 key is safe while its intended value remains unchanged. Values are never echoed.
+
+## CPU shares and inspection warnings
+
+CPU allowances divide the node's uncommitted CPU among configured build slots,
+capped at two cores per build. Agents advertising `build_cpu_millis` accept
+fractional shares down to 0.01 CPU and enforce them with Docker CFS quotas.
+Older agents receive whole-core budgets only; a node without a whole core per
+slot is refused with upgrade advice. Migration 0035 stores that capability.
+
+If image metadata inspection fails, placement previews and deployment responses
+warn that architecture compatibility is unverified. The original image tag is
+retained, and the warning is saved on the deployment and shown in dashboard history.
+Warnings never include raw registry error messages or credentials.

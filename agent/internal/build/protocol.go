@@ -28,6 +28,7 @@ type Assignment struct {
 	RegistryPassword string            `json:"registry_password"`
 	TimeoutMs        int64             `json:"timeout_ms"`
 	CPU              int               `json:"cpu"`
+	CPUMillis        int               `json:"cpu_millis,omitempty"`
 	MemoryBytes      int64             `json:"memory_bytes"`
 	DiskBytes        int64             `json:"disk_bytes"`
 }

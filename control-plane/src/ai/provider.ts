@@ -170,6 +170,8 @@ export async function chat(
      * only one of the two parties honours is not a budget.
      */
     timeoutMs?: number
+    /** Shared by all attempts in this request, never restarted on retry. */
+    deadlineMs?: number
     /**
      * Ask the model not to think before answering.
      *
@@ -200,8 +202,12 @@ export async function chat(
   }
   const unsupported = known.get(capabilityKey)!
   opts = { ...opts, reasoningUnsupported: opts.reasoningUnsupported || unsupported.reasoning, noSchema: opts.noSchema || unsupported.schema }
+  const deadline = opts.deadlineMs ?? Date.now() + (opts.timeoutMs ?? TIMEOUT_MS)
+  opts = { ...opts, deadlineMs: deadline }
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) throw new Error('AI request deadline exceeded')
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), remaining)
 
   try {
     const res = await fetchImpl(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
@@ -231,6 +237,7 @@ export async function chat(
     // Read as text first, so a reply that is not JSON can be described rather
     // than silently becoming {}.
     const raw = await res.text()
+    if (Date.now() >= deadline) throw new Error('AI request deadline exceeded')
     let body: ChatResponse = {}
     let parsed = true
     try {
@@ -286,7 +293,13 @@ export async function chat(
         // been served, not when the next one can, and retrying on exactly the
         // hint lands in the same full window again.
         const backoff = retryAfter + 250 * (4 - retriesLeft) ** 2
-        await new Promise((resolve) => setTimeout(resolve, backoff))
+        if (backoff >= deadline - Date.now()) throw new Error('AI request deadline exceeded before provider retry; retry later')
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => { clearTimeout(wait); reject(new Error('AI request deadline exceeded')) }
+          const wait = setTimeout(() => { controller.signal.removeEventListener('abort', abort); resolve() }, backoff)
+          controller.signal.addEventListener('abort', abort, { once: true })
+          if (controller.signal.aborted) abort()
+        })
         return chat(config, messages, { ...opts, retriesLeft: retriesLeft - 1 }, fetchImpl)
       }
 

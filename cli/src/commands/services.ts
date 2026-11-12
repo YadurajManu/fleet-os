@@ -34,6 +34,7 @@ type Service = {
 }
 
 type PlacementPreview = {
+  warnings?: string[]
   outcome: 'placed' | 'no_eligible_node'
   nodeName?: string
   candidates: Array<{ nodeName: string; score: number; breakdown: { headroom: number; reliability: number; load: number } }>
@@ -336,6 +337,7 @@ async function deployPlan(fleetId: string, service: Service): Promise<PlacementP
 
 function printPlan(service: Service, plan: PlacementPreview, gitSha?: string, requestedNode?: string, localBuild = false) {
   console.log(`\n${c.bold(`Plan for ${service.name}`)}`)
+  for (const warning of plan.warnings ?? []) console.log(`${glyph.warn} ${c.yellow('warning')} ${warning}`)
   if (plan.outcome !== 'placed' || !plan.nodeName) {
     console.log(`${c.red('  placement')}    ${plan.summary ?? 'No eligible node'}`)
     for (const rejected of plan.rejected) console.log(`  ${c.dim(rejected.nodeName.padEnd(12))} ${rejected.detail}`)

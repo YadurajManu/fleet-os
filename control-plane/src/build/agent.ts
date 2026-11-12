@@ -14,7 +14,7 @@ import { containedContext, planBuilds } from './buildx.js'
 import { buildEvent, type BuildAssignment } from './protocol.js'
 import { signGrant } from './credentials.js'
 import { archivePath } from './transfers.js'
-import { buildMemoryLimit, selectBuilder, type Builder } from './platforms.js'
+import { buildCpuLimit, buildMemoryLimit, selectBuilder, type Builder } from './platforms.js'
 import { mergeManifests } from './manifests.js'
 import {
   BuildUnavailableError,
@@ -293,6 +293,7 @@ export class AgentBuildRunner implements BuildRunner {
           active: active.filter((j) => j.builderNodeId === n.id).length,
           maxConcurrentBuilds: n.maxConcurrentBuilds,
           freeCpu: (n.effectiveCpu ?? 0) - (capacity.committedCpu ?? 0),
+          supportsCpuMillis: n.buildCpuMillis,
           freeMemBytes:
             Math.max(0, (n.effectiveMemBytes ?? 0) - capacity.committedRamMb * 1048576) / Math.max(1, n.maxConcurrentBuilds),
           buildDiskBytes: n.buildDiskBytes,
@@ -310,7 +311,7 @@ export class AgentBuildRunner implements BuildRunner {
       )
       if (!builder)
         throw new BuildUnavailableError(
-          `no build-capable ${job.platform} agent online with available CPU/memory/concurrency and disk budget plus reserve${req.target ? "; the builder must support build targets (upgrade its agent)" : ""}`
+          `no build-capable ${job.platform} agent online with available CPU/memory/concurrency and disk budget plus reserve${req.target ? "; the builder must support build targets (upgrade its agent)" : ""}. Upgrade older agents to use fractional CPU shares when less than a whole core per build slot is available.`
         )
       const [assigned] = await tx
         .update(buildJobs)
@@ -421,7 +422,8 @@ export class AgentBuildRunner implements BuildRunner {
           this.ctx.config.JWT_SECRET
         ),
         timeout_ms: Math.min(this.ctx.config.BUILD_TIMEOUT_MS, 3600000),
-        cpu: 2,
+        cpu: Math.max(1, Math.floor(buildCpuLimit(builder.freeCpu, builder.maxConcurrentBuilds, Boolean(builder.supportsCpuMillis)) / 1000)),
+        ...(builder.supportsCpuMillis ? { cpu_millis: buildCpuLimit(builder.freeCpu, builder.maxConcurrentBuilds, true) } : {}),
         memory_bytes: buildMemoryLimit(builder.freeMemBytes),
         disk_bytes: builder.buildDiskBytes ?? 20 * 1073741824,
       }

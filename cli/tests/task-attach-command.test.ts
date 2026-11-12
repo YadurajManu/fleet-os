@@ -5,6 +5,23 @@ import { deployCommand } from '../src/commands/services.js'
 import { runCommand } from '../src/commands/run.js'
 import { waitForRunning } from '../src/deploy-wait.js'
 import { uploadContext } from '../src/archive.js'
+import { findNode } from '../src/commands/nodes.js'
+
+test('node lookup prefers exact matches and refuses ambiguous prefixes before mutations', async () => {
+  const requests: string[] = []
+  await withApi((req, res) => {
+    requests.push(req.method!)
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ nodes: [{ id: 'abc-111', name: 'alpha' }, { id: 'abc-222', name: 'abc' }] }))
+  }, async () => {
+    assert.equal((await findNode('fleet', 'abc')).id, 'abc-222')
+    assert.equal((await findNode('fleet', 'abc-111')).name, 'alpha')
+    assert.equal((await findNode('fleet', 'abc-1')).name, 'alpha')
+    await assert.rejects(findNode('fleet', 'abc-'), /ambiguous[\s\S]*alpha \(abc-111\)[\s\S]*abc \(abc-222\)/)
+    await assert.rejects(findNode('fleet', 'missing'), /No node called/)
+    assert.ok(requests.every(method => method === 'GET'))
+  })
+})
 
 async function withApi(handler: RequestListener, run: () => Promise<void>) {
   const server = createServer(handler)

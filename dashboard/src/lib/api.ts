@@ -293,6 +293,7 @@ export type AlertRule = {
 }
 
 export type Deployment = {
+  warnings?: string[]
   id: string
   gitSha: string | null
   status: string

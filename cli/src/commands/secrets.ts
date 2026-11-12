@@ -85,12 +85,14 @@ export const secretsCommand = {
     const service = typeof flags.service === 'string' ? flags.service : undefined
 
     if (sub === 'clone') {
-      if (!key || typeof flags.to !== 'string') throw new CliError('usage: fleet secrets clone KEY [--from-service <name>] --to <service|fleet> [--as NEW_KEY]', EXIT.usage)
+      if (!key || typeof flags.to !== 'string') throw new CliError('usage: fleet secrets clone KEY [--from-fleet <id>] [--from-service <name>] --to <service|fleet> [--fleet <destination-id>] [--as NEW_KEY]', EXIT.usage)
       const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
-      const from = typeof flags['from-service'] === 'string' ? await resolveServiceId(fleetId, flags['from-service']) : null
+      if (flags['from-fleet'] !== undefined && typeof flags['from-fleet'] !== 'string') throw new CliError('--from-fleet needs a fleet ID.', EXIT.usage)
+      const fromFleetId = typeof flags['from-fleet'] === 'string' ? flags['from-fleet'] : fleetId
+      const from = typeof flags['from-service'] === 'string' ? await resolveServiceId(fromFleetId, flags['from-service']) : null
       const to = flags.to === 'fleet' ? null : await resolveServiceId(fleetId, flags.to)
-      const { body } = await request('POST', `/fleets/${fleetId}/secrets/clone`, { body: { key, fromServiceId: from?.id ?? null, toServiceId: to?.id ?? null, toKey: typeof flags.as === 'string' ? flags.as : undefined } })
-      return console.log(flags.json ? JSON.stringify(body) : `${key} copied to ${to?.name ?? 'fleet'} as ${body.key}; value remains hidden. Redeploy affected services to use it.`)
+      const { body } = await request('POST', `/fleets/${fleetId}/secrets/clone`, { body: { key, fromFleetId, fromServiceId: from?.id ?? null, toServiceId: to?.id ?? null, toKey: typeof flags.as === 'string' ? flags.as : undefined } })
+      return console.log(flags.json ? JSON.stringify(body) : `${key} copied from fleet ${fromFleetId} to ${to?.name ?? 'fleet scope'} in ${fleetId} as ${body.key}; value remains hidden. Declare the key in the destination manifest's secrets or build_secrets, then redeploy affected services.`)
     }
 
     /* ── list ──────────────────────────────────────────────────── */

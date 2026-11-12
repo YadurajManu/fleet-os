@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   planPlatforms,
   selectBuilder,
+  buildCpuLimit,
   type Builder,
 } from '../src/build/platforms.js'
 import { filterNodes } from '../src/scheduler/placement.js'
@@ -90,6 +91,18 @@ const builder = (id: string, platform: string): Builder => ({
   load: 0.2,
   reliabilityScore: 0.5,
 })
+test('CPU allowances divide available capacity and gate fractional limits on agent support', () => {
+  assert.equal(buildCpuLimit(0.25, 1, true), 250)
+  assert.equal(buildCpuLimit(1, 2, true), 500)
+  assert.equal(buildCpuLimit(8, 2, true), 2000)
+  assert.equal(buildCpuLimit(1.5, 1, false), 1000)
+  assert.equal(buildCpuLimit(0.25, 1, false), 0)
+  assert.equal(buildCpuLimit(NaN, 1, true), 0)
+  assert.equal(buildCpuLimit(1, 0, true), 0)
+  const small = { ...builder('small', 'linux/arm64'), freeCpu: 0.25 }
+  assert.equal(selectBuilder([small], 'linux/arm64', null), undefined)
+  assert.equal(selectBuilder([{ ...small, supportsCpuMillis: true }], 'linux/arm64', null)?.id, 'small')
+})
 test('native selection, warm cache, opt-in, concurrency, and explicit QEMU fallback', () => {
   const mac = builder('mac', 'linux/arm64'),
     x86 = builder('x86', 'linux/amd64')
@@ -171,7 +184,7 @@ test('auto platforms include only nodes satisfying anti-affinity', () => {
 })
 
 test('small builders need modest idle CPU but still preserve minimum memory', () => {
-  const small = { ...builder('small', 'linux/arm64'), freeCpu: 0.25, freeMemBytes: 1073741824 }
+  const small = { ...builder('small', 'linux/arm64'), supportsCpuMillis: true, freeCpu: 0.25, freeMemBytes: 1073741824 }
   assert.equal(selectBuilder([small], 'linux/arm64', null)?.id, 'small')
   assert.equal(selectBuilder([{ ...small, freeCpu: 0 }], 'linux/arm64', null), undefined)
   assert.equal(selectBuilder([{ ...small, freeMemBytes: 1073741823 }], 'linux/arm64', null), undefined)

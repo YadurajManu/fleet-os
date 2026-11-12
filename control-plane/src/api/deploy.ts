@@ -1,5 +1,5 @@
 import { requireBuildSecrets } from '../secrets/store.js'
-import { inspectImage, pinnedImage } from '../build/manifests.js'
+import { IMAGE_INSPECTION_WARNING, inspectImage, pinnedImage } from '../build/manifests.js'
 import { isEngineImage } from '../manifest/databases.js'
 import type { BuildRequest } from '../build/runner.js'
 import { planPlatforms } from '../build/platforms.js'
@@ -36,6 +36,7 @@ export async function deployFromPush(
 
   if (service.buildContext && !service.image) await requireBuildSecrets(ctx, service)
   let resolvedImage = service.image
+  const inspectionWarnings: string[] = []
   if (ctx.config.BUILD_MODE === 'agent' && resolvedImage) {
     try {
       const metadata = await inspectImage(resolvedImage, ctx.config)
@@ -44,6 +45,7 @@ export async function deployFromPush(
       await ctx.db.update(services).set({ imagePlatforms: metadata.platforms }).where(eq(services.id, service.id))
     } catch (err) {
       app.log.warn({ err, image: resolvedImage }, 'inspectImage failed in deployFromPush; proceeding with unpinned tag')
+      inspectionWarnings.push(IMAGE_INSPECTION_WARNING)
       service.imagePlatforms = []
     }
   }
@@ -58,6 +60,7 @@ export async function deployFromPush(
   // fails. See deploy-progress.ts for why the pre-deploy phases are invisible to
   // the agent, ingress and the scheduler.
   const deploymentId = await openDeployment(ctx, {
+    warnings: inspectionWarnings,
     serviceId: service.id,
     nodeId: decision.nodeId,
     gitSha,

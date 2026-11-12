@@ -13,14 +13,14 @@ Reviewed 2026-11-11. There are **25 reports**, numbered in their original order 
 | F-005 | Re-pair creates duplicate hostname | Implemented locally: duplicate hostnames are refused. Explicit admin-authorized replacement tokens preserve node identity and pinned services, rotate credentials and reject a connected old agent. |
 | F-006 | Disk reserve excludes laptops | Implemented locally: automatic reserve is capped at 10 GiB on host and engine independently, while explicit higher configured reserves remain enforced. Disk budget and monitoring safeguards are preserved. |
 | F-007 | Empty secret import aborts | Fixed locally: selected empty and whitespace-only values skipped with key/line warning, including dry runs; all-empty imports make no requests. Parser keeps empty values intact. |
-| F-008 | Secret clone missing | Implemented locally: CLI/API and dashboard server-side copies between fleet/service scopes within one fleet, with authorization and audit records. Existing values are preserved; responses never contain values. |
+| F-008 | Secret clone missing | Implemented locally: CLI/API and dashboard copies across authorized fleets and fleet/service scopes. Both source and destination require secret-write permission; cross-fleet copies audit both sides. Existing values are preserved; no values are returned. |
 | F-009 | Dockerfile targets unsupported | Implemented locally: build accepts context/dockerfile/target/args objects and legacy strings. Settings persist through migration 0033, manual/Git builds, cache identity and delegated/local runners. Old builders cannot silently ignore targets. |
 | F-010 | Reconcile error hidden until rollout timeout | Implemented and validated locally: deployment-specific errors reach progress, explain, dashboard and history even without containers. Permanent image errors fail immediately; transient structured errors get a retry grace. Recovery clears errors. |
 | F-011 | Bare Postgres digest reference | Verified by digest qualification regressions for bare Postgres and Alpine references and registry ports. Existing implementation retained; no new image transformation needed. |
 | F-012 | AI provider rejects configured model | Reproduced live on 2026-11-12: OpenRouter returns 404 because the configured Nemotron free model is retired. Local fixes add explicit-model validation, credential-safe recovery advice, no model-error schema retries and prompt-free model discovery. Operator must select an accessible model; production settings unchanged. |
 | F-013 | Oversize upload returns HTML 413 | Implemented locally: additive .fleetignore, compressed-size enforcement during packaging and before transfer, near-limit warnings, configurable proxy-safe limit, and actionable HTTP 413 errors. Excluded directories are never silently exposed to include a Dockerfile. |
-| F-014 | Image inspection crashes plan | Verified with an API regression: forced registry inspection failure still schedules the image-only deployment using its original tag. Existing fallback retained. |
-| F-015 | Two-core builder starved | Verified with selector regressions: an idle small builder with positive CPU and 1 GiB free memory remains eligible, while zero CPU and insufficient memory are refused. Existing implementation retained. |
+| F-014 | Image inspection crashes plan | Implemented and verified locally: fallback preserves the original tag and returns compatibility warnings in previews/deploy responses. Warnings persist on deployment history and render in CLI/dashboard. Raw registry errors stay out of user-facing warnings. |
+| F-015 | Two-core builder starved | Implemented and verified locally: CPU budgets reflect available capacity and configured concurrency, capped at two cores. Capability-gated millisecond shares support fractional CPU; legacy agents require whole-core shares. Zero CPU and insufficient memory are refused. |
 | F-016 | Transient du failure kills build | Fixed locally: retry failed du measurements up to three attempts within existing timeout; persistent errors and invalid sizes still fail closed. Disk budget and reserve checks remain enforced. |
 | F-017 | Logs unavailable without active node | Implemented and validated locally: shared authorized log reader falls back to exact-attempt build output and durable failure evidence without an active node, including streaming and AI tools. |
 | F-018 | Explain repeats opaque disk error | Implemented and validated locally: explain includes observed evidence and actionable advice for short failures and pending rollouts, including when AI is disabled, unavailable or limited. |
@@ -146,3 +146,39 @@ application image stayed unchanged and healthy. Code changes remain local.
 See release-readiness-0.27.0.md for versions, real browser/agent/Buildx checks,
 rollback details and remaining release gates. Native-agent replacement used two
 isolated state directories on one machine, not two physical machines.
+
+## Five remaining frictions — 2026-11-12
+
+All five follow-up fixes below are implemented and committed locally, unpushed
+and undeployed. Source edits used the file-editing tool; commands were limited
+to inspection, builds, tests and isolated test-resource management.
+
+| Follow-up | Status and regression evidence |
+| --- | --- |
+| Ambiguous node IDs | Exact ID/name wins; ambiguous prefixes list candidates and stop before mutations. CLI regression verifies only GET requests occur. |
+| AI retry timeout | One absolute deadline spans rate-limit backoff and reasoning/schema degradation. Regressions verify no retry is started outside the original budget. |
+| Fixed build CPU | Free CPU is divided among configured slots and capped at two cores. New agents enforce fractional millisecond shares; older agents get whole cores only and cannot silently ignore fractional limits. Selection, wire assignment and agent boundary tests pass. |
+| Cross-environment secrets | CLI and dashboard choose authorized source/destination fleets and service scopes. Both require secret-write permission, both sides are audited, and existing values are preserved. API tests cover missing access, viewer denial, wrong scope, decryption of the copied envelope and overwrite refusal; UI test checks the request contains IDs and names, never values. |
+| Hidden inspection warning | Placement previews and deployment responses warn about unverified image compatibility. Migration 0035 adds durable deployment warnings; CLI plans and dashboard preview/history display them. API tests verify preview, response and persisted history evidence. |
+
+Validation: 663 server tests, 215 CLI tests and 28 dashboard tests pass. All
+typechecks and Go package tests/vet pass. A real BuildKit container was inspected
+with CpuPeriod=100000 and CpuQuota=25000, confirming 0.25 CPU enforcement.
+New Go files/edits pass the formatting check without a formatting-write command.
+
+Migration 0035 adds node CPU capability and deployment warning storage. Matching
+server, CLI and agent updates are required; previously prepared release artifacts
+must be regenerated before publication. Production and its AI configuration were
+not changed during this follow-up. Real multi-node saturation and native Windows
+runtime remain outside this validation.
+
+## Next confirmed gap: agent memory budget negotiation
+
+The server calculates build memory from available engine capacity, but the agent
+still defaults its configured build-memory ceiling to 2 GiB and rejects larger
+assignments. That configured ceiling is not reported to the server. A node can
+therefore be selected and receive an assignment it will refuse. The earlier real
+3 GiB Buildx check validated Docker capacity, not this agent negotiation path.
+Next: advertise the configured build ceiling, cap assignments by it and available
+capacity, explain insufficient limits before dispatch, and test through a real
+agent rather than directly invoking Buildx.

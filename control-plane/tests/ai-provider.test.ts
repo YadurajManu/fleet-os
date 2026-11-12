@@ -14,6 +14,26 @@ import { explainWith } from '../src/ai/provider.js'
 const CONFIG = { baseUrl: 'https://agentrouter.org/v1', apiKey: 'sk-test', model: 'claude-sonnet-4-8' }
 const CONTEXT = { log: 'npm error Missing: fastify from lock file', service: 'api' }
 
+test('provider backoff cannot reset or exceed the original request deadline', async () => {
+  const { chat } = await import('../src/ai/provider.js')
+  let calls = 0
+  const impl = (async () => { calls++; return new Response(JSON.stringify({ error: { message: 'rate limited' } }), { status: 429, headers: { 'retry-after': '0' } }) }) as typeof fetch
+  await assert.rejects(chat(CONFIG, [], { timeoutMs: 15 }, impl), /deadline exceeded/)
+  assert.equal(calls, 1)
+})
+
+test('schema degradation cannot start another attempt after the shared deadline', async () => {
+  const { chat } = await import('../src/ai/provider.js')
+  let calls = 0
+  const impl = (async () => {
+    calls++
+    await new Promise(resolve => setTimeout(resolve, 25))
+    return new Response(JSON.stringify({ error: { message: 'invalid argument' } }), { status: 400 })
+  }) as typeof fetch
+  await assert.rejects(chat(CONFIG, [], { timeoutMs: 10, schema: { name: 'test', schema: {} } }, impl), /deadline exceeded/)
+  assert.equal(calls, 1)
+})
+
 /** A provider that replies with whatever it is handed. */
 function stub(body: unknown, status = 200) {
   const calls: Array<{ url: string; init: RequestInit }> = []

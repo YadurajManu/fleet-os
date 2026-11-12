@@ -6,6 +6,7 @@ import { join } from 'node:path'
 const exec = promisify(execFile)
 
 type RegistryConfig = { REGISTRY_URL?: string; REGISTRY_CREDENTIALS?: string }
+export const IMAGE_INSPECTION_WARNING = 'Image compatibility could not be verified because registry inspection failed. Continuing with the original tag; check registry access and image architecture if the node cannot pull or start it.'
 async function withRegistry<T>(
   host: string,
   credentials: string | undefined,
