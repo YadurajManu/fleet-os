@@ -112,7 +112,7 @@ function errorOf(body: unknown): { message?: string } | undefined {
   return (first as { error?: { message?: string } } | undefined)?.error
 }
 
-export function providerFailure(config: ProviderConfig, status: number, detail: string): Error {
+export function providerFailure(config: ProviderConfig, status: number, detail: string, retryAfter?: number | null): Error {
   const safe = (config.apiKey ? detail.split(config.apiKey).join('[redacted]') : detail).slice(0, 500)
   const modelError = /model.*(?:not found|not exist|unsupported|invalid|unavailable|not supported|no access)|(?:invalid|unknown|unsupported).*model/i.test(safe)
   const advice = modelError ? 'Check AI_MODEL against this provider’s model list and key permissions. Run npm run ai:check; changing providers also requires changing the model ID.'
@@ -121,7 +121,26 @@ export function providerFailure(config: ProviderConfig, status: number, detail: 
     : status === 429 ? 'Provider rate limit reached. Wait before retrying; adding a provider does not change Fleet’s daily limit.'
     : status === 404 ? 'Check AI_BASE_URL and AI_MODEL. The URL must be the API root, without /chat/completions.'
     : 'Check the provider response and configuration before retrying.'
-  return new Error(`provider returned ${status}: ${safe}. ${advice}`)
+  const error = new Error(`provider returned ${status}: ${safe}. ${advice}`)
+  if (status === 429 && retryAfter != null && Number.isFinite(retryAfter)) Object.assign(error, { retryAfter })
+  return error
+}
+
+/** User-facing explanation failure; provider prose can contain unstable internals. */
+export function explainProviderFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  const retry = message.match(/try again in ([\d.]+)\s*s/i)
+  const hintedSeconds = retry ? Number(retry[1]) : null
+  const retryAfter = err instanceof Error && typeof (err as Error & { retryAfter?: number }).retryAfter === 'number'
+    ? (err as Error & { retryAfter: number }).retryAfter
+    : hintedSeconds !== null ? hintedSeconds : null
+  if (/\b429\b|rate limit/i.test(message)) {
+    const wait = retryAfter !== null && Number.isFinite(retryAfter) && retryAfter > 0
+      ? ` Retry after about ${Math.ceil(retryAfter)} second${Math.ceil(retryAfter) === 1 ? '' : 's'}.`
+      : ''
+    return `AI provider is rate-limited.${wait} The recorded deployment diagnosis above is complete; optional AI details are unavailable.`
+  }
+  return message
 }
 
 /** Model discovery sends no prompts and generates no completion tokens. */
@@ -337,7 +356,7 @@ export async function chat(
 
       // The provider's own message, because "500" tells the operator nothing
       // about whether the key, the model name or the balance is the problem.
-      throw providerFailure(config, res.status, errorOf(body)?.message ?? 'no detail')
+      throw providerFailure(config, res.status, errorOf(body)?.message ?? 'no detail', waitHint(res, errorOf(body)?.message ?? ''))
     }
 
     const choice = body.choices?.[0]

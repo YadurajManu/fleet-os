@@ -9,7 +9,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { explainWith } from '../src/ai/provider.js'
+import { explainWith, explainProviderFailure } from '../src/ai/provider.js'
 
 const CONFIG = { baseUrl: 'https://agentrouter.org/v1', apiKey: 'sk-test', model: 'claude-sonnet-4-8' }
 const CONTEXT = { log: 'npm error Missing: fastify from lock file', service: 'api' }
@@ -216,6 +216,14 @@ describe('explainWith', () => {
 })
 
 describe('a rate limit that says when to come back', () => {
+  test('formats rate limits without provider internals and preserves retry timing', () => {
+    const message = explainProviderFailure(new Error('provider returned 429: Provider returned error. AI rate limit reached. Please try again in 8.25s.'))
+    assert.match(message, /AI provider is rate-limited/)
+    assert.match(message, /Retry after about 9 seconds/)
+    assert.doesNotMatch(message, /Provider returned error|AI rate limit reached/)
+    assert.match(message, /recorded deployment diagnosis above is complete/)
+  })
+
   test('is waited out once, from the prose when there is no header', async () => {
     // Groq answers 429 with "Please try again in 8.25s" and no Retry-After.
     // Failing instead threw away an answer the user had just typed into an

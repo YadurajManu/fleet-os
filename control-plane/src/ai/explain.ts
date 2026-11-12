@@ -5,6 +5,7 @@ import { signatureOf, tail, worthExplaining } from './signature.js'
 import { diagnose } from './diagnose.js'
 import { retainedBuildLogs } from '../api/service-logs.js'
 import { cleanReason } from '../api/deploy-progress.js'
+import { explainProviderFailure } from './provider.js'
 
 /**
  * Explaining a failed deploy, at most once per distinct failure.
@@ -211,7 +212,7 @@ export async function explainDeployment(
     // from the reader's point of view, and a provider outage must not burn a
     // day's worth of attempts.
     await ctx.redis.decr(key)
-    return { status: 'failed', reason: describeRecordedFailure(row.serviceName, evidence, row.status) + '\nAI explanation unavailable: ' + (err as Error).message }
+    return { status: 'failed', reason: describeRecordedFailure(row.serviceName, evidence, row.status) + '\nAI explanation unavailable: ' + explainProviderFailure(err) }
   }
 
   await ctx.db
