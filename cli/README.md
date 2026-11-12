@@ -171,3 +171,40 @@ Deployment progress shows the underlying reconciliation error while retries are 
 `fleet logs <service>` and `fleet logs <service> --follow` fall back to retained build/deployment output when no container is available. Retained output is labeled; build logs are kept for up to 24 hours.
 
 An explicit pairing token with an existing agent identity now produces an error instead of silently resuming. Existing credentials are preserved. Normal agent restarts continue to use saved credentials.
+
+## Deployment recovery and one-off commands
+
+Reconnect to an existing deployment without starting another build or upload:
+
+```sh
+fleet deploy attach web
+fleet deploy attach web --deploy <deployment-id>
+```
+
+Without an ID, attach follows the latest deployment. A superseded deployment is
+a terminal failure; an older running release does not satisfy the selected attempt.
+
+Run a migration or other command in a temporary container using the service image,
+current environment, and private network:
+
+```sh
+fleet run web --timeout 120 -- npm run migrate
+```
+
+Arguments after `--` are passed unchanged. The command uses the latest deployment
+artifact and returns the command's exit code. It does not mount persistent service
+volumes. Output is returned on completion (last 200 lines, at most 256 KiB). The
+default timeout is 60 seconds, configurable from 1–600 seconds. Two simultaneous
+tasks are allowed per node. Disconnecting or cancelling stops and removes the
+temporary container. This requires matching server and agent task support.
+
+## Keeping source uploads small
+
+Add `.fleetignore` beside `.dockerignore` in the build context to exclude extra
+files from Fleet uploads. Patterns are additive; `!` negations in `.fleetignore`
+are rejected. Keep the selected Dockerfile outside excluded directories.
+
+The default compressed upload limit is 95,000,000 bytes. Large contexts fail
+locally with cleanup advice; proxy 413 responses also explain how to reduce them.
+Self-hosted installations can set `FLEET_MAX_UPLOAD_BYTES` on the CLI to their
+actual server/proxy limit (at most 256 MiB); this does not raise server limits.

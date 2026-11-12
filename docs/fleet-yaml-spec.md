@@ -403,3 +403,24 @@ services.cache     "sessions" is not a service in this manifest
 services.worker    "loads" is not a valid size. Use 512Mi, 2Gi, or a plain
                    number of megabytes.
 ```
+
+## Custom Dockerfiles and build stages
+
+The string form (`build: ./app`) remains supported. Use the object form to select
+a Dockerfile, named stage, or public build arguments:
+
+```yaml
+services:
+  worker:
+    build:
+      context: ./apps/backend
+      dockerfile: docker/Production
+      target: worker
+      args:
+        MODE: production
+```
+
+Dockerfile paths are relative to the context; use `/` separators and keep the file
+inside that directory. Build arguments are not secrets; use `build_secrets` for
+secret values. Targeted builds require an agent advertising build-target support.
+The selected Dockerfile must be included in the uploaded context.

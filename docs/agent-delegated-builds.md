@@ -116,3 +116,16 @@ To roll back operationally in a later deployment: cancel/drain delegated jobs, s
 - Cross-compilation: Linux amd64/arm64/armv7, macOS amd64/arm64, Windows amd64 at agent v0.3.0.
 
 Not verified here: Windows Service/WSL2 execution or Windows in-place update; macOS launchd replacement/re-registration; production WSS/registry/DNS routing; GitHub App token exchange against a real installation; QEMU runtime; a complete multi-node delegated deployment and manifest rollout. These remain for the separately authorized deployment/E2E prompts. Cross-compilation is not evidence of those runtime checks.
+
+## Disk reserve and feature compatibility
+
+Automatic build disk reserve is 10% of disk capacity, capped at 10 GiB, or the
+configured minimum reserve if larger. Both host and Docker-engine disks must
+still have the requested build budget plus reserve available. Explicit larger
+reserves remain enforced.
+
+Custom Dockerfiles and named targets travel with the build assignment and are
+part of source cache identity. A named target is sent only to an agent advertising
+build-target support. Upgrade the control plane, CLI, and agents together when
+releasing these features; migration 0033 adds their persisted settings and
+capabilities. Older manifests continue to use `Dockerfile` and the final stage.

@@ -2,7 +2,7 @@
 
 Reviewed 2026-11-11. There are **25 reports**, numbered in their original order below; the source did not assign actual IDs. Original report: [first-user-issue-report.txt](first-user-issue-report.txt).
 
-“Present” means confirmed by source inspection, not reproduced on a live fleet. “Pending” requires further investigation. “Existing” means implementation exists locally; deployed-version verification is still needed. No production changes have been made.
+“Present” means confirmed by source inspection, not reproduced on a live fleet. “Pending” requires further investigation. “Existing” means implementation exists locally; deployed-version verification is still needed. The earlier reliability release was deployed; see the production verification section. The current developer-workflow batch is local and not yet deployed.
 
 | ID | Report | Status / next action |
 | --- | --- | --- |
@@ -11,25 +11,25 @@ Reviewed 2026-11-11. There are **25 reports**, numbered in their original order 
 | F-003 | Explicit pairing token ignored with saved state | Implemented and validated locally: explicit pairing tokens conflict with saved identity before upgrade/network work. Existing credentials are kept; ordinary restarts resume normally. |
 | F-004 | Node rename missing | Pending: CLI/API rename with uniqueness validation and audit trail. |
 | F-005 | Re-pair creates duplicate hostname | Present: registration suffixes names. Hostname alone cannot safely prove machine identity; require authenticated replacement rather than silently claiming another node. |
-| F-006 | Disk reserve excludes laptops | Present: max(configured reserve, 10% capacity). Choose bounded automatic reserve while preserving host and engine safeguards. |
+| F-006 | Disk reserve excludes laptops | Implemented locally: automatic reserve is capped at 10 GiB on host and engine independently, while explicit higher configured reserves remain enforced. Disk budget and monitoring safeguards are preserved. |
 | F-007 | Empty secret import aborts | Fixed locally: selected empty and whitespace-only values skipped with key/line warning, including dry runs; all-empty imports make no requests. Parser keeps empty values intact. |
 | F-008 | Secret clone missing | Pending: server-side authorized copy; preserve write-only values and fleet/service access controls. |
-| F-009 | Dockerfile targets unsupported | Present: build schema is a string. Trace manifest, persistence, context packaging, assignments, agent, CLI and dashboard before adding object form. |
+| F-009 | Dockerfile targets unsupported | Implemented locally: build accepts context/dockerfile/target/args objects and legacy strings. Settings persist through migration 0033, manual/Git builds, cache identity and delegated/local runners. Old builders cannot silently ignore targets. |
 | F-010 | Reconcile error hidden until rollout timeout | Implemented and validated locally: deployment-specific errors reach progress, explain, dashboard and history even without containers. Permanent image errors fail immediately; transient structured errors get a retry grace. Recovery clears errors. |
 | F-011 | Bare Postgres digest reference | Existing: `pinnedImage` qualifies bare names with `docker.io/library/`. Verify managed database path and regression coverage. |
 | F-012 | AI provider rejects configured model | Pending: current source default differs from reported model. Inspect deployment configuration/provider response; do not guess a replacement model. |
-| F-013 | Oversize upload returns HTML 413 | Pending: context ignore support, size boundary handling and readable proxy response. |
+| F-013 | Oversize upload returns HTML 413 | Implemented locally: additive .fleetignore, compressed-size enforcement during packaging and before transfer, near-limit warnings, configurable proxy-safe limit, and actionable HTTP 413 errors. Excluded directories are never silently exposed to include a Dockerfile. |
 | F-014 | Image inspection crashes plan | Existing: deploy image inspection catches failures and proceeds unpinned. Verify plan route coverage. |
 | F-015 | Two-core builder starved | Existing: selector accepts 0.5 free CPU or positive free CPU with no active build, and 1 GiB free memory. Verify selection tests. |
 | F-016 | Transient du failure kills build | Fixed locally: retry failed du measurements up to three attempts within existing timeout; persistent errors and invalid sizes still fail closed. Disk budget and reserve checks remain enforced. |
 | F-017 | Logs unavailable without active node | Implemented and validated locally: shared authorized log reader falls back to exact-attempt build output and durable failure evidence without an active node, including streaming and AI tools. |
 | F-018 | Explain repeats opaque disk error | Implemented and validated locally: explain includes observed evidence and actionable advice for short failures and pending rollouts, including when AI is disabled, unavailable or limited. |
-| F-019 | One-off exec/task missing | Pending: end-to-end task execution needs authenticated API, agent transport, output, cancellation and CLI. |
+| F-019 | One-off exec/task missing | Implemented locally: fleet run executes a bounded temporary container with the service image, resolved environment/secrets and private network. Includes role/fleet checks, audit metadata, exit status/output, cancellation/timeout cleanup and restart/reconnect reaping. Persistent service volumes are not mounted. |
 | F-020 | Build secret injection unavailable | Existing: `build_args` and `build_secrets` schema, agent BuildKit secret mounts and documentation in `agent-delegated-builds.md`. Verify usability/discoverability; public frontend variables are embedded in client bundles. |
-| F-021 | Shared monorepo builds wrong stage | Same root cause as F-009; deliver together. |
+| F-021 | Shared monorepo builds wrong stage | Implemented locally with F-009: worker and gateway can select their own Dockerfile stage, including through Compose imports; distinct targets cannot reuse an incorrect cached result. |
 | F-022 | BuildKit memory too restrictive | Pending: agent uses assignment memory; inspect control-plane allocation/config before changing resource enforcement. |
 | F-023 | Setting dozens of secrets cumbersome | F-007 restores file-based bulk import. Keep values out of argv/shell history; assess remaining batch UX through import. |
-| F-024 | Cannot reattach deployment progress | Pending: inspect existing polling/streaming contract and add attach without creating another deployment. |
+| F-024 | Cannot reattach deployment progress | Implemented locally: fleet deploy attach <service> [--deploy <id>] follows the exact attempt through existing progress APIs. Reattachment performs GET requests only; superseded/failed attempts stop with a reason. |
 | F-025 | Status hides useful telemetry | Pending: verbose output should surface current telemetry and errors without presenting stale metrics as live. |
 
 ## First batch validation
@@ -40,15 +40,17 @@ Reviewed 2026-11-11. There are **25 reports**, numbered in their original order 
 
 ## Order for remaining work
 
-1. Validate this batch (F-003/010/017/018); then pairing error messages and detailed status (F-002/025).
-2. Context upload and builder resource behavior (F-006/013/022).
-3. Build targets and existing build secret UX (F-009/020/021).
-4. Node identity/rename, secret cloning, task execution and deployment attach (F-004/005/008/019/024).
-5. Verify already-landed fixes and deployment model configuration (F-011/012/014/015).
+The developer-workflow batch below implements F-006/009/013/019/021/024 locally.
+Release it with migration 0033 and matching server, CLI and agents after review.
+
+1. Pairing messages and detailed current status (F-002/025).
+2. Node rename and authenticated replacement, secret cloning (F-004/005/008).
+3. Investigate provider configuration and build memory allocation using actual failure evidence (F-012/022).
+4. Verify existing image qualification, inspection fallback, builder selection and build-secret discoverability (F-011/014/015/020); assess remaining bulk-secret friction (F-023).
 
 ## Second batch: F-003, F-010, F-017, F-018
 
-Status: **implemented in files; not yet validated or deployed**.
+Historical status at implementation: files only. This batch was subsequently validated and deployed; see production verification below.
 
 - Agent reports errors with deployment identity and operation; assigned environment credentials are redacted from this new telemetry.
 - Control plane checks the authenticated node assignment and active deployment state. Older agents can supply a name-prefixed error only with an exact deployment stage and an unambiguous fleet service; legacy errors alone never terminate a rollout.
@@ -96,3 +98,17 @@ All six agent artifacts were published and their public checksum manifest matche
 CI run: https://github.com/YadurajManu/fleet-os/actions/runs/43025772846. Control plane, CLI, dashboard, agent, Windows installer, ingress config and upgrade-script jobs all passed. The unchanged marketing job still fails npm audit, as it did on the previous production revision; marketing source/dependencies were not changed in this release.
 
 CLI 0.26.1 is committed and packaged, **not published to npm**. The operator requested the publication command separately. F-001/F-007 client changes require installing that version after publication; the new backend diagnostics are already live. Isolated release-test containers were stopped and removed after validation.
+
+## Developer-workflow batch — local implementation
+
+Scope: F-006, F-009/F-021, F-013, F-019 and F-024. These changes are **committed locally as separate fixes, not published or deployed** in this batch. Push status is reported separately; committing does not change production. Other open reports remain open.
+
+Migration 0033 adds build Dockerfile/target settings and explicit node feature capabilities. Matching server, CLI and agent releases are required. Existing manifests remain valid; an older builder is refused for a targeted build rather than silently building the final stage. Existing automatic agent upgrade policies are unchanged.
+
+Validation includes full control-plane, CLI and Go suites; typechecks; Go race detection and vet; isolated Postgres/Redis migration; and real Docker checks. The real Buildx check selected a worker stage from a custom Dockerfile and verified a build-argument label. The real task check verified private-network connectivity, environment injection, a nonzero exit code, removal after completion, and cancellation/removal of an actually running process. Final validation: control plane 646/646 tests, CLI 211/211 tests, dashboard 27/27 tests; all three production builds and dashboard typecheck pass. All Go package tests, targeted race checks and go vet pass; agent binaries cross-compile for Linux, macOS and Windows on amd64/arm64. The existing stateful test now awaits asynchronous deployment preparation before inspecting node payloads, removing its timing race. Registry credentials are regression-tested against public task images, and task cleanup refuses foreign containers.
+
+Task limits: two simultaneous tasks per node, 60-second default timeout (1–600 seconds configurable), the service memory limit, and the last 200 output lines capped at 256 KiB. Tasks use the latest available deployment artifact and current resolved service environment, without mounting persistent service volumes. Commands/output/secret values are not written to audit metadata.
+
+The default compressed upload limit is 95,000,000 bytes; FLEET_MAX_UPLOAD_BYTES can set the actual self-hosted limit up to 256 MiB. .fleetignore adds exclusion patterns to .dockerignore; negated ! patterns in .fleetignore are explicitly rejected. A custom Dockerfile inside an excluded directory is reported before upload rather than exposing the directory's other files. Existing .dockerignore negation behavior is unchanged.
+
+Native Windows runtime and production execution of the new protocol remain unverified. Temporary test resources were isolated from production and removed after validation.
