@@ -683,7 +683,7 @@ export default function NodeDetail() {
         finally { setRenameBusy(false) }
       }}>
         <label className="block">Node name <input autoFocus required pattern="[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?" maxLength={48} value={rename} onChange={e => setRename(e.target.value)} className="rounded border p-2 bg-transparent" /></label>
-        <p className="text-sm">Use lowercase letters, numbers and hyphens. Node identity and pinned services stay attached.</p>
+        <p className="text-sm">Use lowercase letters, numbers and hyphens. Node identity and pinned services stay attached. Update references to {node.name} in fleet.yaml before the next apply. If an unchanged manifest fails, rename this node back; do not remove and re-pair it.</p>
         {renameError && <p role="alert">{renameError}</p>}
         <button disabled={renameBusy} type="submit">{renameBusy ? 'Saving…' : 'Save name'}</button>{' '}
         <button disabled={renameBusy} type="button" onClick={() => setRename(null)}>Cancel</button>

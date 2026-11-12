@@ -37,10 +37,10 @@ export interface TunnelResponse {
 
 export type TaskSpec = {
   service: string; image: string; platform: string; command: string[];
-  env: Record<string, string>; registry_auth: string | null; memory_bytes: number; timeout_ms: number
+  env: Record<string, string>; registry_auth: string | null; memory_bytes: number; cpu_millis?: number; timeout_ms: number
 }
-export type TaskResult = { exitCode: number; output: string; error?: string }
-const taskResult = z.object({ exitCode: z.number().int().min(-1).max(255), output: z.string().max(262144), error: z.string().max(2000).optional() })
+export type TaskResult = { exitCode: number; output: string; error?: string; cleanupComplete?: boolean }
+const taskResult = z.object({ exitCode: z.number().int().min(-1).max(255), output: z.string().max(262144), error: z.string().max(2000).optional(), cleanupComplete: z.boolean().optional() })
 
 type PendingRequest = {
   /** Which node this request is waiting on, so a closing tunnel can fail only its own. */

@@ -325,12 +325,12 @@ export async function chat(
       // over. Reasoning is dropped first because it is the cheaper loss — a
       // slower answer beats one this cannot read. Each retry is remembered, so
       // the cost is two extra requests once, not once per call.
-      if (res.status === 400 && opts.noReasoning && !opts.reasoningUnsupported) {
+      if (!opts.noRetry && res.status === 400 && opts.noReasoning && !opts.reasoningUnsupported) {
         unsupported.reasoning = true
         return chat(config, messages, { ...opts, reasoningUnsupported: true }, fetchImpl)
       }
 
-      if (res.status === 400 && opts.schema && !opts.noSchema) {
+      if (!opts.noRetry && res.status === 400 && opts.schema && !opts.noSchema) {
         unsupported.schema = true
         return chat(config, messages, { ...opts, noSchema: true }, fetchImpl)
       }

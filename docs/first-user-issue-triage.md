@@ -192,3 +192,31 @@ the Docker-backed executor check and six release-target agent builds. Registrati
 and heartbeat tests cover configuration changes and downgrade to the legacy ceiling.
 This fix is committed locally; no push or deployment. Migration 0036 and matching
 server/agent updates are required. Existing prepared artifacts need rebuilding.
+
+## Reservation and recovery follow-up — 2026-11-12
+
+Implemented for the requested commit and push; deployment remains a separate step.
+
+- Build allocation atomically saves its actual CPU and memory alongside assigned
+  state under the existing node lock. The wire assignment uses those saved values;
+  scheduler accounting retains them while the job is assigned/running.
+- Migration 0037 adds durable one-off task reservations. Starts serialize on the
+  node, check unreserved CPU/RAM and a two-task cap, and reserve the service's
+  requested resources. Tasks enforce CPU as well as memory in Docker. Confirmed
+  completion/cleanup releases the row; uncertain disconnect/cancellation retains
+  capacity until execution timeout plus a 90-second cleanup allowance. Expired
+  reservations cease counting and are removed on a later task start, including
+  after a server restart. No commands, environment values or output are stored.
+- Rename responses/CLI explain how to update node names in fleet.yaml, and how to
+  recover by renaming back without destroying identity. The dashboard warns before
+  saving a rename. Existing pinned IDs remain attached.
+- noRetry now suppresses rate-limit, reasoning and schema retries consistently.
+
+Validation: 668 server tests, 215 CLI tests, 28 dashboard tests, builds/typechecks,
+Go tests/vet and real Docker task execution/cleanup pass. Regression tests cover
+saved build budgets, concurrent task admission, capacity accounting, cleanup expiry,
+disconnect retention and single-request noRetry behavior. Migration 0037 applied
+on an isolated test database. Release artifacts are rebuilt before the push.
+
+Remaining gates: exact-revision CI, production canary, native Windows execution
+and two-physical-machine replacement. No production changes were made in this batch.

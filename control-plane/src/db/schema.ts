@@ -804,6 +804,14 @@ export const deploymentExplanations = pgTable('deployment_explanations', {
 })
 
 /** Attempts are fenced by (id, attempt, builderNodeId); no credentials are persisted here. */
+export const taskReservations = pgTable('task_reservations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  nodeId: uuid('node_id').notNull().references(() => nodes.id, { onDelete: 'cascade' }),
+  reservedCpu: real('reserved_cpu').notNull(),
+  reservedMemBytes: bigint('reserved_mem_bytes', { mode: 'number' }).notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, t => [index('task_reservations_node_idx').on(t.nodeId, t.expiresAt)])
+
 export const buildJobs = pgTable('build_jobs', {
   id: uuid('id').primaryKey().defaultRandom(),
   deploymentId: uuid('deployment_id').notNull().references(() => deployments.id, { onDelete: 'cascade' }),

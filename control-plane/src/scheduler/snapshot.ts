@@ -1,5 +1,5 @@
-import { and, asc, eq, inArray } from 'drizzle-orm'
-import { nodes, services, deployments, buildJobs } from '../db/schema.js'
+import { and, asc, eq, gt, inArray } from 'drizzle-orm'
+import { nodes, services, deployments, buildJobs, taskReservations } from '../db/schema.js'
 import type { AppContext } from '../api/context.js'
 import type { AntiAffinityIndex, Arch, NodeSnapshot, Placements, ServiceSpec } from './types.js'
 
@@ -41,6 +41,13 @@ export async function fleetSnapshot(
     .where(and(eq(services.fleetId, fleetId), inArray(buildJobs.status, ['assigned', 'running'])))
   const committedCpu = new Map<string, number>()
   const committed = new Map<string, number>()
+  const tasks = await ctx.db.select({ nodeId: taskReservations.nodeId, ram: taskReservations.reservedMemBytes, cpu: taskReservations.reservedCpu })
+    .from(taskReservations).innerJoin(nodes, eq(nodes.id, taskReservations.nodeId))
+    .where(and(eq(nodes.fleetId, fleetId), gt(taskReservations.expiresAt, new Date())))
+  for (const task of tasks) {
+    committed.set(task.nodeId, (committed.get(task.nodeId) ?? 0) + task.ram / 1048576)
+    committedCpu.set(task.nodeId, (committedCpu.get(task.nodeId) ?? 0) + task.cpu)
+  }
   for (const job of building) {
     if (!job.nodeId) continue
     committed.set(job.nodeId, (committed.get(job.nodeId) ?? 0) + job.ram / 1048576)

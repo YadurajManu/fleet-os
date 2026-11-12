@@ -24,19 +24,29 @@ type TaskSpec struct {
 	Env          map[string]string `json:"env"`
 	RegistryAuth string            `json:"registry_auth"`
 	MemoryBytes  int64             `json:"memory_bytes"`
+	CPUMillis    int64             `json:"cpu_millis"`
 	TimeoutMs    int64             `json:"timeout_ms"`
 }
 
 type TaskResult struct {
-	ExitCode int    `json:"exitCode"`
-	Output   string `json:"output"`
-	Error    string `json:"error,omitempty"`
+	CleanupComplete bool   `json:"cleanupComplete"`
+	ExitCode        int    `json:"exitCode"`
+	Output          string `json:"output"`
+	Error           string `json:"error,omitempty"`
 }
 
 // RunTask uses a separate container: cancellation can stop it without touching
 // the serving release, and application data volumes are never mounted.
 func (c *Client) RunTask(ctx context.Context, spec TaskSpec) (result TaskResult) {
 	result.ExitCode = -1
+	result.CleanupComplete = true
+	if spec.CPUMillis == 0 {
+		spec.CPUMillis = 1000
+	}
+	if spec.CPUMillis < 10 || spec.CPUMillis > 1024000 {
+		result.Error = "invalid task CPU limit"
+		return
+	}
 	if !regexp.MustCompile(`^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$`).MatchString(spec.ID) || spec.NodeID == "" || len(spec.Command) == 0 || len(spec.Command) > 128 || spec.Image == "" || spec.MemoryBytes < 6<<20 || spec.TimeoutMs < 1000 || spec.TimeoutMs > 600000 {
 		result.Error = "invalid task specification"
 		return
@@ -78,6 +88,7 @@ func (c *Client) RunTask(ctx context.Context, spec TaskSpec) (result TaskResult)
 		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
 		if err := c.removeTask(cleanup, name, spec.NodeID); err != nil {
+			result.CleanupComplete = false
 			result.Error = "task cleanup failed: " + err.Error()
 			result.ExitCode = -1
 		}
@@ -90,7 +101,7 @@ func (c *Client) RunTask(ctx context.Context, spec TaskSpec) (result TaskResult)
 		Labels      map[string]string
 		HostConfig  hostConfig
 		Healthcheck *healthcheck
-	}{spec.Image, spec.Command, []string{}, env, map[string]string{taskLabel: "true", LabelNode: spec.NodeID}, hostConfig{Memory: spec.MemoryBytes, NetworkMode: NetworkName}, &healthcheck{Test: []string{"NONE"}}}
+	}{spec.Image, spec.Command, []string{}, env, map[string]string{taskLabel: "true", LabelNode: spec.NodeID}, hostConfig{Memory: spec.MemoryBytes, NanoCPUs: spec.CPUMillis * 1000000, NetworkMode: NetworkName}, &healthcheck{Test: []string{"NONE"}}}
 	var created createResponse
 	path := fmt.Sprintf("/%s/containers/create?name=%s", c.api(ctx), url.QueryEscape(name))
 	if spec.Platform != "" {

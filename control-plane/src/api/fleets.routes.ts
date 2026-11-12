@@ -373,7 +373,7 @@ export async function fleetRoutes(app: FastifyInstance) {
         const [node] = await tx.update(nodes).set({ name: input.data.name }).where(and(eq(nodes.id, nodeId), eq(nodes.fleetId, fleetId))).returning({ id: nodes.id, name: nodes.name })
         if (!node) throw ApiError.notFound('Node')
         await recordAudit(tx, { orgId: req.orgId!, actorUserId: req.userId, action: 'node.renamed', targetType: 'node', targetId: nodeId, metadata: { name: node.name } })
-        return { node }
+        return { node, guidance: `Update node: entries in fleet.yaml from the old name to ${node.name} before applying again. Pinned service IDs are preserved. If an older manifest fails, update its node name or rename this node back; do not remove and re-pair it.` }
       })
     } catch (err) {
       if ((err as { cause?: { code?: string }; code?: string }).cause?.code === '23505' || (err as { code?: string }).code === '23505') throw ApiError.conflict('node_name_taken', 'That node name is already used in this fleet. Choose another name.')

@@ -51,7 +51,7 @@ export const nodesCommand = {
       if (!target || !args[2]) throw new CliError('usage: fleet nodes rename <node> <new-name>', EXIT.usage)
       const node = await findNode(fleetId, target)
       const { body } = await request('PATCH', `/fleets/${fleetId}/nodes/${node.id}`, { body: { name: args[2] } })
-      return console.log(flags.json ? JSON.stringify(body) : `${node.name} renamed to ${args[2]}; identity and service placement preserved`)
+      return console.log(flags.json ? JSON.stringify(body) : `${node.name} renamed to ${args[2]}; identity and service placement preserved\n${body.guidance ?? `Update node: ${node.name} to node: ${args[2]} in fleet.yaml before applying again. Rename back if you need to recover an unchanged manifest.`}`)
     }
     if (sub === 'pair') {
       return pairNode(fleetId, flags)

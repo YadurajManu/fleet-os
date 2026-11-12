@@ -330,6 +330,7 @@ type hostConfig struct {
 	PortBindings map[string][]portBinding `json:"PortBindings,omitempty"`
 	Mounts       []mount                  `json:"Mounts,omitempty"`
 	Memory       int64                    `json:"Memory,omitempty"`
+	NanoCPUs     int64                    `json:"NanoCpus,omitempty"`
 	NetworkMode  string                   `json:"NetworkMode,omitempty"`
 }
 

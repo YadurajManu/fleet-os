@@ -1,7 +1,8 @@
 import { and, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
-import { deployments, nodes } from '../db/schema.js'
+import { deployments, nodes, taskReservations } from '../db/schema.js'
+import { reserveTask } from '../scheduler/tasks.js'
 import { ApiError } from './errors.js'
 import { loadService, requireServicePermission } from './services.routes.js'
 import { registryAuth } from './agent.routes.js'
@@ -36,7 +37,15 @@ export async function taskRoutes(app: FastifyInstance) {
     if (missing.length) throw ApiError.unprocessable('missing_secrets', `Set the missing service secrets: ${missing.join(', ')}`)
     const registryHost = app.ctx.config.REGISTRY_URL?.replace(/^https?:\/\//, '').split('/')[0]
     const pullAuth = registryHost && image.split('/')[0] === registryHost ? registryAuth(app.ctx.config) : null
-    await recordAudit(app.ctx.db, { orgId, actorUserId: req.userId, action: 'service.task_started', targetType: 'service', targetId: service.id, metadata: { deploymentId: release?.id ?? null, nodeId, argumentCount: parsed.data.command.length } })
+    const cpuMillis = Math.max(10, Math.ceil(Number(service.requestCpu) * 1000))
+    const memory = Math.max(service.requestRamMb, 6) * 1048576
+    const reservationId = await reserveTask(app.ctx, service.fleetId, nodeId, cpuMillis / 1000, memory, parsed.data.timeoutMs)
+    try {
+      await recordAudit(app.ctx.db, { orgId, actorUserId: req.userId, action: 'service.task_started', targetType: 'service', targetId: service.id, metadata: { deploymentId: release?.id ?? null, nodeId, argumentCount: parsed.data.command.length } })
+    } catch (err) {
+      await app.ctx.db.delete(taskReservations).where(eq(taskReservations.id, reservationId))
+      throw err
+    }
     const abort = new AbortController()
     const onClose = () => abort.abort()
     reply.raw.once('close', onClose)
@@ -53,9 +62,10 @@ export async function taskRoutes(app: FastifyInstance) {
     try {
       const result = await app.ctx.tunnels.runTask(nodeId, {
         service: service.name, image, platform, command: parsed.data.command, env,
-        registry_auth: pullAuth, memory_bytes: Math.max(service.requestRamMb, 6) * 1048576,
+        registry_auth: pullAuth, memory_bytes: memory, cpu_millis: cpuMillis,
         timeout_ms: parsed.data.timeoutMs,
       }, abort.signal)
+      if (result.cleanupComplete === true || (!result.error && result.cleanupComplete !== false)) await app.ctx.db.delete(taskReservations).where(eq(taskReservations.id, reservationId))
       if (!reply.raw.destroyed) reply.raw.write(`event: result\ndata: ${JSON.stringify(result)}\n\n`)
       await recordAudit(app.ctx.db, { orgId, actorUserId: req.userId, action: 'service.task_finished', targetType: 'service', targetId: service.id, metadata: { nodeId, exitCode: result.exitCode } }).catch(err => req.log.error({ err, serviceId: service.id }, 'could not audit completed task'))
     } catch (err) {

@@ -7,7 +7,7 @@ import { loadConfig } from '../src/config.js'
 import { createContext, closeContext } from '../src/api/context.js'
 import { buildServer } from '../src/server.js'
 import { parseManifest, ManifestError } from '../src/manifest/parse.js'
-import { orgs, users, nodes, services, deployments, orgMembers, auditLog } from '../src/db/schema.js'
+import { orgs, users, nodes, services, deployments, orgMembers, auditLog, taskReservations } from '../src/db/schema.js'
 import type { TaskSpec } from '../src/tunnel/registry.js'
 
 test('build objects normalize without breaking old manifests or allowing a Dockerfile escape', () => {
@@ -85,8 +85,43 @@ test('one-off tasks use the latest built artifact even when initial rollout fail
   assert.equal(observed!.env.DATABASE_URL, 'private-network-url')
   assert.equal(observed!.platform, 'linux/arm64')
   assert.equal(observed!.memory_bytes, 128 * 1048576)
+  assert.equal(observed!.cpu_millis, 250)
+  assert.equal((await ctx.db.select().from(taskReservations).where(eq(taskReservations.nodeId, nodeId))).length, 0)
   const audit = await ctx.db.select().from(auditLog).where(eq(auditLog.targetId, serviceId))
   assert.doesNotMatch(JSON.stringify(audit), /db:migrate|private-network-url/)
+})
+
+test('task reservations serialize starts, appear in capacity, and expire after cleanup grace', async () => {
+  const { reserveTask } = await import('../src/scheduler/tasks.js')
+  const { fleetSnapshot } = await import('../src/scheduler/snapshot.js')
+  const ids = await Promise.all([reserveTask(ctx, account.fleet.id, nodeId, 0.25, 128 * 1048576, 1000), reserveTask(ctx, account.fleet.id, nodeId, 0.25, 128 * 1048576, 1000)])
+  try {
+    await assert.rejects(reserveTask(ctx, account.fleet.id, nodeId, 0.25, 128 * 1048576, 1000), /two tasks/)
+    const snapshot = await fleetSnapshot(ctx, account.fleet.id)
+    assert.ok(snapshot.nodes.find(n => n.id === nodeId)!.committedRamMb >= 256)
+    assert.ok(snapshot.nodes.find(n => n.id === nodeId)!.committedCpu! >= 0.5)
+    for (const id of ids) await ctx.db.update(taskReservations).set({ expiresAt: new Date(Date.now() - 1) }).where(eq(taskReservations.id, id))
+    const recovered = await reserveTask(ctx, account.fleet.id, nodeId, 0.25, 128 * 1048576, 1000)
+    await ctx.db.delete(taskReservations).where(eq(taskReservations.id, recovered))
+    await assert.rejects(reserveTask(ctx, account.fleet.id, nodeId, 100, 128 * 1048576, 1000), /Not enough/)
+  } finally {
+    for (const id of ids) await ctx.db.delete(taskReservations).where(eq(taskReservations.id, id))
+  }
+})
+
+test('a disconnected task keeps its resource reservation through its execution and cleanup budget', async () => {
+  const original = ctx.tunnels.runTask
+  ctx.tunnels.runTask = async () => { throw new Error('node disconnected') }
+  try {
+    const response = await run(account.accessToken, { command: ['sleep', '1'], timeoutMs: 1000 })
+    assert.match(response.body, /node disconnected/)
+    const held = await ctx.db.select().from(taskReservations).where(eq(taskReservations.nodeId, nodeId))
+    assert.equal(held.length, 1)
+    assert.ok(held[0]!.expiresAt.getTime() > Date.now() + 80000)
+  } finally {
+    ctx.tunnels.runTask = original
+    await ctx.db.delete(taskReservations).where(eq(taskReservations.nodeId, nodeId))
+  }
 })
 
 test('task permission and fleet boundaries are checked before contacting an agent', async () => {

@@ -320,6 +320,9 @@ test('fractional CPU assignments respect free capacity and concurrent slots', as
   try {
     await runner.build(await request('fractional-cpu-assignment'))
     assert.equal(observed?.cpu_millis, 500)
+    const [reserved] = await ctx.db.select().from(buildJobs).where(eq(buildJobs.id, observed!.job_id))
+    assert.equal(reserved!.reservedCpu, 0.5)
+    assert.equal(reserved!.reservedMemBytes, observed!.memory_bytes)
     assert.equal(observed?.cpu, 1)
     assert.equal(observed?.memory_bytes, 2 * 1073741824)
     await ctx.db.update(nodes).set({ buildCpuMillis: false }).where(eq(nodes.id, nodeId))

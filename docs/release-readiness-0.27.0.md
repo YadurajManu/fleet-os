@@ -1,6 +1,13 @@
 # Coordinated release readiness — 2026-11-12
 
-Prepared and committed locally; not pushed, published or deployed:
+Prepared for the requested push; package publication and deployment remain separate:
+
+The current resource-accounting follow-up additionally requires migration 0037.
+It persists actual build reservations and durable task reservations, enforces task
+CPU quotas, explains rename/manifest recovery, and makes noRetry literal. Current
+checks: 668 server, 215 CLI and 28 dashboard tests, Go tests/vet, real Docker task
+execution/cleanup and six agent targets. Rebuilt CLI and agent artifacts are in
+/tmp/fleet-release-ready; use the final reviewed revision for deployment and CI.
 
 Follow-up note: five additional fixes are now committed locally on top of this prepared
 release. They add migration 0035 (CPU capability and durable inspection warnings).

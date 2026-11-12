@@ -319,6 +319,8 @@ export class AgentBuildRunner implements BuildRunner {
         .set({
           status: 'assigned',
           builderNodeId: builder.id,
+          reservedCpu: buildCpuLimit(builder.freeCpu, builder.maxConcurrentBuilds, Boolean(builder.supportsCpuMillis)) / 1000,
+          reservedMemBytes: buildMemoryLimit(builder.freeMemBytes, builder.buildMemoryBytes),
           attempt: job.attempt + 1,
           leaseExpiresAt: new Date(Date.now() + LEASE_MS),
           startedAt: new Date(),
@@ -352,7 +354,7 @@ export class AgentBuildRunner implements BuildRunner {
       const assigned = await this.reserve(job, req, excluded)
       job = assigned.job
       const { builder } = assigned
-      const memoryBytes = buildMemoryLimit(builder.freeMemBytes, builder.buildMemoryBytes)
+      const memoryBytes = job.reservedMemBytes
       const exp =
         Date.now() + Math.min(this.ctx.config.BUILD_TIMEOUT_MS, 3600000) + 60000
       const grant = {
@@ -424,8 +426,8 @@ export class AgentBuildRunner implements BuildRunner {
           this.ctx.config.JWT_SECRET
         ),
         timeout_ms: Math.min(this.ctx.config.BUILD_TIMEOUT_MS, 3600000),
-        cpu: Math.max(1, Math.floor(buildCpuLimit(builder.freeCpu, builder.maxConcurrentBuilds, Boolean(builder.supportsCpuMillis)) / 1000)),
-        ...(builder.supportsCpuMillis ? { cpu_millis: buildCpuLimit(builder.freeCpu, builder.maxConcurrentBuilds, true) } : {}),
+        cpu: Math.max(1, Math.floor(job.reservedCpu)),
+        ...(builder.supportsCpuMillis ? { cpu_millis: Math.round(job.reservedCpu * 1000) } : {}),
         memory_bytes: memoryBytes,
         disk_bytes: builder.buildDiskBytes ?? 20 * 1073741824,
       }

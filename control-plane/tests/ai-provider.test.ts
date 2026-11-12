@@ -14,6 +14,16 @@ import { explainWith } from '../src/ai/provider.js'
 const CONFIG = { baseUrl: 'https://agentrouter.org/v1', apiKey: 'sk-test', model: 'claude-sonnet-4-8' }
 const CONTEXT = { log: 'npm error Missing: fastify from lock file', service: 'api' }
 
+test('noRetry sends exactly one request for rate limits and compatibility errors', async () => {
+  const { chat } = await import('../src/ai/provider.js')
+  for (const status of [400, 429]) {
+    let calls = 0
+    const impl = (async () => { calls++; return new Response(JSON.stringify({ error: { message: 'unsupported parameter' } }), { status, headers: { 'retry-after': '0' } }) }) as typeof fetch
+    await assert.rejects(chat(CONFIG, [], { noRetry: true, noReasoning: true, schema: { name: 'test', schema: {} } }, impl))
+    assert.equal(calls, 1)
+  }
+})
+
 test('provider backoff cannot reset or exceed the original request deadline', async () => {
   const { chat } = await import('../src/ai/provider.js')
   let calls = 0

@@ -166,3 +166,10 @@ progress shows both numbers; raise the builder configuration's memory limit,
 restart the agent and wait for a fresh heartbeat if a workload needs more. Raising it cannot override
 actual engine capacity or service reservations. The agent still rejects assignments
 above its current local ceiling if configuration changes before the next heartbeat.
+
+Build reservations now store the exact assigned budgets until termination. One-off
+tasks also reserve capacity before dispatch, and enforce their service CPU/RAM
+limits. If a task disconnects, capacity remains reserved through its maximum
+runtime plus 90 seconds for cleanup; the task is never retried automatically.
+An explicit cleanup acknowledgement releases capacity sooner, including failures
+that cleaned up successfully. Migration 0037 is required for this accounting.

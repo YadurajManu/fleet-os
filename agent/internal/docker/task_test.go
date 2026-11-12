@@ -36,7 +36,7 @@ func TestTaskIsolationExitCodeAndCleanup(t *testing.T) {
 			if body.Labels[LabelManaged] != "" || body.Labels[taskLabel] != "true" || body.HostConfig.NetworkMode != NetworkName || len(body.HostConfig.Mounts) != 0 || body.HostConfig.RestartPolicy.Name != "" {
 				t.Errorf("task could disturb the service: %+v", body)
 			}
-			if !reflect.DeepEqual(body.Env, []string{"DATABASE_URL=private"}) || body.HostConfig.Memory != 128<<20 {
+			if !reflect.DeepEqual(body.Env, []string{"DATABASE_URL=private"}) || body.HostConfig.Memory != 128<<20 || body.HostConfig.NanoCPUs != 1000000000 {
 				t.Errorf("environment/resource limit lost: %+v", body)
 			}
 			_, _ = w.Write([]byte(`{"Id":"task"}`))
