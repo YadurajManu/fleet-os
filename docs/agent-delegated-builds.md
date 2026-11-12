@@ -158,3 +158,11 @@ If image metadata inspection fails, placement previews and deployment responses
 warn that architecture compatibility is unverified. The original image tag is
 retained, and the warning is saved on the deployment and shown in dashboard history.
 Warnings never include raw registry error messages or credentials.
+
+The agent also reports its configured `build_memory_bytes` ceiling on registration
+and heartbeats (migration 0036). Each assignment is the smaller of that ceiling
+and 75% of the available memory share. Legacy reports default to 2 GiB. Build
+progress shows both numbers; raise the builder configuration's memory limit,
+restart the agent and wait for a fresh heartbeat if a workload needs more. Raising it cannot override
+actual engine capacity or service reservations. The agent still rejects assignments
+above its current local ceiling if configuration changes before the next heartbeat.

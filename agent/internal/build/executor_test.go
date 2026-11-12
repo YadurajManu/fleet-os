@@ -36,6 +36,29 @@ func TestFractionalCPUAssignmentValidation(t *testing.T) {
 		t.Fatalf("fractional CPU rejected before platform validation: %v", err)
 	}
 }
+
+func TestMemoryCeilingOnDockerExecutor(t *testing.T) {
+	if os.Getenv("FLEET_DOCKER_INTEGRATION") != "1" {
+		t.Skip("set FLEET_DOCKER_INTEGRATION=1 to check the real Docker-backed executor")
+	}
+	report, err := capability.DetectEngine(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ceiling := range []int64{2 << 30, 3 << 30} {
+		e := New(t.TempDir(), capability.BuilderConfig{CPU: 2, MemoryBytes: ceiling, DiskBytes: 20 << 30}, func(Event) {})
+		a := Assignment{CPU: 1, MemoryBytes: ceiling, DiskBytes: 1 << 30, Platform: report.Platform}
+		_, err = e.execute(context.Background(), a)
+		if err == nil || !strings.Contains(err.Error(), "invalid registry target") {
+			t.Fatalf("negotiated memory %d rejected before registry validation: %v", ceiling, err)
+		}
+		a.MemoryBytes++
+		_, err = e.execute(context.Background(), a)
+		if err == nil || !strings.Contains(err.Error(), "requested build limits") {
+			t.Fatalf("over-ceiling assignment accepted: %v", err)
+		}
+	}
+}
 func TestExtractionRejectsTraversalAndLinks(t *testing.T) {
 	for _, name := range []string{"../escape", "/tmp/escape", "C:/escape", "..\\escape"} {
 		if extract(bytes.NewReader(archive(name, tar.TypeReg)), t.TempDir()) == nil {

@@ -17,6 +17,7 @@ type EngineReport struct {
 	TaskRun               bool     `json:"task_run"`
 	BuildTargets          bool     `json:"build_targets"`
 	BuildDiskBytes        int64    `json:"build_disk_bytes"`
+	BuildMemoryBytes      int64    `json:"build_memory_bytes"`
 	Platform              string   `json:"platform"`
 	Variant               string   `json:"variant,omitempty"`
 	EngineKind            string   `json:"engine_kind"`
@@ -135,6 +136,7 @@ func DetectEngine(ctx context.Context, version string) (Report, error) {
 func ApplyBuilder(ctx context.Context, report *Report, dir string, config BuilderConfig) error {
 	report.MaxConcurrentBuilds = config.MaxConcurrentBuilds
 	report.BuildDiskBytes = config.DiskBytes
+	report.BuildMemoryBytes = config.MemoryBytes
 	report.CanBuild = false
 	if !config.Builder {
 		return nil

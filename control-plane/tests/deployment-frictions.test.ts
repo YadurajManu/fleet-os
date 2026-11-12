@@ -48,6 +48,22 @@ before(async () => {
     return { exitCode: 7, output: 'migration output' }
   }
 })
+
+test('registration persists memory ceilings and legacy reports default safely', async () => {
+  for (const ceiling of [undefined, 8 * 1073741824]) {
+    const issued = await app.inject({ method: 'POST', url: `/fleets/${account.fleet.id}/nodes/pair-token`, headers: { authorization: `Bearer ${account.accessToken}` }, payload: {} })
+    const registered = await app.inject({ method: 'POST', url: '/agent/register', headers: { authorization: `Bearer ${issued.json().token}` }, payload: { hostname: `memory-report-${randomUUID()}`, arch: 'arm64', cpu_cores: 2, ram_mb: 16384, disk_mb: 10000, ...(ceiling === undefined ? {} : { build_memory_bytes: ceiling }) } })
+    assert.equal(registered.statusCode, 201, registered.body)
+    const [node] = await ctx.db.select().from(nodes).where(eq(nodes.id, registered.json().node_id))
+    assert.equal(node!.buildMemoryBytes, ceiling ?? 2 * 1073741824)
+    for (const updated of [4 * 1073741824, undefined]) {
+      const beat = await app.inject({ method: 'POST', url: '/agent/heartbeat', headers: { authorization: `Bearer ${registered.json().agent_token}` }, payload: { cpu_pct: 0, ram_used_mb: 0, disk_used_mb: 0, containers: [], capabilities: { arch: 'arm64', cpu_cores: 2, ram_mb: 16384, disk_mb: 10000, ...(updated === undefined ? {} : { build_memory_bytes: updated }) } } })
+      assert.equal(beat.statusCode, 200, beat.body)
+      const [reported] = await ctx.db.select().from(nodes).where(eq(nodes.id, node!.id))
+      assert.equal(reported!.buildMemoryBytes, updated ?? 2 * 1073741824)
+    }
+  }
+})
 after(async () => {
   await app.close()
   for (const a of [account, outsider]) {

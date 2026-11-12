@@ -172,13 +172,23 @@ must be regenerated before publication. Production and its AI configuration were
 not changed during this follow-up. Real multi-node saturation and native Windows
 runtime remain outside this validation.
 
-## Next confirmed gap: agent memory budget negotiation
+## Agent memory budget negotiation — fixed locally
 
-The server calculates build memory from available engine capacity, but the agent
-still defaults its configured build-memory ceiling to 2 GiB and rejects larger
-assignments. That configured ceiling is not reported to the server. A node can
-therefore be selected and receive an assignment it will refuse. The earlier real
-3 GiB Buildx check validated Docker capacity, not this agent negotiation path.
-Next: advertise the configured build ceiling, cap assignments by it and available
-capacity, explain insufficient limits before dispatch, and test through a real
-agent rather than directly invoking Buildx.
+The agent now reports its configured build_memory_bytes ceiling on registration
+and heartbeats. Migration 0036 persists it, with a safe 2 GiB legacy default.
+The server assigns the smaller of that ceiling and 75% of uncommitted engine
+memory per configured slot. Progress displays the budget, ceiling and configuration
+guidance before dispatch. Invalid low ceilings are filtered out before assignment.
+
+Coverage includes registration/heartbeat persistence, legacy fallback, actual
+assignment payloads at 2/3/16 GiB ceilings, free-memory limits, and Go report tests.
+A real Docker-backed agent executor check accepts negotiated limits at 2 and 3 GiB
+through platform validation, and rejects one byte over the configured ceiling.
+It intentionally stops before registry/source/build execution; it is not a new
+end-to-end registry push test. The previous 3 GiB Buildx test remains separate.
+
+Validation: 665 server tests pass, along with the server build, all Go tests/vet,
+the Docker-backed executor check and six release-target agent builds. Registration
+and heartbeat tests cover configuration changes and downgrade to the legacy ceiling.
+This fix is committed locally; no push or deployment. Migration 0036 and matching
+server/agent updates are required. Existing prepared artifacts need rebuilding.

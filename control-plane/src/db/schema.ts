@@ -230,6 +230,7 @@ export const nodes = pgTable(
     canBuild: boolean('can_build').notNull().default(false),
     buildTargets: boolean('build_targets').notNull().default(false),
     buildCpuMillis: boolean('build_cpu_millis').notNull().default(false),
+    buildMemoryBytes: bigint('build_memory_bytes', { mode: 'number' }).notNull().default(2147483648),
     taskRun: boolean('task_run').notNull().default(false),
     platforms: text('platforms').array().notNull().default([]),
     maxConcurrentBuilds: integer('max_concurrent_builds').notNull().default(1),

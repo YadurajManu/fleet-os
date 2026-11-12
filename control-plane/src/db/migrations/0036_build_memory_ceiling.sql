@@ -1,0 +1,1 @@
+ALTER TABLE nodes ADD COLUMN build_memory_bytes bigint NOT NULL DEFAULT 2147483648;

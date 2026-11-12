@@ -1,9 +1,22 @@
 package capability
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
+
+func TestBuilderReportsConfiguredMemoryCeiling(t *testing.T) {
+	for _, ceiling := range []int64{2 << 30, 8 << 30} {
+		report := Report{EngineReport: &EngineReport{}}
+		if err := ApplyBuilder(context.Background(), &report, t.TempDir(), BuilderConfig{MemoryBytes: ceiling}); err != nil {
+			t.Fatal(err)
+		}
+		if report.BuildMemoryBytes != ceiling {
+			t.Fatalf("reported %d, want configured ceiling %d", report.BuildMemoryBytes, ceiling)
+		}
+	}
+}
 
 func TestEnginePlatformNormalization(t *testing.T) {
 	for input, want := range map[string]string{"x86_64": "linux/amd64", "amd64": "linux/amd64", "aarch64": "linux/arm64", "arm64": "linux/arm64", "armv7l": "linux/arm/v7"} {

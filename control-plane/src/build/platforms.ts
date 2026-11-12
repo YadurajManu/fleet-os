@@ -40,6 +40,7 @@ export type Builder = {
   freeCpu: number
   supportsCpuMillis?: boolean
   freeMemBytes: number
+  buildMemoryBytes?: number
   buildDiskBytes?: number
   buildDiskReserveBytes?: number
   buildCacheFreeBytes: number
@@ -59,6 +60,7 @@ export function selectBuilder(
       n.active < n.maxConcurrentBuilds &&
       buildCpuLimit(n.freeCpu, n.maxConcurrentBuilds, Boolean(n.supportsCpuMillis)) > 0 &&
       n.freeMemBytes >= 1073741824 &&
+      (n.buildMemoryBytes ?? 2147483648) >= 268435456 &&
       n.buildCacheFreeBytes - (n.buildDiskReserveBytes ?? 0) >=
         (n.buildDiskBytes ?? 20 * 1073741824) * (n.active + 1)
   )
@@ -80,9 +82,10 @@ export function selectBuilder(
 }
 
 /** Each concurrent build gets a share, with headroom for the engine and services. */
-export function buildMemoryLimit(freeBytes: number): number {
+export function buildMemoryLimit(freeBytes: number, ceiling = 2147483648): number {
   if (!Number.isFinite(freeBytes) || freeBytes < 1073741824) throw new Error('Builder needs at least 1 GiB of uncommitted memory per build slot')
-  return Math.floor(freeBytes * 0.75)
+  if (!Number.isSafeInteger(ceiling) || ceiling < 268435456) throw new Error('Agent build_memory_bytes must allow at least 256 MiB; adjust the agent builder configuration before dispatch')
+  return Math.min(ceiling, Math.floor(freeBytes * 0.75))
 }
 
 /** Milliseconds of CPU per second, shared across all configured build slots. */

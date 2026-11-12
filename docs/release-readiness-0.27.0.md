@@ -10,6 +10,12 @@ Latest follow-up checks are 663 server, 215 CLI and 28 dashboard tests, plus Go 
 and vet. Include migrations 0033, 0034 and 0035 in the server rollout and verify
 `build_cpu_millis` on the canary agent before using fractional CPU assignments.
 
+The memory-negotiation follow-up additionally requires migration 0036 and an
+updated agent that reports `build_memory_bytes`. Assignment budgets now honor
+that configured ceiling as well as available engine memory per slot. Older
+reports default safely to 2 GiB. Restart an agent after changing its builder
+configuration, then verify its next heartbeat before increasing build budgets.
+
 | Component | Prepared version | Validation |
 | --- | --- | --- |
 | CLI | 0.27.0 | 214 tests, build, package in /tmp/yadurajfleetos-cli-0.27.0.tgz |

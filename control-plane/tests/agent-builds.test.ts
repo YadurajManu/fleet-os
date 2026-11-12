@@ -321,9 +321,31 @@ test('fractional CPU assignments respect free capacity and concurrent slots', as
     await runner.build(await request('fractional-cpu-assignment'))
     assert.equal(observed?.cpu_millis, 500)
     assert.equal(observed?.cpu, 1)
+    assert.equal(observed?.memory_bytes, 2 * 1073741824)
     await ctx.db.update(nodes).set({ buildCpuMillis: false }).where(eq(nodes.id, nodeId))
     await assert.rejects(runner.build(await request('legacy-agent-small-cpu')), /no build-capable/)
   } finally {
     await ctx.db.update(nodes).set({ effectiveCpu: 8, maxConcurrentBuilds: 1, buildCpuMillis: false }).where(eq(nodes.id, nodeId))
+  }
+})
+
+test('memory assignment honors the reported agent ceiling as well as free capacity', async () => {
+  let observed: BuildAssignment | undefined
+  ctx.tunnels.sendBuild = (node, msg) => {
+    const a = msg as BuildAssignment
+    if (a.type === 'build.assign') {
+      observed = a
+      void runner.handleMessage(node, { type: 'build.result', version: 1, job_id: a.job_id, attempt: a.attempt, status: 'succeeded', digest })
+    }
+    return true
+  }
+  try {
+    for (const [ceiling, expected] of [[2, 2], [3, 3], [16, 12]]) {
+      await ctx.db.update(nodes).set({ buildMemoryBytes: ceiling! * 1073741824, effectiveMemBytes: 16 * 1073741824 }).where(eq(nodes.id, nodeId))
+      await runner.build(await request(`memory-ceiling-${ceiling}`))
+      assert.equal(observed?.memory_bytes, expected! * 1073741824)
+    }
+  } finally {
+    await ctx.db.update(nodes).set({ buildMemoryBytes: 2 * 1073741824 }).where(eq(nodes.id, nodeId))
   }
 })

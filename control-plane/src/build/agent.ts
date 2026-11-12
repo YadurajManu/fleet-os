@@ -294,6 +294,7 @@ export class AgentBuildRunner implements BuildRunner {
           maxConcurrentBuilds: n.maxConcurrentBuilds,
           freeCpu: (n.effectiveCpu ?? 0) - (capacity.committedCpu ?? 0),
           supportsCpuMillis: n.buildCpuMillis,
+          buildMemoryBytes: n.buildMemoryBytes,
           freeMemBytes:
             Math.max(0, (n.effectiveMemBytes ?? 0) - capacity.committedRamMb * 1048576) / Math.max(1, n.maxConcurrentBuilds),
           buildDiskBytes: n.buildDiskBytes,
@@ -351,6 +352,7 @@ export class AgentBuildRunner implements BuildRunner {
       const assigned = await this.reserve(job, req, excluded)
       job = assigned.job
       const { builder } = assigned
+      const memoryBytes = buildMemoryLimit(builder.freeMemBytes, builder.buildMemoryBytes)
       const exp =
         Date.now() + Math.min(this.ctx.config.BUILD_TIMEOUT_MS, 3600000) + 60000
       const grant = {
@@ -363,7 +365,7 @@ export class AgentBuildRunner implements BuildRunner {
       const emulated = builder.platform !== job.platform
       await this.progress(
         req,
-        `assigned ${job.platform} build to ${builder.id}${emulated ? ' (slow QEMU fallback)' : ''}`,
+        `assigned ${job.platform} build to ${builder.id}${emulated ? ' (slow QEMU fallback)' : ''}; memory budget ${Math.floor(memoryBytes / 1048576)} MiB (agent ceiling ${Math.floor((builder.buildMemoryBytes ?? 2147483648) / 1048576)} MiB). For a larger build, raise build_memory_bytes in this node's builder configuration, restart its agent and wait for a fresh heartbeat.`,
         builder.id
       )
       req.onProgress?.({
@@ -424,7 +426,7 @@ export class AgentBuildRunner implements BuildRunner {
         timeout_ms: Math.min(this.ctx.config.BUILD_TIMEOUT_MS, 3600000),
         cpu: Math.max(1, Math.floor(buildCpuLimit(builder.freeCpu, builder.maxConcurrentBuilds, Boolean(builder.supportsCpuMillis)) / 1000)),
         ...(builder.supportsCpuMillis ? { cpu_millis: buildCpuLimit(builder.freeCpu, builder.maxConcurrentBuilds, true) } : {}),
-        memory_bytes: buildMemoryLimit(builder.freeMemBytes),
+        memory_bytes: memoryBytes,
         disk_bytes: builder.buildDiskBytes ?? 20 * 1073741824,
       }
       if (!this.send(builder.id, assignment))

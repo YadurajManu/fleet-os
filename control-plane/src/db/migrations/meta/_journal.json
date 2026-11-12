@@ -253,6 +253,13 @@
       "when": 1794450000000,
       "tag": "0035_build_cpu_millis",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794450000001,
+      "tag": "0036_build_memory_ceiling",
+      "breakpoints": true
     }
   ]
 }
