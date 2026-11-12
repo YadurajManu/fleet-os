@@ -40,9 +40,11 @@ const ALWAYS_EXCLUDE = ['.git', 'node_modules', '.DS_Store']
  * `!keep-this` lines, and since negations are not supported it would otherwise
  * mean "exclude the entire project".
  */
-function mustNotExclude(pattern: string): boolean {
+function mustNotExclude(pattern: string, dockerfile = 'Dockerfile'): boolean {
   const p = pattern.replace(/^\.?\//, '').replace(/^\*\*\//, '')
   if (p === '*' || p === '**' || p === '.') return true
+  const selected = dockerfile.replace(/^\.\//, '')
+  if (p === selected) return true
   return /^\*?dockerfile/i.test(p)
 }
 
@@ -55,23 +57,37 @@ function mustNotExclude(pattern: string): boolean {
  * excluded is a slow upload, whereas excluding one that should have been kept
  * is a broken build, and silently doing the second would be worse.
  */
-export async function ignorePatterns(dir: string): Promise<string[]> {
-  let text = ''
-  try {
-    text = await readFile(join(dir, '.dockerignore'), 'utf8')
-  } catch {
-    return [...ALWAYS_EXCLUDE]
-  }
-
-  const patterns = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#') && !line.startsWith('!'))
-    .map((line) => line.replace(/^\/+/, '').replace(/\/+$/, ''))
-    .filter(Boolean)
-    .filter((line) => !mustNotExclude(line))
-
+export async function ignorePatterns(dir: string, dockerfile = 'Dockerfile'): Promise<string[]> {
+  const texts = await Promise.all(['.dockerignore', '.fleetignore'].map(async name => {
+    try {
+      const text = await readFile(join(dir, name), 'utf8')
+      if (name === '.fleetignore' && text.split(/\r?\n/).some(line => line.trim().startsWith('!'))) throw new CliError('.fleetignore supports exclusion patterns only; remove negated ! patterns.', EXIT.usage)
+      return text
+    } catch (err) {
+      if (err instanceof CliError) throw err
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return ''
+      throw new CliError(`Cannot read ${name} in ${dir}.`, EXIT.usage)
+    }
+  }))
+  const patterns = texts.join('\n').split('\n').map(line => line.trim())
+    .filter(line => line && !line.startsWith('#') && !line.startsWith('!'))
+    .map(line => line.replace(/^\/+/, '').replace(/\/+$/, ''))
+    .filter(line => line && !mustNotExclude(line, dockerfile))
   return [...new Set([...ALWAYS_EXCLUDE, ...patterns])]
+}
+
+/** A conservative default for proxied APIs; self-hosted users can set their actual limit. */
+export function uploadLimit(): number {
+  const bytes = Number(process.env.FLEET_MAX_UPLOAD_BYTES ?? 95_000_000)
+  if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > 256 * 1024 * 1024) {
+    throw new CliError('FLEET_MAX_UPLOAD_BYTES must be an integer from 1 to 268435456 bytes.', EXIT.usage)
+  }
+  return bytes
+}
+
+export function checkUploadSize(bytes: number, limit = uploadLimit()): void {
+  if (bytes > limit) throw new CliError(
+    `Build context is ${humanBytes(bytes)}, over the ${humanBytes(limit)} upload limit. Exclude large artifacts in .fleetignore or .dockerignore. For a self-hosted API with a larger limit, set FLEET_MAX_UPLOAD_BYTES to its limit in bytes.`, EXIT.usage)
 }
 
 /**
@@ -81,8 +97,9 @@ export async function ignorePatterns(dir: string): Promise<string[]> {
  * and the control plane rejects anything over its limit anyway — a stream would
  * only defer discovering that until after the upload.
  */
-export async function packContext(dir: string): Promise<Buffer> {
-  const excludes = await ignorePatterns(dir)
+export async function packContext(dir: string, dockerfile = 'Dockerfile'): Promise<Buffer> {
+  const limit = uploadLimit()
+  const excludes = await ignorePatterns(dir, dockerfile)
   const args = [
     '-czf',
     '-',
@@ -135,7 +152,17 @@ export async function packContext(dir: string): Promise<Buffer> {
       reject(new CliError(message, EXIT.failure))
     }
 
-    child.stdout.on('data', (c: Buffer) => chunks.push(c))
+    let bytes = 0
+    child.stdout.on('data', (c: Buffer) => {
+      if (settled) return
+      bytes += c.length
+      try { checkUploadSize(bytes, limit) } catch (err) {
+        child.kill()
+        fail((err as Error).message)
+        return
+      }
+      chunks.push(c)
+    })
     child.stderr.on('data', (c: Buffer) => (stderr += c.toString()))
     child.on('error', (err) =>
       fail(`Could not run tar to package the build context: ${err.message}`)
@@ -191,6 +218,8 @@ export async function uploadContext(
 ): Promise<{ contextId: string; bytes: number }> {
   const { request } = await import('./api.js')
   const archive = packed ?? await packContext(dir)
+  checkUploadSize(archive.length)
+  if (archive.length > uploadLimit() * 0.8) console.error(`Warning: build context is ${humanBytes(archive.length)} and close to the upload limit. Consider .fleetignore.`)
 
   const { body } = await request<{ contextId: string; bytes: number }>(
     'POST',

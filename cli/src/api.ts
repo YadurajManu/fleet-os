@@ -114,6 +114,9 @@ export async function request<T = any>(
     body = text
   }
 
+  if (res.status === 413 && opts.raw) {
+    throw new CliError(`Build context upload (${opts.raw.data.byteLength} bytes) was rejected with HTTP 413 by the API or proxy. Reduce it with .fleetignore or .dockerignore, or configure the proxy upload limit.`, EXIT.usage)
+  }
   if (res.status >= 400) {
     const err = (body as { error?: { code?: string; message?: string; detail?: unknown } }).error
     throw new CliError(
