@@ -1,0 +1,19 @@
+fleet ▸ homelab  ▲ DEGRADED
+1 node online · 1 of 3 services running · 2 failed
+
+NODES
+NODE          PLATFORM     ROLE     LOAD          MEMORY       RUNS       STATUS
+● pi-builder  linux/arm64  builder  ##...... 21%  2.8 / 4.0GB  db, cache  ● online
+
+SERVICES
+SERVICE     NODE        STATUS     LAST DEPLOY  FAILURES (7D)
+db          pi-builder  ● running  0s ago       0
+web         pi-builder  ✖ failed   0s ago       2
+wa-gateway  pi-builder  ✖ failed   0s ago       2
+
+PROBLEMS
+✖ web, wa-gateway  build disk monitor timed out
+  → fleet logs web --follow
+  → fleet logs wa-gateway --follow
+
+updated 0s ago · --watch for live view · --json for scripts

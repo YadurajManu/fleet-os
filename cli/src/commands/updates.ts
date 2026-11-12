@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { request, requireFleet } from '../api.js'
 import { loadProfile } from '../config.js'
-import { c, table } from '../render.js'
+import { c, table, section, statusBadge, terminalLink } from '../render.js'
 import type { Flags } from '../args.js'
 
 type Health = { status: string; version: string; revision?: string }
@@ -51,18 +51,21 @@ export const updatesCommand = {
       return
     }
 
-    console.log(table(['component', 'installed', 'state'], [
-      ['control plane', health?.revision || (profile.api ? 'unknown' : 'not configured'), health?.status || serverError || 'run fleet auth login'],
-      ['CLI', local.version, 'on this computer'],
+    console.log(`${section('Versions')}\n${table(['component', 'installed', 'state'], [
+      ['control plane', health?.revision || (profile.api ? 'unknown' : 'not configured'), statusBadge(health?.status || serverError || 'not configured')],
+      ['CLI', local.version, `${statusBadge('online')} local`],
       ['agents', fleet ? `${nodes.filter((node) => node.live).length}/${nodes.length} online` : 'unknown', fleet ? `auto-upgrade ${fleet.agentAutoUpgrade ? 'on' : 'off'}` : nodeError || 'sign in to inspect'],
-    ]))
+    ], { priorities: [0, 2, 0] })}`)
     if (nodes.length) {
-      console.log('\nnodes')
-      console.log(table(['name', 'agent', 'heartbeat', 'auto-upgrade'], nodes.map((node) => nodeVersionLine(node, fleet?.agentAutoUpgrade))))
+      console.log(`\n${section('Agents')}\n${table(['node', 'agent', 'heartbeat', 'auto-upgrade'], nodes.map((node) => {
+        const [name, version, heartbeat, policy] = nodeVersionLine(node, fleet?.agentAutoUpgrade)
+        return [name!, version!, statusBadge(node.live ? 'online' : 'offline'), policy!]
+      }), { priorities: [0, 2, 0, 3] })}`)
     }
-    console.log(`\n${c.dim('Server:')} run sudo ./deploy/upgrade.sh check on the Compose host; then sudo ./deploy/upgrade.sh apply.`)
-    console.log(`${c.dim('CLI:')} npm install -g @yadurajfleetos/cli@latest`)
-    console.log(`${c.dim('Agents:')} publish verified binaries, enable auto-upgrade for a canary fleet, and check fresh heartbeats.`)
-    console.log(`${c.dim('Guide:')} https://github.com/YadurajManu/fleet-os/blob/main/docs/updates.md`)
+    console.log(`\n${section('Upgrade steps')}`)
+    console.log(`${c.dim('Server')}  ${c.cyan('sudo ./deploy/upgrade.sh check')} then ${c.cyan('sudo ./deploy/upgrade.sh apply')}`)
+    console.log(`${c.dim('CLI')}     ${c.cyan('npm install -g @yadurajfleetos/cli@latest')}`)
+    console.log(`${c.dim('Agents')}  publish verified binaries, enable auto-upgrade for a canary fleet, then check fresh heartbeats.`)
+    console.log(`${c.dim('Guide')}   ${terminalLink('updates documentation', 'https://github.com/YadurajManu/fleet-os/blob/main/docs/updates.md')}`)
   },
 }

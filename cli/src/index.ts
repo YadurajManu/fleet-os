@@ -3,13 +3,14 @@ import { pathToFileURL } from 'node:url'
 import { realpathSync } from 'node:fs'
 import { CliError, EXIT } from './api.js'
 import { loadProfile } from './config.js'
-import { c, unicode, visibleLength } from './render.js'
+import { c, unicode, visibleLength, glyphs, hint } from './render.js'
 import { banner } from './mark.js'
 import { suggest } from './suggestions.js'
 import { compactWelcome, descriptionRows, operationHeader, pairingHelp } from './presentation.js'
 import { setQuiet } from './ui.js'
 import { commands, type Command } from './commands/index.js'
 import { parseArgs, KNOWN_FLAGS, nearestFlag, type Flags } from './args.js'
+import { translateFailure } from './error-translation.js'
 
 export type { Flags }
 export { parseArgs }
@@ -52,7 +53,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
       ['domains check <service> [host]', 'Check ownership and routing DNS'],
       ['domains primary <service> <host>', 'Choose the URL shown after deploy'],
       ['domains rm <service> <host>', 'Remove an additional URL; keep the permanent Fleet address'],
-      ['status [--watch]', 'Live fleet health, affected services, recent activity, and recovery actions'],
+      ['status [--watch] [--all] [--verbose]', 'Live health, grouped problems, and recent activity'],
       ['services', 'List services and where they are running'],
       ['nodes', 'List nodes'],
       ['where <service>', 'Explain where a service would be placed, and why'],
@@ -114,10 +115,12 @@ const OPTIONS: Array<[string, string]> = [
   ['--as <KEY>', 'Choose another destination key when copying a secret'],
   ['--no-wait', 'Return once scheduled, without following the rollout'],
   ['--message <text>', 'Attach a short note to a local snapshot release'],
-  ['--watch', 'Refresh fleet status every five seconds'],
+  ['--watch', 'Refresh fleet status every two seconds; requires a terminal'],
+  ['--all', 'Show up to 200 recent fleet events in status'],
   ['--nodes, --services, --failures', 'Focus fleet status on one operational view'],
   ['--since <30m|24h|7d>', 'Limit status activity to a recent time window'],
-  ['--color auto|always|never', 'Control colors; NO_COLOR disables automatic colors'],
+  ['--color auto|always|never', 'Control colors; NO_COLOR always disables color'],
+  ['--no-color', 'Disable colors and terminal hyperlinks'],
   ['--no-animation', 'Use static progress lines'],
   ['--ascii', 'Use symbols supported by basic terminals'],
   ['-h, --help', 'Show help'],
@@ -255,9 +258,9 @@ if (invokedDirectly) {
 }
 
 function onError(err: unknown) {
-  const arrow = unicode ? '↳' : '->'
+  const title = c.red(`${glyphs.fail} command failed`)
   if (err instanceof CliError) {
-    console.error(`${c.red('error')}  ${err.message}`)
+    console.error(`${title}\n  ${translateFailure(err.message)}`)
     let fullDetail = err.message
     if (err.detail) {
       const lines = Array.isArray(err.detail) ? err.detail : [err.detail]
@@ -266,27 +269,17 @@ function onError(err: unknown) {
           typeof line === 'string'
             ? line
             : `${(line as { path?: string }).path ?? ''} ${(line as { message?: string }).message ?? JSON.stringify(line)}`
-        console.error('  ' + text)
+        console.error(`  ${text}`)
         fullDetail += ' ' + text
       }
     }
     const hints = suggest(fullDetail)
-    if (hints && hints.length > 0) {
-      console.error('')
-      for (const hint of hints) {
-        console.error(`  ${c.dim(arrow)} ${c.dim(hint)}`)
-      }
-    }
+    console.error(hint(hints?.[0] ?? (err.exitCode === EXIT.usage ? 'fleet --help' : 'fleet doctor')))
     process.exit(err.exitCode)
   }
   const msg = err instanceof Error ? err.message : String(err)
-  console.error(`${c.red('error')}  ${msg}`)
+  console.error(`${title}\n  ${translateFailure(msg)}`)
   const hints = suggest(msg)
-  if (hints && hints.length > 0) {
-    console.error('')
-    for (const hint of hints) {
-      console.error(`  ${c.dim(arrow)} ${c.dim(hint)}`)
-    }
-  }
+  console.error(hint(hints?.[0] ?? 'fleet doctor'))
   process.exit(EXIT.failure)
 }

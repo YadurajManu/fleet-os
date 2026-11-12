@@ -2,7 +2,7 @@ import { readFile, writeFile, access } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { parseDocument } from 'yaml'
 import { request, streamRequest, requireFleet, CliError, EXIT } from '../api.js'
-import { c, table, statusColour, keyValues, relativeTime, mb } from '../render.js'
+import { c, table, statusColour, statusBadge, terminalLink, keyValues, relativeTime, mb } from '../render.js'
 import { task, glyph } from '../ui.js'
 import { withLadder } from '../ladder.js'
 import { canPrompt, confirm, select } from '../prompt.js'
@@ -260,12 +260,13 @@ export const servicesCommand = {
           ['service', 'url', 'placement', 'node', 'sha', 'status'],
           group.map((s) => [
             s.name + (s.persistentVolume ? c.dim(' ⛁') : ''),
-            s.domain ?? s.hostname ?? c.dim('—'),
+            (s.domain ?? s.hostname) ? terminalLink(s.domain ?? s.hostname!, /^https?:\/\//.test(s.domain ?? s.hostname!) ? (s.domain ?? s.hostname!) : `https://${s.domain ?? s.hostname}`) : c.dim('—'),
             s.placementPolicy,
             s.current?.nodeName ?? c.dim('—'),
             s.current?.gitSha?.slice(0, 7) ?? c.dim('—'),
-            s.current ? statusColour(s.current.status) : c.dim('not deployed'),
-          ])
+            statusBadge(s.current?.status ?? 'not deployed'),
+          ]),
+          { priorities: [0, 6, 5, 3, 4, 0] }
         )
       )
     }

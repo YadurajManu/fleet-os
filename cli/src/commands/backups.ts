@@ -7,7 +7,8 @@
  * and until now there was no way to get a copy of them off it.
  */
 import { request, requireFleet, CliError, EXIT } from '../api.js'
-import { c, table, relativeTime } from '../render.js'
+import { c, table, section, statusBadge, problemBlock, relativeTime } from '../render.js'
+import { translateFailure } from '../error-translation.js'
 import { glyph, task } from '../ui.js'
 import type { Flags } from '../args.js'
 
@@ -47,13 +48,6 @@ async function resolveService(fleetId: string, name: string): Promise<Service> {
     )
   }
   return match
-}
-
-const STATUS_TONE: Record<Backup['status'], (s: string) => string> = {
-  complete: c.green,
-  running: c.yellow,
-  pending: c.dim,
-  failed: c.red,
 }
 
 export const backupCommand = {
@@ -121,26 +115,23 @@ export const backupsCommand = {
       return
     }
 
-    console.log(
-      table(
+    console.log(`${section(`${service.name} backups`)}\n${table(
         ['when', 'status', 'size', 'source', 'id'],
         body.backups.map((b) => [
           relativeTime(b.createdAt),
-          STATUS_TONE[b.status](b.status),
+          statusBadge(b.status),
           b.sizeBytes ? humanBytes(b.sizeBytes) : c.dim('—'),
           b.scheduled ? c.dim('scheduled') : c.dim('manual'),
           c.dim(b.id.slice(0, 8)),
-        ])
-      )
-    )
+        ]),
+        { priorities: [0, 0, 2, 3, 1] }
+      )}`)
 
     // Failures are the half people come here for, and a table cell is too
     // narrow to say anything useful about one.
     const failed = body.backups.filter((b) => b.status === 'failed' && b.failureReason)
     for (const b of failed.slice(0, 3)) {
-      console.log(
-        `\n${glyph.warn} ${c.yellow(b.id.slice(0, 8))}  ${b.failureReason!.split('\n')[0]!.slice(0, 160)}`
-      )
+      console.log(`\n${problemBlock(`backup ${b.id.slice(0, 8)} failed`, translateFailure(b.failureReason!), `fleet backup ${service.name}`)}`)
     }
 
     const complete = body.backups.filter((b) => b.status === 'complete')
