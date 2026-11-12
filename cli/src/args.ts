@@ -11,6 +11,7 @@ export function parseArgs(argv: string[]): { positional: string[]; flags: Flags 
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
+    if (arg === '--') { positional.push(...argv.slice(i)); break }
     if (!arg.startsWith('-')) {
       positional.push(arg)
       continue

@@ -292,7 +292,7 @@ export const servicesCommand = {
 const projectFlag = (flags: Flags): string | undefined =>
   typeof flags.project === 'string' ? flags.project : undefined
 
-async function findService(fleetId: string, name: string, project?: string): Promise<Service> {
+export async function findService(fleetId: string, name: string, project?: string): Promise<Service> {
   const { body } = await request<{ services: Service[] }>('GET', `/fleets/${fleetId}/services`)
 
   const byId = body.services.find((s) => s.id === name)

@@ -22,6 +22,7 @@ export const PERMISSIONS = {
   'events.read': 'viewer',
 
   'service.deploy': 'deployer',
+  'service.exec': 'deployer',
   'service.rollback': 'deployer',
   'service.reschedule': 'deployer',
   'secret.write': 'deployer',

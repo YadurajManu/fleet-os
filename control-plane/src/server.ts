@@ -11,6 +11,7 @@ import { webhookRoutes } from './api/webhooks.routes.js'
 import { githubRoutes } from './api/github.routes.js'
 import { installRoutes } from './api/install.routes.js'
 import { serviceRoutes } from './api/services.routes.js'
+import { taskRoutes } from './api/tasks.routes.js'
 import { domainRoutes } from './api/domains.routes.js'
 import { secretRoutes } from './api/secrets.routes.js'
 import { backupRoutes } from './api/backups.routes.js'
@@ -111,6 +112,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   await app.register(githubRoutes)
   await app.register(installRoutes)
   await app.register(serviceRoutes)
+  await app.register(taskRoutes)
   await app.register(domainRoutes)
   await app.register(secretRoutes)
   await app.register(backupRoutes)

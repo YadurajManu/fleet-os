@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type RequestListener } from 'node:http'
 import { deployCommand } from '../src/commands/services.js'
+import { runCommand } from '../src/commands/run.js'
 import { waitForRunning } from '../src/deploy-wait.js'
 import { uploadContext } from '../src/archive.js'
 
@@ -21,6 +22,31 @@ async function withApi(handler: RequestListener, run: () => Promise<void>) {
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
 }
+
+test('run forwards literal arguments and propagates the task exit code', async () => {
+  let command: unknown
+  const previousExitCode = process.exitCode
+  await withApi((req, res) => {
+    if (req.method === 'GET') {
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ services: [{ id: 'service', name: 'web' }] }))
+    } else {
+      const chunks: Buffer[] = []
+      req.on('data', chunk => chunks.push(chunk))
+      req.on('end', () => {
+        command = JSON.parse(Buffer.concat(chunks).toString())
+        res.setHeader('content-type', 'text/event-stream')
+        res.end('event: result\ndata: {"exitCode":7,"output":"task output"}\n\n')
+      })
+    }
+  }, async () => {
+    try {
+      await runCommand.run(['web', '--', 'node', '--version'], { fleet: 'fleet', timeout: '30', json: true })
+      assert.deepEqual(command, { command: ['node', '--version'], timeoutMs: 30000 })
+      assert.equal(process.exitCode, 7)
+    } finally { process.exitCode = previousExitCode }
+  })
+})
 
 test('oversized prepacked uploads fail before making any API request', async () => {
   let calls = 0

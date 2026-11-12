@@ -16,10 +16,12 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/fleet-os/fleet-os/agent/internal/build"
+	"github.com/fleet-os/fleet-os/agent/internal/docker"
 	"github.com/fleet-os/fleet-os/agent/internal/terminal"
 )
 
 type TunnelRequest struct {
+	Task    *docker.TaskSpec  `json:"task,omitempty"`
 	Type    string            `json:"type"`
 	ID      string            `json:"id"`
 	Port    int               `json:"port"`
@@ -37,12 +39,13 @@ type TunnelRequest struct {
 }
 
 type TunnelResponse struct {
-	Type    string            `json:"type"`
-	ID      string            `json:"id"`
-	Status  int               `json:"status,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Body    string            `json:"body,omitempty"` // base64
-	Error   string            `json:"error,omitempty"`
+	Result  *docker.TaskResult `json:"result,omitempty"`
+	Type    string             `json:"type"`
+	ID      string             `json:"id"`
+	Status  int                `json:"status,omitempty"`
+	Headers map[string]string  `json:"headers,omitempty"`
+	Body    string             `json:"body,omitempty"` // base64
+	Error   string             `json:"error,omitempty"`
 
 	// Terminal session output
 	Data string `json:"data,omitempty"` // base64
@@ -70,6 +73,10 @@ const (
 )
 
 type Client struct {
+	NodeID          string
+	taskMu          sync.Mutex
+	tasks           map[string]context.CancelFunc
+	taskDocker      *docker.Client
 	Builder         *build.Executor
 	controlPlaneURL string
 	agentToken      string
@@ -89,6 +96,8 @@ func New(controlPlaneURL, agentToken string, log *slog.Logger) *Client {
 			Timeout: 30 * time.Second,
 		},
 	}
+	c.tasks = map[string]context.CancelFunc{}
+	c.taskDocker = docker.New("")
 	c.termMgr = terminal.NewManager(log, func(sessionID string, data []byte) {
 		c.sendResponse(&TunnelResponse{
 			Type: "terminal_data",
@@ -140,6 +149,9 @@ func (c *Client) buildWsURL() string {
 }
 
 func (c *Client) connectAndServe(ctx context.Context, wsURL string) error {
+	ctx, cancelTasks := context.WithCancel(ctx)
+	defer cancelTasks()
+
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+c.agentToken)
 
@@ -215,6 +227,11 @@ func (c *Client) connectAndServe(ctx context.Context, wsURL string) error {
 		}
 	}()
 
+	cleanup, stopCleanup := context.WithTimeout(ctx, 10*time.Second)
+	if err := c.taskDocker.CleanupTasks(cleanup, c.NodeID); err != nil {
+		c.log.Warn("temporary task cleanup failed", "err", err)
+	}
+	stopCleanup()
 	c.log.Info("reverse tunnel established successfully")
 	if c.Builder != nil {
 		c.Builder.Replay()
@@ -236,6 +253,14 @@ func (c *Client) connectAndServe(ctx context.Context, wsURL string) error {
 			continue
 		}
 		switch req.Type {
+		case "task_start":
+			c.startTask(ctx, req)
+		case "task_cancel":
+			c.taskMu.Lock()
+			if cancel := c.tasks[req.ID]; cancel != nil {
+				cancel()
+			}
+			c.taskMu.Unlock()
 		case "http_request":
 			go c.handleHttpRequest(&req)
 		case "terminal_start":
@@ -359,4 +384,28 @@ func (c *Client) SendBuild(ev build.Event) {
 	}
 	_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 	_ = c.conn.WriteJSON(ev)
+}
+
+// Register before spawning so a cancellation cannot overtake task creation.
+func (c *Client) startTask(ctx context.Context, req TunnelRequest) {
+	c.taskMu.Lock()
+	if req.Task == nil || c.NodeID == "" || c.tasks[req.ID] != nil || len(c.tasks) >= 2 {
+		c.taskMu.Unlock()
+		c.sendResponse(&TunnelResponse{Type: "task_result", ID: req.ID, Result: &docker.TaskResult{ExitCode: -1, Error: "task unavailable or concurrency limit reached"}})
+		return
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	c.tasks[req.ID] = cancel
+	c.taskMu.Unlock()
+	spec := *req.Task
+	spec.ID, spec.NodeID = req.ID, c.NodeID
+	go func() {
+		defer cancel()
+		defer func() { c.taskMu.Lock(); delete(c.tasks, req.ID); c.taskMu.Unlock() }()
+		result := c.taskDocker.RunTask(ctx, spec)
+		if len(result.Error) > 2000 {
+			result.Error = result.Error[:2000]
+		}
+		c.sendResponse(&TunnelResponse{Type: "task_result", ID: req.ID, Result: &result})
+	}()
 }

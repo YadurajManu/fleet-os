@@ -18,6 +18,12 @@ test('object build plans and defaults keep the context and selected Dockerfile',
   assert.equal(planFromManifest('services:\n  web: {build: ./web}\n')[0]!.build, './web')
 })
 
+test('task arguments after -- are never interpreted as Fleet flags', () => {
+  const result = parseArgs(['run', 'web', '--timeout', '30', '--', 'node', '--version', '--json'])
+  assert.deepEqual(result.positional, ['run', 'web', '--', 'node', '--version', '--json'])
+  assert.deepEqual(result.flags, { timeout: '30' })
+})
+
 test('Compose imports retain build targets, Dockerfiles and arguments', () => {
   const result = composeToFleet('services:\n  worker:\n    build: {context: ., dockerfile: docker/Worker, target: worker, args: {MODE: public}}\n', { fleet: 'test' })
   const build = parseYaml(result.manifest).services.worker.build

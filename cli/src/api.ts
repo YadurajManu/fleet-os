@@ -234,12 +234,9 @@ export async function streamRequest<TProgress = any, TResult = any>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    try {
-      const json = JSON.parse(text)
-      throw new CliError(json.message ?? `HTTP ${res.status}`, EXIT.failure)
-    } catch {
-      throw new CliError(`HTTP ${res.status}: ${text}`, EXIT.failure)
-    }
+    let body: { error?: { message?: string }; message?: string } | null = null
+    try { body = JSON.parse(text) } catch { /* A proxy may return HTML. */ }
+    throw new CliError(body?.error?.message ?? body?.message ?? `HTTP ${res.status}: ${text.slice(0, 400)}`, EXIT.failure)
   }
 
   const contentType = res.headers.get('content-type') ?? ''

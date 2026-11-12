@@ -245,6 +245,7 @@ func run() error {
 	// Reverse tunnel connects to the control plane and multiplexes incoming
 	// HTTP ingress requests directly to local containers behind NAT/firewalls.
 	tunnelClient := tunnel.New(saved.ControlPlaneURL, saved.AgentToken, log)
+	tunnelClient.NodeID = saved.NodeID
 	builder := build.New(filepath.Join(filepath.Dir(*statePath), "builds"), builderConfig, tunnelClient.SendBuild)
 	tunnelClient.Builder = builder
 	go tunnelClient.Run(ctx)
