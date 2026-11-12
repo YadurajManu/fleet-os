@@ -23,3 +23,16 @@ func TestParseEngineDisk(t *testing.T) {
 		t.Fatal("accepted malformed measurement")
 	}
 }
+
+func TestLargeDisksUseABoundedAutomaticReserve(t *testing.T) {
+	const gb = int64(1 << 30)
+	budget := DiskHeadroom(30*gb, 500*gb, 100*gb, 1000*gb, 5*gb)
+	if budget.Reserve != 10*gb || budget.Preflight(20*gb) != nil {
+		t.Fatal(budget)
+	}
+	// An explicit higher minimum is never reduced by the automatic cap.
+	budget = DiskHeadroom(30*gb, 500*gb, 100*gb, 1000*gb, 25*gb)
+	if budget.Reserve != 25*gb || budget.Preflight(20*gb) == nil {
+		t.Fatal(budget)
+	}
+}

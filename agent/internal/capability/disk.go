@@ -11,8 +11,8 @@ import (
 type DiskBudget struct{ Free, Reserve int64 }
 
 func DiskHeadroom(hostFree, hostTotal, engineFree, engineTotal, minimumReserve int64) DiskBudget {
-	hostReserve := max(minimumReserve, hostTotal/10)
-	engineReserve := max(minimumReserve, engineTotal/10)
+	hostReserve := max(minimumReserve, min(hostTotal/10, 10<<30))
+	engineReserve := max(minimumReserve, min(engineTotal/10, 10<<30))
 	if hostFree-hostReserve < engineFree-engineReserve {
 		return DiskBudget{hostFree, hostReserve}
 	}
