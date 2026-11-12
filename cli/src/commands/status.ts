@@ -5,7 +5,7 @@ import type { Flags } from '../args.js'
 
 type MapNode = { id: string; name: string; arch: string; status: string; reliabilityTier: string; ramMb: number; freeRamMb: number; loadFactor: number | null; services: Array<{ name: string; policy: string; status: string }> }
 type Node = {
-  id: string; name: string; arch: string; platform?: string | null; engineKind?: string | null; status: string
+  id: string; name: string; arch: string; platform?: string | null; engineKind?: string | null; status: string; schedulable?: boolean
   reliabilityTier: string; ramMb: number; effectiveCpu?: number | null; effectiveMemBytes?: number | null
   tunnelConnected?: boolean; diskMb?: number; buildCacheFreeBytes?: number; buildDiskReserveBytes?: number; agentVersion?: string | null; canBuild?: boolean; live: boolean; lastHeartbeatAt: string | null
   telemetry: { cpuPct: number; ramUsedMb: number; containers: Array<{ name: string }>; ageMs?: number; runtime?: { dockerError?: string; registryError?: string; lastReconcileError?: string } } | null
@@ -51,7 +51,7 @@ async function snapshot(fleetId: string, flags: Flags): Promise<StatusSnapshot> 
   }
 }
 
-const nodeStatus = (node: Node): string => node.live ? node.status === 'cordoned' ? 'cordoned' : 'online' : 'offline'
+const nodeStatus = (node: Node): string => !node.live ? 'offline' : node.status === 'cordoned' ? 'cordoned' : 'online'
 
 export function affectedServices(data: StatusSnapshot): Service[] {
   const offlineIds = new Set(data.nodes.filter((node) => !node.live).map((node) => node.id))
@@ -98,6 +98,7 @@ function renderCapabilities(data: StatusSnapshot, verbose = false): string {
     const parts: Array<string | null | undefined> = [node.engineKind, node.agentVersion ? `agent v${node.agentVersion.replace(/^v/, '')}` : null]
     if (node.canBuild) parts.push('builder')
     if (verbose) {
+      parts.push(node.status === 'cordoned' ? 'cordoned · run fleet nodes uncordon' : node.schedulable === false ? 'unschedulable' : 'schedulable')
       parts.push(node.tunnelConnected ? 'tunnel connected' : 'tunnel disconnected')
       parts.push(node.live && node.diskMb != null ? `${mb(node.diskMb)} disk available (last heartbeat)` : 'disk availability unknown')
       if (node.canBuild) parts.push(`${mb((node.buildDiskReserveBytes ?? 0) / 1048576)} build disk reserve`)
@@ -128,7 +129,9 @@ function renderProblems(data: StatusSnapshot): string[] {
   for (const node of data.nodes.filter((item) => !item.live)) lines.push(`${c.red(glyphs.fail)} ${node.name} stopped reporting ${relativeTime(node.lastHeartbeatAt)}`)
   for (const service of affectedServices(data)) {
     const status = service.current?.status ?? service.last?.status ?? 'not deployed'
-    lines.push(`${c.red(glyphs.fail)} ${service.name} ${status}${service.last?.failureReason ? ` · ${service.last.failureReason}` : ''}`)
+    const node = data.nodes.find((item) => item.id === service.current?.nodeId)
+    const cordoned = status === 'pinned_unavailable' && node?.status === 'cordoned'
+    lines.push(`${c.red(glyphs.fail)} ${service.name} ${cordoned ? 'node_cordoned' : status}${service.last?.failureReason ? ` · ${service.last.failureReason}` : ''}${cordoned ? ` · run fleet nodes uncordon ${node.name}, then fleet deploy ${service.name}` : ''}`)
   }
   for (const service of data.unplaced) lines.push(`${c.yellow(glyphs.warn)} ${service} has no eligible node`)
   return [...new Set(lines)]
@@ -143,6 +146,12 @@ function nextActions(data: StatusSnapshot): string[] {
   const actions = new Set<string>()
   if (data.nodes.some((node) => !node.live)) actions.add('fleet doctor')
   for (const service of affectedServices(data)) {
+    const node = data.nodes.find((item) => item.id === service.current?.nodeId)
+    if (service.current?.status === 'pinned_unavailable' && node?.status === 'cordoned') {
+      actions.add(`fleet nodes uncordon ${node.name}`)
+      actions.add(`fleet deploy ${service.name}`)
+      continue
+    }
     actions.add(`fleet logs ${service.name} --follow`)
     if (data.nodes.some((node) => node.live)) actions.add(`fleet reschedule ${service.name}`)
   }

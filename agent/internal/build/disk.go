@@ -14,6 +14,7 @@ import (
 func watchDisk(ctx context.Context, stop context.CancelFunc, interval time.Duration, sample func(context.Context) error) <-chan error {
 	result := make(chan error, 1)
 	go func() {
+		failures := 0
 		tick := time.NewTicker(interval)
 		defer tick.Stop()
 		for {
@@ -25,10 +26,20 @@ func watchDisk(ctx context.Context, stop context.CancelFunc, interval time.Durat
 				err := sample(check)
 				cancel()
 				if err != nil && ctx.Err() == nil {
-					result <- err
+					if err.Error() == "disk budget exceeded" || err.Error() == "disk reserve breached" {
+						result <- err
+						stop()
+						return
+					}
+					failures++
+					if failures < 3 {
+						continue
+					}
+					result <- fmt.Errorf("build disk telemetry unavailable after 3 samples: %w", err)
 					stop()
 					return
 				}
+				failures = 0
 			}
 		}
 	}()

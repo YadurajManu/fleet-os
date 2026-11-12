@@ -324,7 +324,7 @@ func (c *Client) DesiredState(ctx context.Context) (*DesiredState, error) {
 // is indistinguishable from one nothing ever picked up, and the control plane
 // has nothing to time out.
 func (c *Client) ClaimBackup(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/agent/backups/"+id+"/claim", nil, nil)
+	return c.do(ctx, http.MethodPost, "/agent/backups/"+id+"/claim", struct{}{}, nil)
 }
 
 // FailBackup reports why a backup could not be made.

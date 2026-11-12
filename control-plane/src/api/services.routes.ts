@@ -248,7 +248,7 @@ export async function serviceRoutes(app: FastifyInstance) {
       const [current] = await db.select().from(deployments)
         .where(and(eq(deployments.serviceId, service.id), inArray(deployments.status, ['deploying', 'running'])))
         .orderBy(desc(deployments.startedAt)).limit(1)
-      if (!current || !current.nodeId) throw ApiError.unprocessable('not_running', `"${service.name}" has no deployment to restart`)
+      if (!current || !current.nodeId) throw ApiError.unprocessable('not_running', `"${service.name}" has no deployment to restart. Deploy it first with fleet deploy ${service.name}.`)
       const [created] = await db.transaction(async (tx) => {
         await tx.update(deployments).set({ status: 'superseded', finishedAt: new Date() }).where(eq(deployments.id, current.id))
         const created = await tx.insert(deployments).values({ serviceId: service.id, gitSha: current.gitSha, imageTags: current.imageTags, buildContext: current.buildContext, nodeId: current.nodeId, hostPort: current.hostPort, status: 'deploying' }).returning()

@@ -8,6 +8,7 @@ type Node = {
   name: string
   arch: string
   status: string
+  schedulable?: boolean
   ramMb: number
   cpuCores: number
   reliabilityTier: string
@@ -40,7 +41,7 @@ export const nodesCommand = {
             n.telemetry ? `${mb(n.telemetry.ramUsedMb)}/${mb(n.ramMb)}` : mb(n.ramMb),
             String(n.telemetry?.containers.length ?? 0),
             relativeTime(n.lastHeartbeatAt),
-            statusColour(n.status),
+            statusColour(n.status === 'cordoned' ? 'cordoned' : n.live ? n.status : 'offline'),
           ])
         )
       )

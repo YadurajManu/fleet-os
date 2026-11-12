@@ -32,6 +32,32 @@ func TestBudgetViolationCancelsSolveAndPrunes(t *testing.T) {
 		t.Fatal("cache was not pruned", err)
 	}
 }
+
+func TestWatchDiskIgnoresBriefTelemetryFailures(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	result := watchDisk(ctx, cancel, time.Millisecond, func(context.Context) error {
+		calls++
+		if calls < 3 {
+			return errors.New("context deadline exceeded")
+		}
+		return nil
+	})
+	select {
+	case err := <-result:
+		t.Fatalf("transient telemetry failure stopped the build: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if calls < 3 {
+		t.Fatalf("monitor did not recover: %d samples", calls)
+	}
+	select {
+	case <-ctx.Done():
+		t.Fatal("build was cancelled")
+	default:
+	}
+}
 func TestPruningPreservesUnrelatedAndCurrentVolumes(t *testing.T) {
 	retained := "fleet-aaaaaaaaaaaaaaaaaaaaaaaa"
 	removed := []string{}

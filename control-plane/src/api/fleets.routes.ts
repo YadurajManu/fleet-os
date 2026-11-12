@@ -175,6 +175,7 @@ export async function fleetRoutes(app: FastifyInstance) {
           const { agentTokenHash: _omit, ...safe } = n
           return {
             ...safe,
+            schedulable: n.status !== 'cordoned' && n.status !== 'draining',
             live: live.has(n.id),
             /**
              * Whether the node currently holds an open reverse tunnel.
