@@ -281,6 +281,7 @@ export const pairingTokens = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
     consumedByNodeId: uuid('consumed_by_node_id'),
+    replacementNodeId: uuid('replacement_node_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('pairing_tokens_hash_key').on(t.tokenHash)]

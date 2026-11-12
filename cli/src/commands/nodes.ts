@@ -47,6 +47,12 @@ export const nodesCommand = {
       return
     }
 
+    if (sub === 'rename') {
+      if (!target || !args[2]) throw new CliError('usage: fleet nodes rename <node> <new-name>', EXIT.usage)
+      const node = await findNode(fleetId, target)
+      const { body } = await request('PATCH', `/fleets/${fleetId}/nodes/${node.id}`, { body: { name: args[2] } })
+      return console.log(flags.json ? JSON.stringify(body) : `${node.name} renamed to ${args[2]}; identity and service placement preserved`)
+    }
     if (sub === 'pair') {
       return pairNode(fleetId, flags)
     }
@@ -115,7 +121,7 @@ export const nodesCommand = {
       return
     }
 
-    throw new CliError('usage: fleet nodes [ls|pair|upgrade|cordon|uncordon|rm]', EXIT.usage)
+    throw new CliError('usage: fleet nodes [ls|pair|rename|upgrade|cordon|uncordon|rm]', EXIT.usage)
   },
 }
 

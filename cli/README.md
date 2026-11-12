@@ -208,3 +208,28 @@ The default compressed upload limit is 95,000,000 bytes. Large contexts fail
 locally with cleanup advice; proxy 413 responses also explain how to reduce them.
 Self-hosted installations can set `FLEET_MAX_UPLOAD_BYTES` on the CLI to their
 actual server/proxy limit (at most 256 MiB); this does not raise server limits.
+
+## Recovering nodes and reusing secrets
+
+```sh
+fleet status --verbose
+fleet nodes rename old-name new-name
+fleet nodes pair --replace existing-node --target linux
+fleet secrets clone DATABASE_URL --to worker
+fleet secrets clone DATABASE_URL --from-service web --to worker --as WORKER_DATABASE_URL
+```
+
+Status distinguishes connection state, last reported runtime errors and measurement
+age. Stale measurements are unavailable rather than displayed as live capacity.
+
+Stop the old agent before replacement. Run the generated installation command on
+a replacement machine without a saved Fleet identity. Replacement preserves the
+node ID, name, cordon state and pinned services, and revokes the old credential.
+It does not move local data volumes: restore them before starting stateful services.
+Restart an already paired agent normally; never re-pair it just to restart it.
+A duplicate hostname is refused with recovery instructions.
+
+Secret copying works between fleet and service scopes within the selected fleet.
+Values never leave the server, and destination values are never overwritten.
+Use another destination key if it already exists. Redeploy affected services after
+copying; running containers keep their current environment.

@@ -49,6 +49,7 @@ export function parseArgs(argv: string[]): { positional: string[]; flags: Flags 
  * a real flag used on the wrong command; that is a smaller wrong than this.
  */
 export const KNOWN_FLAGS = new Set([
+  'replace', 'as', 'from-service', 'verbose',
   // global
   'fleet', 'api', 'json', 'yes', 'y', 'help', 'h', 'version', 'v', 'no-wait',
   'plan', 'dry-run', 'force', 'dir', 'file', 'manifest',

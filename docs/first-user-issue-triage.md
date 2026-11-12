@@ -7,13 +7,13 @@ Reviewed 2026-11-11. There are **25 reports**, numbered in their original order 
 | ID | Report | Status / next action |
 | --- | --- | --- |
 | F-001 | No fleet discovery | Fixed locally: `fleet use` lists accessible fleets and marks active selection; JSON available. |
-| F-002 | Malformed pairing token called missing | Present: registration groups missing and malformed bearer tokens; split responses and cover HTTP behavior. |
+| F-002 | Malformed pairing token called missing | Implemented locally: distinct missing, malformed, invalid, expired and already-used pairing errors with recovery advice. |
 | F-003 | Explicit pairing token ignored with saved state | Implemented and validated locally: explicit pairing tokens conflict with saved identity before upgrade/network work. Existing credentials are kept; ordinary restarts resume normally. |
-| F-004 | Node rename missing | Pending: CLI/API rename with uniqueness validation and audit trail. |
-| F-005 | Re-pair creates duplicate hostname | Present: registration suffixes names. Hostname alone cannot safely prove machine identity; require authenticated replacement rather than silently claiming another node. |
+| F-004 | Node rename missing | Implemented locally: CLI/API and dashboard rename with format validation, database uniqueness and audit records; node identity is preserved. |
+| F-005 | Re-pair creates duplicate hostname | Implemented locally: duplicate hostnames are refused. Explicit admin-authorized replacement tokens preserve node identity and pinned services, rotate credentials and reject a connected old agent. |
 | F-006 | Disk reserve excludes laptops | Implemented locally: automatic reserve is capped at 10 GiB on host and engine independently, while explicit higher configured reserves remain enforced. Disk budget and monitoring safeguards are preserved. |
 | F-007 | Empty secret import aborts | Fixed locally: selected empty and whitespace-only values skipped with key/line warning, including dry runs; all-empty imports make no requests. Parser keeps empty values intact. |
-| F-008 | Secret clone missing | Pending: server-side authorized copy; preserve write-only values and fleet/service access controls. |
+| F-008 | Secret clone missing | Implemented locally: CLI/API and dashboard server-side copies between fleet/service scopes within one fleet, with authorization and audit records. Existing values are preserved; responses never contain values. |
 | F-009 | Dockerfile targets unsupported | Implemented locally: build accepts context/dockerfile/target/args objects and legacy strings. Settings persist through migration 0033, manual/Git builds, cache identity and delegated/local runners. Old builders cannot silently ignore targets. |
 | F-010 | Reconcile error hidden until rollout timeout | Implemented and validated locally: deployment-specific errors reach progress, explain, dashboard and history even without containers. Permanent image errors fail immediately; transient structured errors get a retry grace. Recovery clears errors. |
 | F-011 | Bare Postgres digest reference | Existing: `pinnedImage` qualifies bare names with `docker.io/library/`. Verify managed database path and regression coverage. |
@@ -27,10 +27,10 @@ Reviewed 2026-11-11. There are **25 reports**, numbered in their original order 
 | F-019 | One-off exec/task missing | Implemented locally: fleet run executes a bounded temporary container with the service image, resolved environment/secrets and private network. Includes role/fleet checks, audit metadata, exit status/output, cancellation/timeout cleanup and restart/reconnect reaping. Persistent service volumes are not mounted. |
 | F-020 | Build secret injection unavailable | Existing: `build_args` and `build_secrets` schema, agent BuildKit secret mounts and documentation in `agent-delegated-builds.md`. Verify usability/discoverability; public frontend variables are embedded in client bundles. |
 | F-021 | Shared monorepo builds wrong stage | Implemented locally with F-009: worker and gateway can select their own Dockerfile stage, including through Compose imports; distinct targets cannot reuse an incorrect cached result. |
-| F-022 | BuildKit memory too restrictive | Pending: agent uses assignment memory; inspect control-plane allocation/config before changing resource enforcement. |
+| F-022 | BuildKit memory too restrictive | Implemented locally: removed fixed 2 GiB BuildKit assignment. Each build receives 75% of its uncommitted memory share after dividing capacity among configured concurrent slots. Regression checks cover low and high memory; no real OOM workload reproduced. |
 | F-023 | Setting dozens of secrets cumbersome | F-007 restores file-based bulk import. Keep values out of argv/shell history; assess remaining batch UX through import. |
 | F-024 | Cannot reattach deployment progress | Implemented locally: fleet deploy attach <service> [--deploy <id>] follows the exact attempt through existing progress APIs. Reattachment performs GET requests only; superseded/failed attempts stop with a reason. |
-| F-025 | Status hides useful telemetry | Pending: verbose output should surface current telemetry and errors without presenting stale metrics as live. |
+| F-025 | Status hides useful telemetry | Implemented locally: verbose CLI reports tunnel state, disk availability and last runtime errors; stale or missing measurement ages suppress live resource readings. |
 
 ## First batch validation
 
@@ -112,3 +112,16 @@ Task limits: two simultaneous tasks per node, 60-second default timeout (1–600
 The default compressed upload limit is 95,000,000 bytes; FLEET_MAX_UPLOAD_BYTES can set the actual self-hosted limit up to 256 MiB. .fleetignore adds exclusion patterns to .dockerignore; negated ! patterns in .fleetignore are explicitly rejected. A custom Dockerfile inside an excluded directory is reported before upload rather than exposing the directory's other files. Existing .dockerignore negation behavior is unchanged.
 
 Native Windows runtime and production execution of the new protocol remain unverified. Temporary test resources were isolated from production and removed after validation.
+
+## Setup and operations batch — 2026-11-12
+
+F-002/004/005/008/022/025 are implemented and committed locally; they remain
+unpushed and undeployed. Migration 0034 stores the authorized replacement node
+on a single-use pairing token. Do not replace a stateful node before restoring its
+local data: identity preservation does not transfer volumes. Secret cloning is
+limited to scopes in one authorized fleet and never overwrites destination values.
+BuildKit memory now scales with eligible capacity; this removes the confirmed
+hard-coded limit but does not guarantee every application's build will fit.
+
+Validation: server 650/650 tests, CLI 212/212 tests and dashboard 27/27 tests pass. Typechecks pass for all three packages, and production builds pass. Migration 0034 applied successfully in the isolated test database. This batch was committed at the operator’s request; no push or deployment was performed. Interactive browser usability,
+real replacement hardware and a real memory-intensive build remain unverified.

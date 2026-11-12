@@ -46,6 +46,10 @@ export default function Secrets() {
   const services = usePoll(() => api<{ services: Array<{ id: string; name: string }> }>(`/fleets/${id}/services`), `/fleets/${id}/services`)
   const idOf = (name: string) => services.data?.services.find((x) => x.name === name)?.id
 
+  const [copying, setCopying] = useState<Secret | null>(null)
+  const [copyTo, setCopyTo] = useState('fleet')
+  const [copyKey, setCopyKey] = useState('')
+  const [copyDone, setCopyDone] = useState('')
   const [removing, setRemoving] = useState<Secret | null>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<unknown>(null)
@@ -129,6 +133,7 @@ export default function Secrets() {
                     {since(s.updatedAt)}
                   </td>
                   <td className="px-4 py-2.5 text-right">
+                    <Button variant="ghost" onClick={() => { setCopying(s); setCopyKey(s.key); setCopyTo('fleet'); setActionError(null); setCopyDone('') }}>copy</Button>
                     <Button variant="ghost" onClick={() => setRemoving(s)}>
                       remove
                     </Button>
@@ -140,6 +145,23 @@ export default function Secrets() {
         )}
       </Panel>
 
+      {copyDone && <p role="status">{copyDone}</p>}
+      {copying && <form className="rounded-lg border border-[var(--color-line)] p-4 space-y-3" onSubmit={async event => {
+        event.preventDefault(); setBusy(true); setActionError(null)
+        try {
+          const fromServiceId = copying.service ? idOf(copying.service) : null
+          if (copying.service && !fromServiceId) throw new Error('Source service is unavailable. Refresh and try again.')
+          await api(`/fleets/${id}/secrets/clone`, { method: 'POST', body: { key: copying.key, fromServiceId, toServiceId: copyTo === 'fleet' ? null : copyTo, toKey: copyKey } })
+          setCopyDone(`${copyKey} copied. Redeploy affected services to use it.`); setCopying(null); refetch()
+        } catch (err) { setActionError(err) } finally { setBusy(false) }
+      }}>
+        <h2>Copy {copying.key}</h2>
+        <p>The value stays hidden. Existing destination values are never overwritten.</p>
+        <label>Destination <select value={copyTo} onChange={e => setCopyTo(e.target.value)}><option value="fleet">Every service in this fleet</option>{services.data?.services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+        <label>Key <input required pattern="[A-Z_][A-Z0-9_]{0,127}" value={copyKey} onChange={e => setCopyKey(e.target.value)} /></label>
+        <button disabled={busy} type="submit">{busy ? 'Copying…' : 'Copy secret'}</button>{' '}
+        <button disabled={busy} type="button" onClick={() => setCopying(null)}>Cancel</button>
+      </form>}
       {removing && (
         <ConfirmDialog
           open

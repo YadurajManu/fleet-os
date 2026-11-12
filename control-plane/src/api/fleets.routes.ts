@@ -217,6 +217,14 @@ export async function fleetRoutes(app: FastifyInstance) {
     { preHandler: requireFleetPermission('node.pair') },
     async (req, reply) => {
       const { fleetId } = req.params as { fleetId: string }
+      const parsed = z.object({ replaceNodeId: z.uuid().optional() }).strict().safeParse(req.body ?? {})
+      if (!parsed.success) throw ApiError.badRequest('invalid_replacement', 'Provide a valid replacement node ID or leave it out to add a new node.')
+      const input = parsed.data
+      if (input.replaceNodeId) {
+        const [node] = await db.select().from(nodes).where(and(eq(nodes.id, input.replaceNodeId), eq(nodes.fleetId, fleetId)))
+        if (!node) throw ApiError.notFound('Replacement node')
+        if (app.ctx.tunnels.has(node.id)) throw ApiError.conflict('node_connected', 'Stop the existing agent before replacing it. Its node identity and pinned services will be preserved.')
+      }
       const token = newPairingToken()
       const expiresAt = new Date(Date.now() + PAIRING_TTL_MIN * 60_000)
 
@@ -224,6 +232,7 @@ export async function fleetRoutes(app: FastifyInstance) {
         const [pairing] = await tx.insert(pairingTokens).values({
           fleetId,
           tokenHash: hashToken(token),
+          replacementNodeId: input.replaceNodeId,
           issuedByUserId: req.userId!,
           expiresAt,
         }).returning({ id: pairingTokens.id })
@@ -233,7 +242,7 @@ export async function fleetRoutes(app: FastifyInstance) {
           action: 'node.pair_token_issued',
           targetType: 'fleet',
           targetId: fleetId,
-          metadata: { expiresAt: expiresAt.toISOString() },
+          metadata: { expiresAt: expiresAt.toISOString(), replacementNodeId: input.replaceNodeId ?? null },
         })
         return pairing!.id
       })
@@ -354,6 +363,23 @@ export async function fleetRoutes(app: FastifyInstance) {
       }
     }
   )
+
+  app.patch('/fleets/:fleetId/nodes/:nodeId', { preHandler: requireFleetPermission('node.pair') }, async (req) => {
+    const { fleetId, nodeId } = req.params as { fleetId: string; nodeId: string }
+    const input = z.object({ name: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/) }).strict().safeParse(req.body)
+    if (!input.success) throw ApiError.badRequest('invalid_node_name', 'Use 1–48 lowercase letters, numbers or hyphens; start and end with a letter or number.')
+    try {
+      return await db.transaction(async tx => {
+        const [node] = await tx.update(nodes).set({ name: input.data.name }).where(and(eq(nodes.id, nodeId), eq(nodes.fleetId, fleetId))).returning({ id: nodes.id, name: nodes.name })
+        if (!node) throw ApiError.notFound('Node')
+        await recordAudit(tx, { orgId: req.orgId!, actorUserId: req.userId, action: 'node.renamed', targetType: 'node', targetId: nodeId, metadata: { name: node.name } })
+        return { node }
+      })
+    } catch (err) {
+      if ((err as { cause?: { code?: string }; code?: string }).cause?.code === '23505' || (err as { code?: string }).code === '23505') throw ApiError.conflict('node_name_taken', 'That node name is already used in this fleet. Choose another name.')
+      throw err
+    }
+  })
 
   /** Explicit node policy overrides the fleet switch; null returns to inheritance. */
   app.patch(

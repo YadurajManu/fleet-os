@@ -8,7 +8,7 @@ import { nodes, fleets, pairingTokens, deployments, services } from '../db/schem
 import { hashToken, newAgentToken, isPairingToken } from '../lib/tokens.js'
 import { recordAudit } from '../lib/audit.js'
 import { ApiError } from './errors.js'
-import { requireAgent } from './guards.js'
+import { invalidateAgentAuth, requireAgent } from './guards.js'
 import { pendingForNode, restoresForNode } from '../backup/store.js'
 import { reclaimToNode } from '../scheduler/reclaim.js'
 import { detectDrift } from '../heartbeat/drift.js'
@@ -177,9 +177,8 @@ export async function agentRoutes(app: FastifyInstance) {
   app.post('/agent/register', async (req, reply) => {
     const header = req.headers.authorization
     const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : undefined
-    if (!token || !isPairingToken(token)) {
-      throw ApiError.unauthorized('A pairing token is required to register')
-    }
+    if (!header || header === 'Bearer ') throw new ApiError(401, 'pairing_token_missing', 'Pairing token missing. Generate a command with fleet nodes pair.')
+    if (!token || !isPairingToken(token)) throw new ApiError(401, 'pairing_token_malformed', 'Malformed pairing token. Copy the complete installation command from fleet nodes pair.')
 
     const parsed = capability.safeParse(req.body)
     if (!parsed.success) {
@@ -190,14 +189,12 @@ export async function agentRoutes(app: FastifyInstance) {
 
     const result = await db.transaction(async (tx) => {
       const rows = await tx
-        .select({ id: pairingTokens.id, fleetId: pairingTokens.fleetId, orgId: fleets.orgId })
+        .select({ id: pairingTokens.id, fleetId: pairingTokens.fleetId, orgId: fleets.orgId, expiresAt: pairingTokens.expiresAt, consumedAt: pairingTokens.consumedAt, replacementNodeId: pairingTokens.replacementNodeId })
         .from(pairingTokens)
         .innerJoin(fleets, eq(fleets.id, pairingTokens.fleetId))
         .where(
           and(
-            eq(pairingTokens.tokenHash, hashToken(token)),
-            isNull(pairingTokens.consumedAt),
-            gt(pairingTokens.expiresAt, new Date())
+            eq(pairingTokens.tokenHash, hashToken(token))
           )
         )
         .for('update')
@@ -205,26 +202,24 @@ export async function agentRoutes(app: FastifyInstance) {
 
       const pairing = rows[0]
       if (!pairing) {
-        throw ApiError.unauthorized('Pairing token is invalid, expired or already used')
+        throw new ApiError(401, 'pairing_token_invalid', 'Unrecognised pairing token. Generate a new command with fleet nodes pair.')
       }
 
-      // Names must be unique per fleet; fall back to a suffix rather than
-      // failing an install script the user cannot easily edit.
+      if (pairing.consumedAt) throw new ApiError(401, 'pairing_token_used', 'This pairing token was already used. Restart the installed agent, or generate a new pairing command.')
+      if (pairing.expiresAt <= new Date()) throw new ApiError(401, 'pairing_token_expired', 'Pairing token expired. Generate a fresh command with fleet nodes pair.')
+      const [replacement] = pairing.replacementNodeId ? await tx.select().from(nodes).where(and(eq(nodes.id, pairing.replacementNodeId), eq(nodes.fleetId, pairing.fleetId))).for('update') : []
+      if (pairing.replacementNodeId && !replacement) throw ApiError.notFound('Replacement node')
+      if (replacement && app.ctx.tunnels.has(replacement.id)) throw ApiError.conflict('node_connected', 'Stop the existing agent before replacing it.')
+      await tx.select({ id: fleets.id }).from(fleets).where(eq(fleets.id, pairing.fleetId)).for('update')
+      // A hostname collision needs an explicit identity decision.
       const base = slugify(cap.hostname ?? `${cap.arch}-node`)
-      let name = base
-      for (let i = 2; i < 100; i++) {
-        const clash = await tx
-          .select({ id: nodes.id })
-          .from(nodes)
-          .where(and(eq(nodes.fleetId, pairing.fleetId), eq(nodes.name, name)))
-          .limit(1)
-        if (!clash.length) break
-        name = `${base}-${i}`
+      let name = replacement?.name ?? base
+      if (!replacement) {
+        const [clash] = await tx.select({ id: nodes.id }).from(nodes).where(and(eq(nodes.fleetId, pairing.fleetId), eq(nodes.name, name))).limit(1)
+        if (clash) throw ApiError.conflict('node_already_exists', `A node named ${name} already exists. Restart its installed agent, rename that node, or use fleet nodes pair --replace ${name} for a stopped replacement machine.`)
       }
 
-      const [node] = await tx
-        .insert(nodes)
-        .values({
+      const values = {
           fleetId: pairing.fleetId,
           name,
           arch: cap.arch,
@@ -238,10 +233,12 @@ export async function agentRoutes(app: FastifyInstance) {
           agentTokenHash: hashToken(agentToken),
           agentVersion: cap.agent_version,
           advertiseAddr: cap.advertise_addr ?? null,
-          status: 'online',
+          status: replacement?.status === 'cordoned' ? 'cordoned' as const : 'online' as const,
           lastHeartbeatAt: new Date(),
-        })
-        .returning()
+        }
+      const [node] = replacement
+        ? await tx.update(nodes).set(values).where(eq(nodes.id, replacement.id)).returning()
+        : await tx.insert(nodes).values(values).returning()
 
       await tx
         .update(pairingTokens)
@@ -251,15 +248,20 @@ export async function agentRoutes(app: FastifyInstance) {
       await recordAudit(tx, {
         orgId: pairing.orgId,
         actorKind: 'agent',
-        action: 'node.registered',
+        action: replacement ? 'node.replaced' : 'node.registered',
         targetType: 'node',
         targetId: node!.id,
         metadata: { name, arch: cap.arch, ramMb: cap.ram_mb, cpuCores: cap.cpu_cores },
       })
 
-      return node!
+      return { ...node!, previousTokenHash: replacement?.agentTokenHash }
     })
 
+    if (result.previousTokenHash) {
+      await invalidateAgentAuth(redis, result.previousTokenHash)
+      app.ctx.tunnels.close(result.id)
+      await redis.del(`node:${result.id}:hb`)
+    }
     // Enter the sweep window now, so an agent that registers and then never
     // beats is detected as down rather than looking healthy indefinitely.
     await heartbeats.markRegistered(result.fleetId, result.id)

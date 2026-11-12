@@ -77,3 +77,9 @@ export function selectBuilder(
       a.id.localeCompare(b.id)
   )[0]
 }
+
+/** Each concurrent build gets a share, with headroom for the engine and services. */
+export function buildMemoryLimit(freeBytes: number): number {
+  if (!Number.isFinite(freeBytes) || freeBytes < 1073741824) throw new Error('Builder needs at least 1 GiB of uncommitted memory per build slot')
+  return Math.floor(freeBytes * 0.75)
+}

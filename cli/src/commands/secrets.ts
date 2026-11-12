@@ -83,6 +83,15 @@ export const secretsCommand = {
     const [sub, key] = args
     const service = typeof flags.service === 'string' ? flags.service : undefined
 
+    if (sub === 'clone') {
+      if (!key || typeof flags.to !== 'string') throw new CliError('usage: fleet secrets clone KEY [--from-service <name>] --to <service|fleet> [--as NEW_KEY]', EXIT.usage)
+      const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
+      const from = typeof flags['from-service'] === 'string' ? await resolveServiceId(fleetId, flags['from-service']) : null
+      const to = flags.to === 'fleet' ? null : await resolveServiceId(fleetId, flags.to)
+      const { body } = await request('POST', `/fleets/${fleetId}/secrets/clone`, { body: { key, fromServiceId: from?.id ?? null, toServiceId: to?.id ?? null, toKey: typeof flags.as === 'string' ? flags.as : undefined } })
+      return console.log(flags.json ? JSON.stringify(body) : `${key} copied to ${to?.name ?? 'fleet'} as ${body.key}; value remains hidden. Redeploy affected services to use it.`)
+    }
+
     /* ── list ──────────────────────────────────────────────────── */
     if (!sub || sub === 'ls' || sub === 'list') {
       const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)

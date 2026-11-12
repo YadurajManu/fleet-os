@@ -14,7 +14,7 @@ import { containedContext, planBuilds } from './buildx.js'
 import { buildEvent, type BuildAssignment } from './protocol.js'
 import { signGrant } from './credentials.js'
 import { archivePath } from './transfers.js'
-import { selectBuilder, type Builder } from './platforms.js'
+import { buildMemoryLimit, selectBuilder, type Builder } from './platforms.js'
 import { mergeManifests } from './manifests.js'
 import {
   BuildUnavailableError,
@@ -294,7 +294,7 @@ export class AgentBuildRunner implements BuildRunner {
           maxConcurrentBuilds: n.maxConcurrentBuilds,
           freeCpu: (n.effectiveCpu ?? 0) - (capacity.committedCpu ?? 0),
           freeMemBytes:
-            (n.effectiveMemBytes ?? 0) - capacity.committedRamMb * 1048576,
+            Math.max(0, (n.effectiveMemBytes ?? 0) - capacity.committedRamMb * 1048576) / Math.max(1, n.maxConcurrentBuilds),
           buildDiskBytes: n.buildDiskBytes,
           buildCacheFreeBytes: n.buildCacheFreeBytes,
           buildDiskReserveBytes: n.buildDiskReserveBytes,
@@ -422,7 +422,7 @@ export class AgentBuildRunner implements BuildRunner {
         ),
         timeout_ms: Math.min(this.ctx.config.BUILD_TIMEOUT_MS, 3600000),
         cpu: 2,
-        memory_bytes: 2147483648,
+        memory_bytes: buildMemoryLimit(builder.freeMemBytes),
         disk_bytes: builder.buildDiskBytes ?? 20 * 1073741824,
       }
       if (!this.send(builder.id, assignment))

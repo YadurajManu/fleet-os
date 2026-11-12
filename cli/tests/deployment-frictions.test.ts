@@ -84,3 +84,12 @@ test('preserving a custom Dockerfile never exposes an excluded parent directory'
     assert.doesNotMatch(listing, /private.txt|docker\/Worker/)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
+
+test('verbose status labels stale resources and reports connection errors', async () => {
+  const { renderStatus } = await import('../src/commands/status.js')
+  const output = renderStatus({ fleet: { id: 'f', name: 'test' }, nodes: [{ id: 'n', name: 'node', arch: 'arm64', status: 'online', live: true, tunnelConnected: false, ramMb: 2048, reliabilityTier: 'standard', lastHeartbeatAt: new Date().toISOString(), telemetry: { ageMs: 120000, cpuPct: 99, ramUsedMb: 1024, containers: [], runtime: { lastReconcileError: 'image pull failed' } } }], mapNodes: [], services: [], unplaced: [], events: [], fetchedAt: new Date().toISOString() }, { verbose: true })
+  assert.match(output, /stale/)
+  assert.match(output, /tunnel disconnected/)
+  assert.match(output, /image pull failed/)
+  assert.doesNotMatch(output, /99%/)
+})

@@ -7,8 +7,8 @@ type MapNode = { id: string; name: string; arch: string; status: string; reliabi
 type Node = {
   id: string; name: string; arch: string; platform?: string | null; engineKind?: string | null; status: string
   reliabilityTier: string; ramMb: number; effectiveCpu?: number | null; effectiveMemBytes?: number | null
-  agentVersion?: string | null; canBuild?: boolean; live: boolean; lastHeartbeatAt: string | null
-  telemetry: { cpuPct: number; ramUsedMb: number; containers: Array<{ name: string }>; ageMs?: number } | null
+  tunnelConnected?: boolean; diskMb?: number; buildCacheFreeBytes?: number; buildDiskReserveBytes?: number; agentVersion?: string | null; canBuild?: boolean; live: boolean; lastHeartbeatAt: string | null
+  telemetry: { cpuPct: number; ramUsedMb: number; containers: Array<{ name: string }>; ageMs?: number; runtime?: { dockerError?: string; registryError?: string; lastReconcileError?: string } } | null
 }
 type Service = {
   id: string; name: string
@@ -69,10 +69,11 @@ const nodeServices = (node: Node, services: Service[]): Service[] => services.fi
 
 function renderNodes(data: StatusSnapshot): string {
   return table(
-    ['node', 'platform', 'last seen', 'cpu', 'memory', 'services', 'status'],
+    ['node', 'platform', 'sample age', 'load', 'memory free/total', 'services', 'status'],
     data.nodes.map((node) => {
       const assigned = nodeServices(node, data.services)
-      const hasLiveTelemetry = node.live && node.telemetry
+      const age = node.telemetry?.ageMs
+      const hasLiveTelemetry = node.live && node.telemetry && typeof age === 'number' && age >= 0 && age <= (data.fleet.heartbeatIntervalSec ?? 5) * (data.fleet.heartbeatMissThreshold ?? 3) * 1000
       const memoryTotalMb = node.effectiveMemBytes ? node.effectiveMemBytes / 1048576 : node.ramMb
       const memoryTotal = mb(memoryTotalMb)
       // Older macOS agents mixed host RAM used with Docker-engine capacity.
@@ -82,7 +83,7 @@ function renderNodes(data: StatusSnapshot): string {
       return [
         node.name,
         node.platform || `linux/${node.arch}`,
-        relativeTime(node.lastHeartbeatAt),
+        typeof age === 'number' ? `${Math.round(age / 1000)}s${hasLiveTelemetry ? '' : ' · stale'}` : 'unavailable',
         hasLiveTelemetry ? `${Math.round(node.telemetry!.cpuPct)}%` : c.dim('unavailable'),
         memoryComparable ? `${mb(Math.max(0, memoryTotalMb - node.telemetry!.ramUsedMb))}/${memoryTotal}` : c.dim(`unavailable · ${memoryTotal} total`),
         assigned.length ? assigned.map((service) => service.current?.status === 'running' ? service.name : c.yellow(service.name)).join(' ') : c.dim('—'),
@@ -92,10 +93,18 @@ function renderNodes(data: StatusSnapshot): string {
   )
 }
 
-function renderCapabilities(data: StatusSnapshot): string {
+function renderCapabilities(data: StatusSnapshot, verbose = false): string {
   return data.nodes.map((node) => {
     const parts: Array<string | null | undefined> = [node.engineKind, node.agentVersion ? `agent v${node.agentVersion.replace(/^v/, '')}` : null]
     if (node.canBuild) parts.push('builder')
+    if (verbose) {
+      parts.push(node.tunnelConnected ? 'tunnel connected' : 'tunnel disconnected')
+      parts.push(node.live && node.diskMb != null ? `${mb(node.diskMb)} disk available (last heartbeat)` : 'disk availability unknown')
+      if (node.canBuild) parts.push(`${mb((node.buildDiskReserveBytes ?? 0) / 1048576)} build disk reserve`)
+    }
+    if (verbose && node.telemetry?.runtime) {
+      for (const error of [node.telemetry.runtime.dockerError, node.telemetry.runtime.registryError, node.telemetry.runtime.lastReconcileError]) if (error) parts.push(`last reported error: ${error}`)
+    }
     if (node.effectiveCpu) parts.push(`${node.effectiveCpu} CPU`)
     return `  ${c.dim(glyphs.branch)} ${node.name} · ${parts.filter(Boolean).join(' · ') || 'capabilities unavailable'}`
   }).join('\n')
@@ -157,7 +166,7 @@ export function renderStatus(data: StatusSnapshot, flags: Flags = {}): string {
 
   if (!onlyFailures && !onlyServices) {
     sections.push(renderNodes(data))
-    sections.push(renderCapabilities(data))
+    sections.push(renderCapabilities(data, bool(flags.verbose) || bool(flags.v)))
   }
   if (onlyServices || (!onlyNodes && data.services.length)) {
     sections.push(data.services.length ? `${c.dim('Services')}\n${renderServices(data)}` : c.dim('No services deployed.'))
@@ -172,7 +181,7 @@ export function renderStatus(data: StatusSnapshot, flags: Flags = {}): string {
   if (actions.length && health !== 'healthy') sections.push(`${c.bold('Next actions')}\n${actions.map((action) => `  ${c.cyan(action)}`).join('\n')}`)
 
   const interval = data.fleet.heartbeatIntervalSec
-  sections.push(c.dim(`Updated just now${interval ? ` · heartbeat expected every ${interval}s` : ''}`))
+  sections.push(c.dim(`Snapshot ${relativeTime(data.fetchedAt)}${interval ? ` · heartbeat expected every ${interval}s` : ''}`))
   return `${sections.filter(Boolean).join('\n\n')}\n`
 }
 

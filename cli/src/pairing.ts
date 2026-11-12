@@ -51,7 +51,13 @@ export async function pairNode(fleetId: string, flags: Flags) {
   if (flags.shell === 'bash' && target === 'windows') target = 'git-bash'
   const timeout = flags.timeout === undefined ? 600 : Number(flags.timeout)
   if (!Number.isFinite(timeout) || timeout < 1 || timeout > 1800) throw new CliError('--timeout must be 1–1800 seconds.', EXIT.usage)
-  const { body } = await request<Receipt>('POST', `/fleets/${fleetId}/nodes/pair-token`, { body: {} })
+  let replaceNodeId: string | undefined
+  if (flags.replace !== undefined) {
+    if (typeof flags.replace !== 'string') throw new CliError('--replace needs the existing node name or ID.', EXIT.usage)
+    const { findNode } = await import('./commands/nodes.js')
+    replaceNodeId = (await findNode(fleetId, flags.replace)).id
+  }
+  const { body } = await request<Receipt>('POST', `/fleets/${fleetId}/nodes/pair-token`, { body: { replaceNodeId } })
   if (!body.api_url && target === 'windows') throw new CliError('Upgrade the control plane to support native PowerShell pairing. No installer was run.', EXIT.failure)
   const command = body.api_url ? pairingCommand(target, body.api_url, body.token) : body.install_command
   if (flags.json) return console.log(JSON.stringify({ ...body, install_command: command, target }, null, 2))

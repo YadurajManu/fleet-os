@@ -7,10 +7,10 @@
  * that is a deliberate limit rather than an omission — a store that can hand a
  * credential back to a browser is one XSS away from handing it to everyone.
  */
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
-import { services, fleets } from '../db/schema.js'
+import { services, fleets, secrets } from '../db/schema.js'
 import { setSecret, listSecrets, deleteSecret, assertValidKey } from '../secrets/store.js'
 import { recordAudit } from '../lib/audit.js'
 import { ApiError } from './errors.js'
@@ -21,6 +21,29 @@ const secretBody = z.object({ value: z.string().min(1).max(64 * 1024) })
 
 export async function secretRoutes(app: FastifyInstance) {
   const { db } = app.ctx
+
+  app.post('/fleets/:fleetId/secrets/clone', { preHandler: requireFleetPermission('secret.write') }, async (req, reply) => {
+    const { fleetId } = req.params as { fleetId: string }
+    const parsed = z.object({ key: z.string(), fromServiceId: z.uuid().nullable().default(null), toServiceId: z.uuid().nullable().default(null), toKey: z.string().optional() }).strict().safeParse(req.body)
+    if (!parsed.success) throw ApiError.badRequest('invalid_clone', 'Choose a source key and destination scope in this fleet.')
+    const input = parsed.data
+    const key = input.toKey ?? input.key
+    assertValidKey(input.key); assertValidKey(key)
+    const result = await db.transaction(async tx => {
+      for (const serviceId of [input.fromServiceId, input.toServiceId]) {
+        if (!serviceId) continue
+        const [service] = await tx.select({ id: services.id }).from(services).where(and(eq(services.id, serviceId), eq(services.fleetId, fleetId)))
+        if (!service) throw ApiError.notFound('Service')
+      }
+      const [source] = await tx.select().from(secrets).where(and(eq(secrets.fleetId, fleetId), eq(secrets.key, input.key), input.fromServiceId ? eq(secrets.serviceId, input.fromServiceId) : isNull(secrets.serviceId)))
+      if (!source) throw ApiError.notFound('Source secret')
+      const [created] = await tx.insert(secrets).values({ fleetId, serviceId: input.toServiceId, key, encryptedValue: source.encryptedValue }).onConflictDoNothing().returning({ key: secrets.key })
+      if (!created) throw ApiError.conflict('secret_exists', 'Destination already has this key. Choose another key; the existing value was preserved.')
+      await recordAudit(tx, { orgId: req.orgId!, actorUserId: req.userId, action: 'secret.cloned', targetType: 'fleet', targetId: fleetId, metadata: { key, fromServiceId: input.fromServiceId, toServiceId: input.toServiceId } })
+      return { key, scope: input.toServiceId ? 'service' : 'fleet' }
+    })
+    return reply.code(201).send(result)
+  })
 
   /** Names and timestamps for the whole fleet, including service overrides. */
   app.get(

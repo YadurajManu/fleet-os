@@ -106,3 +106,54 @@ test('public task images never receive private registry credentials', async () =
     ctx.config.REGISTRY_CREDENTIALS = original.credentials
   }
 })
+
+test('pairing errors and replacement preserve identity', async () => {
+  const auth = { authorization: `Bearer ${account.accessToken}` }
+  const path = `/fleets/${account.fleet.id}/nodes/${nodeId}`
+  const renamed = await app.inject({ method: 'PATCH', url: path, headers: auth, payload: { name: 'renamed-node' } })
+  assert.equal(renamed.statusCode, 200, renamed.body)
+  assert.equal(renamed.json().node.id, nodeId)
+  for (const [authorization, code] of [[undefined, 'pairing_token_missing'], ['Bearer truncated', 'pairing_token_malformed']] as const) {
+    const res = await app.inject({ method: 'POST', url: '/agent/register', headers: authorization ? { authorization } : {}, payload: {} })
+    assert.equal(res.statusCode, 401)
+    assert.equal(res.json().error.code, code)
+  }
+  const has = ctx.tunnels.has
+  ctx.tunnels.has = () => false
+  try {
+    const issue = await app.inject({ method: 'POST', url: `/fleets/${account.fleet.id}/nodes/pair-token`, headers: auth, payload: { replaceNodeId: nodeId } })
+    assert.equal(issue.statusCode, 201, issue.body)
+    const headers = { authorization: `Bearer ${issue.json().token}` }
+    const payload = { hostname: 'different-host', arch: 'arm64', cpu_cores: 2, ram_mb: 2048, disk_mb: 10000 }
+    const paired = await app.inject({ method: 'POST', url: '/agent/register', headers, payload })
+    assert.equal(paired.statusCode, 201, paired.body)
+    assert.equal(paired.json().node_id, nodeId)
+    assert.equal((await app.inject({ method: 'POST', url: '/agent/register', headers, payload })).json().error.code, 'pairing_token_used')
+  } finally { ctx.tunnels.has = has }
+})
+
+test('secret copies hide values, refuse overwrite and enforce fleet boundaries', async () => {
+  const headers = { authorization: `Bearer ${account.accessToken}` }
+  const base = `/fleets/${account.fleet.id}/secrets`
+  assert.equal((await app.inject({ method: 'PUT', url: `${base}/CLONE_TEST`, headers, payload: { value: 'never-echo-this' } })).statusCode, 201)
+  const payload = { key: 'CLONE_TEST', toServiceId: serviceId }
+  const copied = await app.inject({ method: 'POST', url: `${base}/clone`, headers, payload })
+  assert.equal(copied.statusCode, 201, copied.body)
+  assert.doesNotMatch(copied.body, /never-echo-this|ciphertext|wrappedDek/)
+  assert.equal((await app.inject({ method: 'POST', url: `${base}/clone`, headers, payload })).statusCode, 409)
+  assert.equal((await app.inject({ method: 'POST', url: `/fleets/${outsider.fleet.id}/secrets/clone`, headers, payload })).statusCode, 404)
+})
+
+test('expired pairing credentials and duplicate hostnames give recovery paths', async () => {
+  const { pairingTokens } = await import('../src/db/schema.js')
+  const { hashToken, newPairingToken } = await import('../src/lib/tokens.js')
+  const payload = { hostname: 'renamed-node', arch: 'arm64', cpu_cores: 2, ram_mb: 2048, disk_mb: 10000 }
+  const expired = newPairingToken()
+  await ctx.db.insert(pairingTokens).values({ fleetId: account.fleet.id, tokenHash: hashToken(expired), expiresAt: new Date(Date.now() - 1000) })
+  assert.equal((await app.inject({ method: 'POST', url: '/agent/register', headers: { authorization: `Bearer ${expired}` }, payload })).json().error.code, 'pairing_token_expired')
+  assert.equal((await app.inject({ method: 'POST', url: '/agent/register', headers: { authorization: `Bearer ${newPairingToken()}` }, payload })).json().error.code, 'pairing_token_invalid')
+  const issue = await app.inject({ method: 'POST', url: `/fleets/${account.fleet.id}/nodes/pair-token`, headers: { authorization: `Bearer ${account.accessToken}` }, payload: {} })
+  const res = await app.inject({ method: 'POST', url: '/agent/register', headers: { authorization: `Bearer ${issue.json().token}` }, payload })
+  assert.equal(res.statusCode, 409, res.body)
+  assert.equal(res.json().error.code, 'node_already_exists')
+})

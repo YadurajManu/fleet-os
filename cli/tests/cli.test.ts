@@ -182,6 +182,7 @@ describe('fleet status', () => {
     const healthy = structuredClone(degraded)
     healthy.nodes[0]!.live = true
     healthy.nodes[0]!.status = 'online'
+    healthy.nodes[0]!.telemetry!.ageMs = 0
     const out = renderStatus(healthy)
     assert.equal(fleetHealth(healthy), 'healthy')
     assert.match(out, /1 node\(s\) reporting . 1 service\(s\) available/)
