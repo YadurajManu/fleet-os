@@ -189,12 +189,14 @@ services:
     })
 
     const [svc] = await ctx.db.select().from(services).where(eq(services.fleetId, fleetId))
-    await app.inject({
+    const deploy = await app.inject({
       method: 'POST',
       url: `/services/${svc!.id}/deploy`,
       headers: { authorization: `Bearer ${token}` },
       payload: {},
     })
+    assert.equal(deploy.statusCode, 202, deploy.body)
+    await ctx.deploysInFlight.get(deploy.json().deployment.id)
   })
 
   after(async () => {
