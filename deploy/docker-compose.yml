@@ -119,7 +119,7 @@ services:
       # asked to find a provider of their own. Absent means the feature is off.
       AI_API_KEY: ${AI_API_KEY:-}
       AI_BASE_URL: ${AI_BASE_URL:-https://agentrouter.org/v1}
-      AI_MODEL: ${AI_MODEL:-claude-sonnet-4-8}
+      AI_MODEL: ${AI_MODEL:-}
       # Answers per person per day, counted separately for each feature. The
       # operator holds the key and pays for the calls, so this is theirs to set.
       AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-20}

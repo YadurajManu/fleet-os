@@ -18,7 +18,7 @@ const schema = z.object({
   HEARTBEAT_INTERVAL_SEC: z.coerce.number().int().min(1).max(300).default(5),
   HEARTBEAT_MISS_THRESHOLD: z.coerce.number().int().min(1).max(20).default(3),
   /** Publicly reported to agents and diagnostics; set during release builds. */
-  CONTROL_PLANE_VERSION: z.string().max(32).default('0.1.0'),
+  CONTROL_PLANE_VERSION: z.string().max(32).default('0.2.0'),
   FLEET_REVISION: z.string().max(64).default('unknown'),
   /**
    * Email delivery. Both are optional and only do anything together: without
@@ -33,8 +33,8 @@ const schema = z.object({
    * and paste a credential to be told why their build broke. Absent means the
    * feature is simply off. */
   AI_API_KEY: z.string().optional(),
-  AI_BASE_URL: z.string().url().default('https://agentrouter.org/v1'),
-  AI_MODEL: z.string().default('claude-sonnet-4-8'),
+  AI_BASE_URL: z.string().url().refine(v => { const u = new URL(v); return ['https:', 'http:'].includes(u.protocol) && !u.username && !u.password && !u.search && !u.hash && !u.pathname.endsWith('/chat/completions') }, 'Use an HTTP(S) API root without credentials, query parameters or /chat/completions').default('https://agentrouter.org/v1'),
+  AI_MODEL: z.string().trim().min(1, 'Set AI_MODEL to an exact model ID from your provider').default('claude-sonnet-4-8'),
   /**
    * How many AI answers one person may generate per day, per feature.
    *
@@ -128,7 +128,8 @@ const schema = z.object({
 export type Config = z.infer<typeof schema>
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = schema.safeParse(env)
+  if (env.AI_API_KEY?.trim() && !env.AI_MODEL?.trim()) throw new Error('Invalid control-plane configuration: set AI_MODEL explicitly for the configured AI provider. Run npm run ai:check after choosing a model.')
+  const parsed = schema.safeParse({ ...env, AI_MODEL: env.AI_MODEL?.trim() || undefined })
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  ${i.path.join('.')}: ${i.message}`)

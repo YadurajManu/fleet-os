@@ -93,3 +93,10 @@ test('verbose status labels stale resources and reports connection errors', asyn
   assert.match(output, /image pull failed/)
   assert.doesNotMatch(output, /99%/)
 })
+
+test('secret import discovery includes build-only secrets and defaults without duplicates', async () => {
+  const { declaredSecrets } = await import('../src/plan.js')
+  const keys = declaredSecrets('defaults:\n  build_secrets: [NPM_TOKEN]\nservices:\n  api:\n    secrets: [DATABASE_URL, NPM_TOKEN]\n  worker: {}\n')
+  assert.deepEqual(keys.get('NPM_TOKEN'), ['api', 'worker'])
+  assert.deepEqual(keys.get('DATABASE_URL'), ['api'])
+})

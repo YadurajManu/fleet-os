@@ -1,7 +1,7 @@
 {
   "name": "@fleet-os/control-plane",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -13,7 +13,8 @@
     "test": "dotenv -e .env.test -- node --test --test-concurrency=1 --import tsx tests/*.test.ts",
     "smoke": "tsx scripts/smoke.ts",
     "e2e": "tsx scripts/e2e-deploy.ts",
-    "pretest": "dotenv -e .env.test -- tsx src/db/migrate.ts"
+    "pretest": "dotenv -e .env.test -- tsx src/db/migrate.ts",
+    "ai:check": "tsx scripts/check-ai.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

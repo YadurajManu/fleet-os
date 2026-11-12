@@ -200,6 +200,7 @@ export type Service = {
    * finishes. So the dashboard cannot deploy such a service — there is nothing
    * on the server to build.
    */
+  buildSecretRefs?: string[]
   buildContext: string | null
   buildDockerfile?: string
   buildTarget?: string | null

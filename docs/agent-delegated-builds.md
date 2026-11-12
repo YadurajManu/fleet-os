@@ -129,3 +129,19 @@ part of source cache identity. A named target is sent only to an agent advertisi
 build-target support. Upgrade the control plane, CLI, and agents together when
 releasing these features; migration 0033 adds their persisted settings and
 capabilities. Older manifests continue to use `Dockerfile` and the final stage.
+
+## Required build secrets
+
+Declare names in `build_secrets: [NPM_TOKEN]`, store their values with
+`fleet secrets set NPM_TOKEN --service web`, and use
+`RUN --mount=type=secret,id=NPM_TOKEN ...` in the Dockerfile. Build arguments are
+public and must not carry credentials. Manual and Git deploys check the secret
+store before opening a build. The service detail page lists required names.
+
+Bulk import includes runtime and build-secret declarations, including defaults:
+`fleet secrets import .env --service web --only NPM_TOKEN --dry-run` previews key
+names without contacting the server. Remove `--dry-run` to store values. A real
+import replaces existing selected keys in the chosen scope. If it stops, completed
+writes remain; the error lists completed and pending keys and the `--only` retry
+selection. An interrupted request may have committed remotely; retrying that same
+key is safe while its intended value remains unchanged. Values are never echoed.

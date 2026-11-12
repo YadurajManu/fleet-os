@@ -169,3 +169,10 @@ test('auto platforms include only nodes satisfying anti-affinity', () => {
     ['linux/amd64']
   )
 })
+
+test('small builders need modest idle CPU but still preserve minimum memory', () => {
+  const small = { ...builder('small', 'linux/arm64'), freeCpu: 0.25, freeMemBytes: 1073741824 }
+  assert.equal(selectBuilder([small], 'linux/arm64', null)?.id, 'small')
+  assert.equal(selectBuilder([{ ...small, freeCpu: 0 }], 'linux/arm64', null), undefined)
+  assert.equal(selectBuilder([{ ...small, freeMemBytes: 1073741823 }], 'linux/arm64', null), undefined)
+})

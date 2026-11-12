@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.27.0 — prepared, unpublished
+
+- Custom Dockerfiles, named build stages, build arguments and safer context uploads.
+- One-off service tasks and exact-attempt deployment attachment.
+- Detailed fresh status, node rename/replacement, write-only secret copies and resilient imports.
+- Clear build-secret preflight and provider model diagnostics.
+
+Requires control plane 0.2.0, migrations 0033/0034 and agent 0.4.0 for the new protocols. Agent updates remain explicit; existing automatic-upgrade policies are preserved.
+
 ## 0.26.1
 
 - `fleet use` lists accessible fleets and marks the active fleet when no name is supplied.

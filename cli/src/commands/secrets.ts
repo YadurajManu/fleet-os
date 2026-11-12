@@ -17,9 +17,10 @@ import { declaredSecrets } from '../plan.js'
 import type { Flags } from '../args.js'
 
 /** The manifest in the working directory, if there is one to read. */
-async function declaredSecretsNearby(): Promise<Map<string, string[]> | null> {
+async function declaredSecretsNearby(service?: string): Promise<Map<string, string[]> | null> {
   try {
-    return declaredSecrets(await readFile('fleet.yaml', 'utf8'))
+    const declared = declaredSecrets(await readFile('fleet.yaml', 'utf8'))
+    return service ? new Map([...declared].filter(([, names]) => names.includes(service))) : declared
   } catch {
     return null
   }
@@ -205,7 +206,7 @@ export const secretsCommand = {
         chosen = parsed.entries
         basis = '--all'
       } else {
-        const declared = await declaredSecretsNearby()
+        const declared = await declaredSecretsNearby(service)
         if (!declared) {
           throw new CliError(
             `No fleet.yaml here to say which keys are secrets.\n` +
@@ -258,13 +259,20 @@ export const secretsCommand = {
       const target = service ? await resolveServiceId(fleetId, service) : null
       const where = target ? ` for ${c.bold(target.name)}` : ''
 
+      console.log(`Importing ${chosen.length} key(s) into ${target?.name ?? 'fleet scope'}; existing values at this scope will be replaced. Values are hidden.`)
       let stored = 0
       let replaced = 0
       for (const entry of chosen) {
         const path = target
           ? `/services/${target.id}/secrets/${encodeURIComponent(entry.key)}`
           : `/fleets/${fleetId}/secrets/${encodeURIComponent(entry.key)}`
-        const { body } = await request<{ created: boolean }>('PUT', path, { body: { value: entry.value } })
+        let body: { created: boolean }
+        try { ({ body } = await request<{ created: boolean }>('PUT', path, { body: { value: entry.value } })) }
+        catch {
+          const completed = chosen.slice(0, stored + replaced).map(e => e.key)
+          const pending = chosen.slice(stored + replaced).map(e => e.key)
+          throw new CliError(`Import stopped at ${entry.key}. Completed: ${completed.join(', ') || 'none'}. Not confirmed or not attempted: ${pending.join(', ')}. Check access and connectivity, then retry with --only ${pending.join(',')}. Completed changes were kept; values are hidden.`, EXIT.failure)
+        }
         if (body.created) stored++
         else replaced++
         console.log(`${glyph.ok} ${c.green(body.created ? 'stored' : 'replaced')}  ${c.bold(entry.key)}${where}`)

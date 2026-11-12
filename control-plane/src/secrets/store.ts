@@ -300,3 +300,8 @@ export async function buildEnv(
     missing: [...new Set([...missing, ...unresolved])],
   }
 }
+
+export async function requireBuildSecrets(ctx: AppContext, service: { id: string; fleetId: string; name: string; buildSecretRefs: string[] }): Promise<void> {
+  const { missing } = await resolveSecrets(ctx, service.fleetId, service.id, service.buildSecretRefs)
+  if (missing.length) throw ApiError.unprocessable('missing_build_secrets', `${service.name} needs build secrets: ${missing.join(', ')}. Set them with fleet secrets set KEY --service ${service.name}, or import a file with fleet secrets import --service ${service.name} --only ${missing.join(',')}. Dockerfile: RUN --mount=type=secret,id=KEY ...; secret values are not build arguments.`, { missing })
+}

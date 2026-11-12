@@ -93,15 +93,15 @@ export function planFromManifest(source: string): PlannedService[] {
  * somebody to re-draw it at the command line.
  */
 export function declaredSecrets(source: string): Map<string, string[]> {
-  const doc = parseYaml(source) as { services?: Record<string, unknown> } | null
+  const doc = parseYaml(source) as { services?: Record<string, unknown>; defaults?: Record<string, unknown> } | null
   const services = doc?.services
   const declared = new Map<string, string[]>()
   if (!services || typeof services !== 'object') return declared
 
   for (const [name, raw] of Object.entries(services)) {
-    const body = (raw ?? {}) as { secrets?: unknown }
-    if (!Array.isArray(body.secrets)) continue
-    for (const key of body.secrets) {
+    const body = { ...doc?.defaults, ...(raw ?? {}) as object } as { secrets?: unknown; build_secrets?: unknown }
+    const keys = [...(Array.isArray(body.secrets) ? body.secrets : []), ...(Array.isArray(body.build_secrets) ? body.build_secrets : [])]
+    for (const key of new Set(keys)) {
       if (typeof key !== 'string') continue
       declared.set(key, [...(declared.get(key) ?? []), name])
     }

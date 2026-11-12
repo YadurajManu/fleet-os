@@ -87,3 +87,29 @@ test('oversized prepacked uploads fail before making any API request', async () 
     else process.env.FLEET_MAX_UPLOAD_BYTES = old
   }
 })
+
+test('partial secret imports report completed and pending keys without echoing values', async () => {
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { secretsCommand } = await import('../src/commands/secrets.js')
+  const dir = await mkdtemp(join(tmpdir(), 'fleet-import-failure-'))
+  const file = join(dir, '.env')
+  await writeFile(file, 'FIRST=hidden-one\nSECOND=hidden-two\nTHIRD=hidden-three\n')
+  let writes = 0
+  try {
+    await withApi((req, res) => {
+      req.resume()
+      if (++writes === 1) { res.setHeader('content-type', 'application/json'); res.end('{"created":true}') }
+      else { res.statusCode = 403; res.end('hidden-two') }
+    }, async () => {
+      await assert.rejects(secretsCommand.run(['import', file], { all: true, fleet: 'fleet' }), err => {
+        assert.match(String(err), /Completed: FIRST/)
+        assert.match(String(err), /--only SECOND,THIRD/)
+        assert.doesNotMatch(String(err), /hidden-one|hidden-two|hidden-three/)
+        return true
+      })
+      assert.equal(writes, 2)
+    })
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})

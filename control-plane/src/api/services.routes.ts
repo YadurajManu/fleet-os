@@ -21,7 +21,7 @@ import {
 } from '../build/context.js'
 import { allocateHostPort, invalidateRoutesForService, invalidateRouteHosts } from '../ingress/routes.js'
 import { recordAudit } from '../lib/audit.js'
-import { resolveSecrets } from '../secrets/store.js'
+import { requireBuildSecrets, resolveSecrets } from '../secrets/store.js'
 import { ApiError } from './errors.js'
 import { readServiceLogs } from './service-logs.js'
 import { openDeployment, phaseWriter, readProgress } from './deploy-progress.js'
@@ -731,6 +731,7 @@ export async function serviceRoutes(app: FastifyInstance) {
       // are not set will start, fail to connect, and exit — and the operator
       // gets to read that as a crash loop instead of as the one-line
       // configuration error it actually is.
+      if (service.buildContext && !body.image) await requireBuildSecrets(app.ctx, service)
       const { missing } = await resolveSecrets(app.ctx, fleetId, service.id, service.secretRefs)
       if (missing.length) {
         throw ApiError.unprocessable(

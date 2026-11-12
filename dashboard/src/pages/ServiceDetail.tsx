@@ -209,6 +209,15 @@ export default function ServiceDetail() {
 
       <ErrorNote error={actionError} />
 
+      {Boolean(service.buildSecretRefs?.length) && <Panel title="Build secrets">
+        <div className="p-5 space-y-3 text-sm">
+          <p>Required for this service’s image build: <strong>{service.buildSecretRefs!.join(', ')}</strong></p>
+          <p>Set values in the secret store before deploying. Fleet checks missing keys before starting the build.</p>
+          <code className="block font-mono text-xs break-all">fleet secrets import .env --service {service.name} --only {service.buildSecretRefs!.join(',')} --dry-run</code>
+          <p>Review the key names, then remove --dry-run to store them. Values remain hidden. Use BuildKit secret mounts in the Dockerfile; build arguments are public.</p>
+          <Link to="/secrets" className="underline">Manage stored secrets</Link>
+        </div>
+      </Panel>}
       <div id="domains" className="scroll-mt-24">
         <ServiceDomains serviceId={service.id} canEdit={canEdit} />
       </div>

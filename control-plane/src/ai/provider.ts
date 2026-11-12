@@ -112,6 +112,31 @@ function errorOf(body: unknown): { message?: string } | undefined {
   return (first as { error?: { message?: string } } | undefined)?.error
 }
 
+export function providerFailure(config: ProviderConfig, status: number, detail: string): Error {
+  const safe = (config.apiKey ? detail.split(config.apiKey).join('[redacted]') : detail).slice(0, 500)
+  const modelError = /model.*(?:not found|not exist|unsupported|invalid|unavailable|not supported|no access)|(?:invalid|unknown|unsupported).*model/i.test(safe)
+  const advice = modelError ? 'Check AI_MODEL against this provider’s model list and key permissions. Run npm run ai:check; changing providers also requires changing the model ID.'
+    : status === 401 || status === 403 ? 'Check AI_API_KEY and its model permissions on this provider.'
+    : status === 402 ? 'Provider credits or spending budget are exhausted. Check billing; Fleet did not switch providers.'
+    : status === 429 ? 'Provider rate limit reached. Wait before retrying; adding a provider does not change Fleet’s daily limit.'
+    : status === 404 ? 'Check AI_BASE_URL and AI_MODEL. The URL must be the API root, without /chat/completions.'
+    : 'Check the provider response and configuration before retrying.'
+  return new Error(`provider returned ${status}: ${safe}. ${advice}`)
+}
+
+/** Model discovery sends no prompts and generates no completion tokens. */
+export async function checkProvider(config: ProviderConfig, fetchImpl: typeof fetch = fetch): Promise<{ status: 'available' | 'unverified'; model: string; message: string }> {
+  const response = await fetchImpl(`${config.baseUrl.replace(/\/$/, '')}/models`, { headers: { authorization: `Bearer ${config.apiKey}` }, signal: AbortSignal.timeout(10000) })
+  if (response.status === 404 || response.status === 405) return { status: 'unverified', model: config.model, message: 'This endpoint does not expose model discovery. Check its model documentation; no completion was requested.' }
+  const body = await response.json() as { data?: Array<{ id: string }>; error?: { message?: string } }
+  if (!response.ok) throw providerFailure(config, response.status, body.error?.message ?? 'Model discovery failed')
+  if (!Array.isArray(body.data)) throw new Error('Provider model discovery returned an unexpected response')
+  if (!body.data.some(model => model.id === config.model)) throw providerFailure(config, 400, `model ${config.model} not found in the provider model list`)
+  return { status: 'available', model: config.model, message: 'Model is listed. Completion access, credits and structured-output support still require a live request.' }
+}
+
+const unsupportedOptions = new WeakMap<typeof fetch, Map<string, { reasoning?: boolean; schema?: boolean }>>()
+
 export async function chat(
   config: ProviderConfig,
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
@@ -166,6 +191,15 @@ export async function chat(
   } = {},
   fetchImpl: typeof fetch = fetch
 ): Promise<{ content: string; tokensIn: number; tokensOut: number }> {
+  let known = unsupportedOptions.get(fetchImpl)
+  if (!known) { known = new Map(); unsupportedOptions.set(fetchImpl, known) }
+  const capabilityKey = `${config.baseUrl}#${config.model}`
+  if (!known.has(capabilityKey)) {
+    if (known.size >= 128) known.delete(known.keys().next().value!)
+    known.set(capabilityKey, {})
+  }
+  const unsupported = known.get(capabilityKey)!
+  opts = { ...opts, reasoningUnsupported: opts.reasoningUnsupported || unsupported.reasoning, noSchema: opts.noSchema || unsupported.schema }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? TIMEOUT_MS)
 
@@ -220,7 +254,10 @@ export async function chat(
       )
     }
 
+    if (res.ok && errorOf(body)) throw providerFailure(config, 502, errorOf(body)?.message ?? 'Provider returned an error without a failed HTTP status')
     if (!res.ok) {
+      const detail = errorOf(body)?.message ?? 'no detail'
+      if (/model.*(?:not found|not exist|unsupported|invalid|unavailable|not supported|no access)|(?:invalid|unknown|unsupported).*model/i.test(detail)) throw providerFailure(config, res.status, detail)
       // A rate limit that says when to come back is worth waiting out.
       //
       // Per-minute budgets are the common case on a free tier, and the wait is
@@ -276,16 +313,18 @@ export async function chat(
       // slower answer beats one this cannot read. Each retry is remembered, so
       // the cost is two extra requests once, not once per call.
       if (res.status === 400 && opts.noReasoning && !opts.reasoningUnsupported) {
+        unsupported.reasoning = true
         return chat(config, messages, { ...opts, reasoningUnsupported: true }, fetchImpl)
       }
 
       if (res.status === 400 && opts.schema && !opts.noSchema) {
+        unsupported.schema = true
         return chat(config, messages, { ...opts, noSchema: true }, fetchImpl)
       }
 
       // The provider's own message, because "500" tells the operator nothing
       // about whether the key, the model name or the balance is the problem.
-      throw new Error(`provider returned ${res.status}: ${errorOf(body)?.message ?? 'no detail'}`)
+      throw providerFailure(config, res.status, errorOf(body)?.message ?? 'no detail')
     }
 
     const choice = body.choices?.[0]

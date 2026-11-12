@@ -251,3 +251,51 @@ describe('a rate limit that says when to come back', () => {
     assert.equal(calls, 1)
   })
 })
+
+test('retired free models stop after one request even with optional schema fields', async () => {
+  const { chat } = await import('../src/ai/provider.js')
+  const { impl, calls } = stub({ error: { message: 'This model is unavailable for free. The paid version is available now.' } }, 404)
+  await assert.rejects(chat(CONFIG, [{ role: 'user', content: 'why' }], { noReasoning: true, schema: { name: 'test', schema: {} } }, impl), /AI_MODEL.*model list/)
+  assert.equal(calls.length, 1)
+})
+
+test('Groq and OpenRouter share the client without rewriting model IDs', async () => {
+  const { chat } = await import('../src/ai/provider.js')
+  for (const baseUrl of ['https://api.groq.com/openai/v1', 'https://openrouter.ai/api/v1']) {
+    const { impl, calls } = stub(reply('OK'))
+    await chat({ ...CONFIG, baseUrl, model: 'chosen-model' }, [], {}, impl)
+    assert.equal(calls[0]!.url, `${baseUrl}/chat/completions`)
+    assert.equal(JSON.parse(calls[0]!.init.body as string).model, 'chosen-model')
+  }
+})
+
+test('model discovery uses GET without generating completions and redacts credentials', async () => {
+  const { checkProvider } = await import('../src/ai/provider.js')
+  const { impl, calls } = stub({ data: [{ id: CONFIG.model }] })
+  assert.equal((await checkProvider(CONFIG, impl)).status, 'available')
+  assert.equal(calls[0]!.url, `${CONFIG.baseUrl}/models`)
+  assert.equal(calls[0]!.init.body, undefined)
+  const bad = stub({ error: { message: `invalid key ${CONFIG.apiKey}` } }, 401)
+  await assert.rejects(checkProvider(CONFIG, bad.impl), err => !String(err).includes(CONFIG.apiKey) && String(err).includes('AI_API_KEY'))
+})
+
+test('configured AI requires an explicit model and a plain API root', async () => {
+  const { loadConfig } = await import('../src/config.js')
+  const env = { DATABASE_URL: 'postgres://localhost/test', REDIS_URL: 'redis://localhost', JWT_SECRET: 'x'.repeat(32), SECRETS_MASTER_KEY: Buffer.alloc(32).toString('base64'), AI_API_KEY: 'test-key' }
+  assert.throws(() => loadConfig(env), /AI_MODEL explicitly/)
+  assert.throws(() => loadConfig({ ...env, AI_MODEL: 'model', AI_BASE_URL: 'https://api.test/v1/chat/completions' }), /API root/)
+  assert.equal(loadConfig({ ...env, AI_MODEL: ' chosen ', AI_BASE_URL: 'https://api.groq.com/openai/v1' }).AI_MODEL, 'chosen')
+})
+
+test('unsupported reasoning is remembered for later calls to the same model', async () => {
+  const { chat } = await import('../src/ai/provider.js')
+  const requests: any[] = []
+  const impl = (async (_url: unknown, init: RequestInit) => {
+    const body = JSON.parse(init.body as string); requests.push(body)
+    return body.reasoning_effort ? new Response(JSON.stringify({ error: { message: 'Reasoning is mandatory' } }), { status: 400 }) : new Response(JSON.stringify(reply('OK')), { status: 200 })
+  }) as typeof fetch
+  await chat(CONFIG, [], { noReasoning: true }, impl)
+  await chat(CONFIG, [], { noReasoning: true }, impl)
+  assert.equal(requests.length, 3)
+  assert.equal(requests[2].reasoning_effort, undefined)
+})

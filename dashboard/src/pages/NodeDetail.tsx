@@ -229,7 +229,6 @@ export default function NodeDetail() {
   const [rename, setRename] = useState<string | null>(null)
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState('')
-  const [renamed, setRenamed] = useState<string | null>(null)
   const [showTerminal, setShowTerminal] = useState(false)
   const [terminalInitialCmd, setTerminalInitialCmd] = useState<string | undefined>(undefined)
 
@@ -679,7 +678,7 @@ export default function NodeDetail() {
     <div className="space-y-6">
       {rename !== null && <form className="rounded-lg border border-[var(--color-line)] p-4 space-y-3" onSubmit={async event => {
         event.preventDefault(); setRenameBusy(true); setRenameError('')
-        try { await api(`/fleets/${fleet!.id}/nodes/${node.id}`, { method: 'PATCH', body: { name: rename } }); setRenamed(rename); setRename(null); nodes.refetch() }
+        try { await api(`/fleets/${fleet!.id}/nodes/${node.id}`, { method: 'PATCH', body: { name: rename } }); setRename(null); await nodes.refetch() }
         catch (err) { setRenameError(err instanceof Error ? err.message : 'Could not rename node') }
         finally { setRenameBusy(false) }
       }}>
@@ -696,7 +695,7 @@ export default function NodeDetail() {
         </Link>
         <div className="mt-2.5 flex flex-wrap items-center justify-between gap-y-3 gap-x-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <h1 className="text-[26px] font-semibold tracking-[-0.03em]">{renamed ?? node.name}</h1>
+            <h1 className="text-[26px] font-semibold tracking-[-0.03em]">{node.name}</h1>
             <StatusPill status={node.live ? node.status : 'offline'} />
             <span className="font-mono text-[11.5px] text-[var(--color-fg-dim)]">
               {nodePlatformLabel(node)} · {node.cpuCores} cores · {mb(node.ramMb)} {node.engineKind === 'docker-desktop' ? 'Docker VM limit' : 'RAM'}
@@ -705,7 +704,7 @@ export default function NodeDetail() {
 
           {/* Action Buttons & Status */}
           <div className="flex items-center gap-2.5 ml-auto sm:ml-0">
-            {canUseTerminal && <button className="font-mono text-sm underline" onClick={() => { setRename(renamed ?? node.name); setRenameError('') }}>Rename</button>}
+            {canUseTerminal && <button className="font-mono text-sm underline" onClick={() => { setRename(node.name); setRenameError('') }}>Rename</button>}
             {/* Direct Launch Terminal Button */}
             <button
               onClick={() => canOpenTerminal && setShowTerminal(true)}

@@ -157,3 +157,34 @@ test('expired pairing credentials and duplicate hostnames give recovery paths', 
   assert.equal(res.statusCode, 409, res.body)
   assert.equal(res.json().error.code, 'node_already_exists')
 })
+
+test('build secret preflight reports keys and guidance before any build', async () => {
+  const { requireBuildSecrets } = await import('../src/secrets/store.js')
+  await assert.rejects(requireBuildSecrets(ctx, { id: serviceId, fleetId: account.fleet.id, name: 'web', buildSecretRefs: ['MISSING_BUILD_TOKEN'] }), (err: any) => err.code === 'missing_build_secrets' && /--only MISSING_BUILD_TOKEN/.test(err.message))
+})
+
+test('image inspection failure still schedules an image-only deployment', async () => {
+  const { mkdtemp, writeFile, chmod, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = await mkdtemp(join(tmpdir(), 'fleet-inspect-failure-'))
+  const path = process.env.PATH
+  const mode = ctx.config.BUILD_MODE
+  await writeFile(join(dir, 'docker'), '#!/bin/sh\necho "registry unavailable" >&2\nexit 1\n')
+  await chmod(join(dir, 'docker'), 0o700)
+  try {
+    process.env.PATH = `${dir}:${path}`
+    ctx.config.BUILD_MODE = 'agent'
+    await ctx.db.update(services).set({ image: 'private.example/unavailable:latest', buildContext: null }).where(eq(services.id, serviceId))
+    const res = await app.inject({ method: 'POST', url: `/services/${serviceId}/deploy`, headers: { authorization: `Bearer ${account.accessToken}` }, payload: {} })
+    assert.equal(res.statusCode, 202, res.body)
+    await ctx.deploysInFlight.get(res.json().deployment.id)
+    const [deployment] = await ctx.db.select().from(deployments).where(eq(deployments.id, res.json().deployment.id))
+    assert.equal(deployment!.status, 'deploying')
+    assert.deepEqual(deployment!.imageTags, ['private.example/unavailable:latest'])
+  } finally {
+    if (path === undefined) delete process.env.PATH; else process.env.PATH = path
+    ctx.config.BUILD_MODE = mode
+    await rm(dir, { recursive: true, force: true })
+  }
+})

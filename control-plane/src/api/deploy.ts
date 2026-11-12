@@ -1,3 +1,4 @@
+import { requireBuildSecrets } from '../secrets/store.js'
 import { inspectImage, pinnedImage } from '../build/manifests.js'
 import { isEngineImage } from '../manifest/databases.js'
 import type { BuildRequest } from '../build/runner.js'
@@ -33,6 +34,7 @@ export async function deployFromPush(
   const [fleet] = await ctx.db.select().from(fleets).where(eq(fleets.id, fleetId)).limit(1)
   if (!fleet) throw new Error('fleet vanished mid-deploy')
 
+  if (service.buildContext && !service.image) await requireBuildSecrets(ctx, service)
   let resolvedImage = service.image
   if (ctx.config.BUILD_MODE === 'agent' && resolvedImage) {
     try {

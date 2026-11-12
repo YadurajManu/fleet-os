@@ -16,19 +16,19 @@ Reviewed 2026-11-11. There are **25 reports**, numbered in their original order 
 | F-008 | Secret clone missing | Implemented locally: CLI/API and dashboard server-side copies between fleet/service scopes within one fleet, with authorization and audit records. Existing values are preserved; responses never contain values. |
 | F-009 | Dockerfile targets unsupported | Implemented locally: build accepts context/dockerfile/target/args objects and legacy strings. Settings persist through migration 0033, manual/Git builds, cache identity and delegated/local runners. Old builders cannot silently ignore targets. |
 | F-010 | Reconcile error hidden until rollout timeout | Implemented and validated locally: deployment-specific errors reach progress, explain, dashboard and history even without containers. Permanent image errors fail immediately; transient structured errors get a retry grace. Recovery clears errors. |
-| F-011 | Bare Postgres digest reference | Existing: `pinnedImage` qualifies bare names with `docker.io/library/`. Verify managed database path and regression coverage. |
-| F-012 | AI provider rejects configured model | Pending: current source default differs from reported model. Inspect deployment configuration/provider response; do not guess a replacement model. |
+| F-011 | Bare Postgres digest reference | Verified by digest qualification regressions for bare Postgres and Alpine references and registry ports. Existing implementation retained; no new image transformation needed. |
+| F-012 | AI provider rejects configured model | Reproduced live on 2026-11-12: OpenRouter returns 404 because the configured Nemotron free model is retired. Local fixes add explicit-model validation, credential-safe recovery advice, no model-error schema retries and prompt-free model discovery. Operator must select an accessible model; production settings unchanged. |
 | F-013 | Oversize upload returns HTML 413 | Implemented locally: additive .fleetignore, compressed-size enforcement during packaging and before transfer, near-limit warnings, configurable proxy-safe limit, and actionable HTTP 413 errors. Excluded directories are never silently exposed to include a Dockerfile. |
-| F-014 | Image inspection crashes plan | Existing: deploy image inspection catches failures and proceeds unpinned. Verify plan route coverage. |
-| F-015 | Two-core builder starved | Existing: selector accepts 0.5 free CPU or positive free CPU with no active build, and 1 GiB free memory. Verify selection tests. |
+| F-014 | Image inspection crashes plan | Verified with an API regression: forced registry inspection failure still schedules the image-only deployment using its original tag. Existing fallback retained. |
+| F-015 | Two-core builder starved | Verified with selector regressions: an idle small builder with positive CPU and 1 GiB free memory remains eligible, while zero CPU and insufficient memory are refused. Existing implementation retained. |
 | F-016 | Transient du failure kills build | Fixed locally: retry failed du measurements up to three attempts within existing timeout; persistent errors and invalid sizes still fail closed. Disk budget and reserve checks remain enforced. |
 | F-017 | Logs unavailable without active node | Implemented and validated locally: shared authorized log reader falls back to exact-attempt build output and durable failure evidence without an active node, including streaming and AI tools. |
 | F-018 | Explain repeats opaque disk error | Implemented and validated locally: explain includes observed evidence and actionable advice for short failures and pending rollouts, including when AI is disabled, unavailable or limited. |
 | F-019 | One-off exec/task missing | Implemented locally: fleet run executes a bounded temporary container with the service image, resolved environment/secrets and private network. Includes role/fleet checks, audit metadata, exit status/output, cancellation/timeout cleanup and restart/reconnect reaping. Persistent service volumes are not mounted. |
-| F-020 | Build secret injection unavailable | Existing: `build_args` and `build_secrets` schema, agent BuildKit secret mounts and documentation in `agent-delegated-builds.md`. Verify usability/discoverability; public frontend variables are embedded in client bundles. |
+| F-020 | Build secret injection unavailable | Implemented locally: service page lists required build-secret names; manual/Git deploys preflight missing build keys before creating builds; import includes build-only secrets and inherited defaults. BuildKit mount guidance is provided. |
 | F-021 | Shared monorepo builds wrong stage | Implemented locally with F-009: worker and gateway can select their own Dockerfile stage, including through Compose imports; distinct targets cannot reuse an incorrect cached result. |
 | F-022 | BuildKit memory too restrictive | Implemented locally: removed fixed 2 GiB BuildKit assignment. Each build receives 75% of its uncommitted memory share after dividing capacity among configured concurrent slots. Regression checks cover low and high memory; no real OOM workload reproduced. |
-| F-023 | Setting dozens of secrets cumbersome | F-007 restores file-based bulk import. Keep values out of argv/shell history; assess remaining batch UX through import. |
+| F-023 | Setting dozens of secrets cumbersome | Implemented locally: manifest-selected import honors service scope and build-secret declarations, previews key names, skips empty values and reports completed/pending keys with a safe retry selection after partial failure. |
 | F-024 | Cannot reattach deployment progress | Implemented locally: fleet deploy attach <service> [--deploy <id>] follows the exact attempt through existing progress APIs. Reattachment performs GET requests only; superseded/failed attempts stop with a reason. |
 | F-025 | Status hides useful telemetry | Implemented locally: verbose CLI reports tunnel state, disk availability and last runtime errors; stale or missing measurement ages suppress live resource readings. |
 
@@ -125,3 +125,24 @@ hard-coded limit but does not guarantee every application's build will fit.
 
 Validation: server 650/650 tests, CLI 212/212 tests and dashboard 27/27 tests pass. Typechecks pass for all three packages, and production builds pass. Migration 0034 applied successfully in the isolated test database. This batch was committed at the operator’s request; no push or deployment was performed. Interactive browser usability,
 real replacement hardware and a real memory-intensive build remain unverified.
+
+## AI and secret setup batch — 2026-11-12
+
+This batch is committed locally and remains unpushed and undeployed. Provider compatibility is
+covered for Groq and OpenRouter through the shared client. No automatic paid
+failover or daily-limit bypass is introduced. One bounded live request reproduced
+the current OpenRouter model rejection; no production configuration was changed.
+See ai-provider-setup.md for model discovery and activation requirements.
+
+Validation: 657 server tests, 214 CLI tests and 27 dashboard tests pass; typechecks and production builds pass. The graph and wiki were refreshed, and isolated Postgres/Redis test services were removed after validation. A replacement
+provider/model has not been activated; interactive UI and new Groq credentials
+remain unverified.
+
+## Release preparation follow-up — 2026-11-12
+
+Production AI is restored with baidu/ernie-5.5-flash-preview:free after bounded,
+zero-cost-reported checks. Only the model environment setting changed; the
+application image stayed unchanged and healthy. Code changes remain local.
+See release-readiness-0.27.0.md for versions, real browser/agent/Buildx checks,
+rollback details and remaining release gates. Native-agent replacement used two
+isolated state directories on one machine, not two physical machines.
