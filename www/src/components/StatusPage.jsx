@@ -6,6 +6,7 @@ import { EASE } from '../lib/motion'
 const API = import.meta.env.VITE_FLEET_API_URL ?? (import.meta.env.DEV ? 'http://localhost:8080' : 'https://fleetapi.plastikworld.xyz')
 const TITLES = { api: 'Control plane API', postgres: 'Postgres', redis: 'Redis', registry: 'Registry storage' }
 const SECTIONS = [['current-status', 'Current status'], ['components', 'Components'], ['incident-history', 'Incident history']]
+const MIN_DAILY_CHECKS = 24 * 60 * 2 * 0.95
 
 function label(status) {
   return ({ operational: 'Operational', degraded: 'Degraded', outage: 'Outage', unknown: 'Checking' })[status] ?? 'Checking'
@@ -17,7 +18,7 @@ function timestamp(value) {
 }
 function percent(points) {
   const samples = points.reduce((sum, point) => sum + point.samples, 0)
-  if (!samples) return null
+  if (samples < MIN_DAILY_CHECKS) return null
   const healthy = points.reduce((sum, point) => sum + Math.round((point.uptime / 100) * point.samples), 0)
   return (healthy / samples * 100).toFixed(2)
 }
@@ -35,7 +36,7 @@ function UptimeBars({ points }) {
     return byDay.get(key) ?? { date: key, uptime: null, samples: 0 }
   })
   return <div className="flex h-7 items-end gap-[2px]" aria-label={`Uptime measurements for ${points.length} days`}>
-    {days.map((point) => <span key={point.date} title={point.samples ? `${point.date} · ${point.uptime}% measured uptime` : `${point.date} · no measurements`} className={`min-w-[2px] flex-1 rounded-[1px] ${point.uptime === null ? 'bg-[var(--color-line-2)]' : point.uptime >= 99.9 ? 'bg-[var(--color-signal)]' : point.uptime >= 95 ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-down)]'}`} style={{ height: `${point.uptime === null ? 35 : Math.max(20, point.uptime)}%` }} />)}
+    {days.map((point) => { const complete = point.uptime !== null && point.samples >= MIN_DAILY_CHECKS; return <span key={point.date} title={complete ? `${point.date} · ${point.uptime}% of recorded checks passed` : `${point.date} · incomplete or missing measurements`} className={`min-w-[2px] flex-1 rounded-[1px] ${!complete ? 'bg-[var(--color-line-2)]' : point.uptime >= 99.9 ? 'bg-[var(--color-signal)]' : point.uptime >= 95 ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-down)]'}`} style={{ height: `${complete ? Math.max(20, point.uptime) : 35}%` }} />})}
   </div>
 }
 function EventTimeline({ events, monitoredSince }) {
@@ -91,7 +92,7 @@ export default function StatusPage() {
       </motion.section>
       <section id="components" className="mt-12 scroll-mt-24"><div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--color-line)] pb-3"><div><h2 className="text-[18px] font-medium tracking-[-0.025em]">Monitored components</h2><p className="mt-2 text-[13.5px] text-[var(--color-fg-muted)]">Health checks for Fleet platform services and their data dependencies. Percentages use recorded checks; gray days indicate missing measurements.</p></div><span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-fg-dim)]">90 day view</span></div>
         {!data?.components?.length ? <p className="border-b border-[var(--color-line)] py-5 text-[13px] text-[var(--color-fg-muted)]">{error ? 'Live component checks are temporarily unavailable.' : 'Waiting for monitoring data…'}</p> : <div className="border-t border-[var(--color-line)]">{data.components.map((component, index) => { const points = component.uptime90d ?? []; const uptime = percent(points); const sampleCount = points.reduce((sum, point) => sum + point.samples, 0); return <motion.article key={component.id} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .32, delay: index * .04, ease: EASE.expo }} className="grid gap-3 border-b border-[var(--color-line)] py-4 sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.8fr)_120px] sm:items-center">
-          <div className="flex items-start gap-3"><StatusDot className="mt-1" tone={tone(component.status)} size={6} /><div><h3 className="text-[13px] font-medium">{component.name}</h3><p className="mt-1 text-[11px] text-[var(--color-fg-dim)]">{component.checkedAt ? `Checked ${timestamp(component.checkedAt)}` : 'First check pending'}</p></div></div><UptimeBars points={points} /><div className="font-mono text-[10px] text-[var(--color-fg-dim)] sm:text-right"><span className="block text-[var(--color-fg-muted)]">{uptime ? `${uptime}% · ${sampleCount} checks` : 'Collecting'}</span>{label(component.status)}</div>
+          <div className="flex items-start gap-3"><StatusDot className="mt-1" tone={tone(component.status)} size={6} /><div><h3 className="text-[13px] font-medium">{component.name}</h3><p className="mt-1 text-[11px] text-[var(--color-fg-dim)]">{component.checkedAt ? `Checked ${timestamp(component.checkedAt)}` : 'First check pending'}</p></div></div><UptimeBars points={points} /><div className="font-mono text-[10px] text-[var(--color-fg-dim)] sm:text-right"><span className="block text-[var(--color-fg-muted)]">{uptime ? `${uptime}% · ${sampleCount} checks` : `Collecting · ${sampleCount} checks`}</span>{label(component.status)}</div>
         </motion.article> })}</div>}
       </section>
       <section id="incident-history" className="mt-12 scroll-mt-24 border-t border-[var(--color-line)] pt-6"><span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--color-fg-dim)]">Incident history</span><h2 className="mt-2 text-[17px] font-medium tracking-[-0.02em]">Platform health events</h2><p className="mb-5 mt-2 text-[13.5px] leading-[1.7] text-[var(--color-fg-muted)]">Events are created automatically when a monitored component changes health.</p><EventTimeline events={data?.events ?? []} monitoredSince={data?.monitoredSince} /></section>
