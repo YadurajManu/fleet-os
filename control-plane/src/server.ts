@@ -59,11 +59,11 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   const corsOrigin = ctx.config.PUBLIC_DASHBOARD_URL
     ?? (isProd ? undefined : 'http://localhost:5173')
   if (isProd && !corsOrigin) {
-    app.log.warn('PUBLIC_DASHBOARD_URL not set in production — CORS will reject all cross-origin requests')
+    app.log.warn('PUBLIC_DASHBOARD_URL not set in production — dashboard cross-origin requests are disabled')
   }
 
   await app.register(cors, {
-    origin: corsOrigin ?? false,
+    origin: [corsOrigin, 'https://fleet.plastikworld.xyz'].filter((origin): origin is string => Boolean(origin)),
     credentials: true,
   })
   await app.register(cookie)

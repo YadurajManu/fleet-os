@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef } from 'react'
 import { motion, useInView, useReducedMotion } from 'framer-motion'
 import { FOOTER_LINKS, LEGAL_LINKS } from '../lib/data'
 import { EASE } from '../lib/motion'
@@ -7,23 +7,6 @@ import StatusDot from './ui/StatusDot'
 import Logo from './ui/Logo'
 import CopyLine from './ui/CopyLine'
 import GitHubStarBadge from './ui/GitHubStarBadge'
-
-function useTicker() {
-  const [n, setN] = useState(0)
-  useEffect(() => {
-    const id = setInterval(() => setN((v) => v + 1), 1000)
-    return () => clearInterval(id)
-  }, [])
-  return n
-}
-
-function fmtUptime(sec) {
-  const d = Math.floor(sec / 86400)
-  const h = String(Math.floor((sec % 86400) / 3600)).padStart(2, '0')
-  const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0')
-  const s = String(sec % 60).padStart(2, '0')
-  return `${d}d ${h}:${m}:${s}`
-}
 
 /* A link that draws its underline in from the left and nudges on hover. */
 function FooterLink({ label, href }) {
@@ -72,12 +55,6 @@ export default function Footer() {
   const ref = useRef(null)
   const inView = useInView(ref, { once: true, amount: 0.1 })
   const reduce = useReducedMotion()
-  const tick = useTicker()
-
-  // Plausible control-plane readout. Simulated on a marketing page, but it
-  // ticks the way the real one does.
-  const uptime = 41 * 86400 + 6 * 3600 + 12 * 60 + 38 + tick
-  const sinceDeploy = 14 + tick
 
   const rise = (delay = 0) => ({
     initial: reduce ? { opacity: 0 } : { opacity: 0, y: 22 },
@@ -106,22 +83,15 @@ export default function Footer() {
               <span className="link-draw">Service status information</span>
             </span>
             <span className="hidden font-mono text-[11px] text-[var(--color-fg-dim)] sm:inline">
-              · control plane · mesh coordinator · registry · build runners
+              · Fleet-operated platform components
             </span>
           </motion.a>
 
           <motion.div
             {...rise(0.08)}
-            className="flex items-center gap-6 font-mono text-[10.5px] text-[var(--color-fg-dim)]"
+            className="font-mono text-[10.5px] text-[var(--color-fg-dim)]"
           >
-            <span>
-              example uptime{' '}
-              <span className="tabular-nums text-[var(--color-fg-muted)]">{fmtUptime(uptime)}</span>
-            </span>
-            <span className="hidden sm:inline">
-              example deploy{' '}
-              <span className="tabular-nums text-[var(--color-fg-muted)]">{sinceDeploy}s ago</span>
-            </span>
+            Current platform status · uptime · incidents
           </motion.div>
         </div>
       </div>

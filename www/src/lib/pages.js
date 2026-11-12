@@ -897,14 +897,14 @@ export const PAGES = {
   status: {
     group: 'Company',
     title: 'Service status',
-    kicker: 'check your deployment',
-    lede: 'This static website does not publish live availability or measured uptime. Check your deployment in the Fleet OS dashboard and review its event timeline.',
-    updated: '20 Sep 2026',
+    kicker: 'Fleet platform availability',
+    lede: 'Fleet is preparing public health checks for its hosted platform components. Live availability and measured uptime are not connected yet.',
+    updated: '12 Nov 2026',
     blocks: [
-      H('How do I check my fleet?'),
-      P('Use the dashboard to inspect nodes, services and recent events. For self-hosted installations, check the control plane health endpoint and your own monitoring.'),
-      H('What does this page measure?'),
-      P('This page is documentation, not a monitoring feed. It does not establish current service availability, historical uptime or an incident record.'),
+      H('What does this page cover?'),
+      P('This public page is for Fleet-operated platform components. It does not report the availability of your own nodes or deployed services; check those in your fleet dashboard.'),
+      H('Availability data'),
+      P('Health checks, uptime history and incident reporting are not connected yet. No live status or uptime percentage is claimed until those measurements are available.'),
       { t: 'links', items: [
         ['Self-hosting guide', '/docs/self-hosting', 'Deployment and operating guidance.'],
         ['CLI reference', '/docs/cli', 'Commands for inspecting your fleet.'],

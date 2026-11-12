@@ -11,6 +11,7 @@ import Pricing from './components/Pricing'
 import Builder from './components/Builder'
 import FinalCTA from './components/FinalCTA'
 import Footer from './components/Footer'
+import StatusPage from './components/StatusPage'
 import PageShell from './components/PageShell'
 import { useSmoothScroll } from './lib/useCapability'
 import { useRoute } from './lib/router'
@@ -64,6 +65,8 @@ export default function App() {
           <Landing />
         ) : route === 'founder' ? (
           <Suspense fallback={<p role="status">Loading founder page…</p>}><Founder /></Suspense>
+        ) : route === 'status' ? (
+          <StatusPage />
         ) : (
           <PageShell route={route} />
         )}

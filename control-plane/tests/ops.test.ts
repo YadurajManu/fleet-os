@@ -8,6 +8,7 @@ import { createContext, closeContext, type AppContext } from '../src/api/context
 import { buildServer } from '../src/server.js'
 import { platformOperators, users, nodes, fleets } from '../src/db/schema.js'
 import { syncOpsSignals } from '../src/ops/incidents.js'
+import { collectPublicStatus } from '../src/ops/public-status.js'
 
 let ctx: AppContext
 let app: FastifyInstance
@@ -34,6 +35,19 @@ test('customer owner cannot read platform data without separate grant', async ()
   const response = await app.inject({ url: '/ops/summary', headers: { authorization: `Bearer ${token}` } })
   assert.equal(response.statusCode, 403)
   assert.equal(response.body.includes('verified operator'), true)
+})
+
+test('public status reports real dependency checks and sanitized incident events', async () => {
+  await collectPublicStatus(ctx)
+  const response = await app.inject({ url: '/public/status', headers: { origin: 'https://fleet.plastikworld.xyz' } })
+  assert.equal(response.statusCode, 200, response.body)
+  assert.equal(response.headers['access-control-allow-origin'], 'https://fleet.plastikworld.xyz')
+  const status = response.json()
+  assert.deepEqual(status.components.map((component: { id: string }) => component.id), ['api', 'postgres', 'redis', 'registry'])
+  assert.equal(status.components.find((component: { id: string }) => component.id === 'postgres').status, 'operational')
+  assert.equal(status.components.find((component: { id: string }) => component.id === 'redis').status, 'operational')
+  assert.ok(status.monitoredSince)
+  assert.equal(JSON.stringify(status).includes('example.test'), false)
 })
 
 test('platform grant still requires verified email and TOTP', async () => {

@@ -58,6 +58,15 @@ policy. When AI is unavailable, recorded evidence remains usable.
 
 ## Infrastructure measurements and limits
 
+The public `/status` page reads a sanitized `/public/status` feed. The
+control-plane collector samples API reachability, Postgres, Redis, and registry
+storage every 30 seconds, retains samples for 90 days, and records a public
+event when a monitored component changes state. Raw errors and customer fleet
+incidents are never included. Days without samples are shown as gaps and are
+excluded from measured uptime. Because the collector runs inside the
+control-plane process, a full control-plane or database outage cannot write its
+own downtime event; independent probes are needed for complete outage history.
+
 - API traffic: in-process 15-minute minute buckets for request count, 5xx rate,
   and histogram p95 upper bounds. Health/Ops polling is excluded. Values reset on
   restart and cover one control-plane process, not an entire replicated cluster.
