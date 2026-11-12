@@ -70,6 +70,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
       ['validate [file]', 'Check a fleet.yaml without applying it'],
       ['reschedule <service>', 'Force a service to move'],
       ['run <service> -- <command>', 'Run a one-off command with the service image, environment and private network'],
+      ['deploy attach <service>', 'Resume watching a deployment without creating another attempt'],
       ['restart <service>', 'Replace the current release on its node'],
       ['rollback <service> [release]', 'Restore the previous or selected release'],
       ['secrets', 'List the fleet secret store'],

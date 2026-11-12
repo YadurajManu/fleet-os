@@ -122,8 +122,8 @@ export async function waitForRunning(
     const current = await currentOf(fleetId, serviceId)
     last = current?.status ?? last
     if (current?.status === 'running') return { state: 'running' }
-    if (current && ['failed', 'cancelled', 'stopped'].includes(current.status ?? '')) {
-      return { state: 'failed', reason: current.failureReason ?? null }
+    if (current && ['failed', 'cancelled', 'stopped', 'superseded'].includes(current.status ?? '')) {
+      return { state: 'failed', reason: current.failureReason ?? `deployment ${current.status}` }
     }
 
     await sleep(pollMs)
@@ -133,8 +133,8 @@ export async function waitForRunning(
   // about the service, and the two are only ever a poll interval apart.
   const settled = await currentOf(fleetId, serviceId)
   if (settled?.status === 'running') return { state: 'running' }
-  if (settled && ['failed', 'cancelled', 'stopped'].includes(settled.status ?? '')) {
-    return { state: 'failed', reason: settled.failureReason ?? null }
+  if (settled && ['failed', 'cancelled', 'stopped', 'superseded'].includes(settled.status ?? '')) {
+    return { state: 'failed', reason: settled.failureReason ?? `deployment ${settled.status}` }
   }
 
   return { state: 'timeout', last: settled?.status ?? last, elapsedMs: Date.now() - startedAt }

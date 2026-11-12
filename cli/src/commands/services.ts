@@ -427,8 +427,33 @@ async function buildContextFor(
   }
 }
 
+/** Resume watching an immutable deployment; this path never creates or uploads anything. */
+async function attachDeployment(args: string[], flags: Flags): Promise<void> {
+  const name = args[0]
+  if (!name) throw new CliError('usage: fleet deploy attach <service> [--deploy <deployment-id>]', EXIT.usage)
+  const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
+  const service = await findService(fleetId, name, projectFlag(flags))
+  let id = typeof flags.deploy === 'string' ? flags.deploy : undefined
+  if (!id) {
+    const { body } = await request<{ deployments: Array<{ id: string }> }>('GET', `/services/${service.id}/deployments`)
+    id = body.deployments[0]?.id
+  }
+  if (!id) throw new CliError(`No deployment for "${name}" to attach to.`, EXIT.usage)
+  const deploymentId = id
+  const endpoint = `/services/${service.id}/deployments/${deploymentId}`
+  await request('GET', endpoint)
+  await withLadder(DEPLOY_STEPS, async ladder => {
+    const walker = phaseWalker(ladder)
+    await requireRunning(fleetId, service.id, name, { deploymentId, onProgress: p => walker.apply(p) })
+    walker.finish('running')
+  }, { mark: false, title: `following ${name} · ${deploymentId}`, onCancel: `Stopped watching. Resume with fleet deploy attach ${name} --deploy ${deploymentId}` })
+  if (flags.json) console.log(JSON.stringify((await request('GET', endpoint)).body, null, 2))
+  else console.log(`${glyph.ok} ${name} deployment ${deploymentId} is running`)
+}
+
 export const deployCommand = {
   async run(args: string[], flags: Flags) {
+    if (args[0] === 'attach') return attachDeployment(args.slice(1), flags)
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
     const [name] = args
     if (!name) throw new CliError('usage: fleet deploy <service> [--sha <git-sha>] [--no-wait] [--dir <path>]', EXIT.usage)
@@ -523,7 +548,7 @@ export const deployCommand = {
       {
         mark: false,
         title: `deploying ${service.name}${gitSha ? ` at ${gitSha.slice(0, 7)}` : ''}`,
-        onCancel: `deploy is still running on the control plane; inspect with fleet deployments ${service.name}`,
+        onCancel: `deploy is still running; resume with fleet deploy attach ${service.name}`,
       }
     )
 

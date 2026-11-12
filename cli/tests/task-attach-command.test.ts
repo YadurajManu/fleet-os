@@ -23,6 +23,31 @@ async function withApi(handler: RequestListener, run: () => Promise<void>) {
   }
 }
 
+test('attach follows the requested deployment using GET only, ignoring an older serving release', async () => {
+  const requests: string[] = []
+  let detailReads = 0
+  await withApi((req, res) => {
+    requests.push(`${req.method} ${req.url}`)
+    res.setHeader('content-type', 'application/json')
+    if (req.url === '/fleets/fleet/services') res.end(JSON.stringify({ services: [{ id: 'service', name: 'web', current: { status: 'running' } }] }))
+    else if (req.url === '/services/service/deployments') res.end(JSON.stringify({ deployments: [{ id: 'new' }, { id: 'old' }] }))
+    else if (req.url === '/services/service/deployments/new') {
+      detailReads++
+      res.end(JSON.stringify({ deployment: { id: 'new', status: detailReads < 3 ? 'building' : 'running', startedAt: new Date().toISOString(), gitSha: null, failureReason: null }, progress: null }))
+    } else { res.statusCode = 404; res.end('{}') }
+  }, async () => {
+    await deployCommand.run(['attach', 'web'], { fleet: 'fleet', json: true })
+    assert.ok(detailReads >= 3)
+    assert.ok(requests.every(path => path.startsWith('GET ')))
+    assert.ok(!requests.some(path => path.includes('/build-context') || path.includes('/deployments/old')))
+  })
+})
+
+test('superseded attempts stop waiting immediately rather than timing out', async () => {
+  const result = await waitForRunning('fleet', 'service', { timeoutMs: 50, pollMs: 1, read: async () => ({ status: 'superseded', failureReason: null }) })
+  assert.deepEqual(result, { state: 'failed', reason: 'deployment superseded' })
+})
+
 test('run forwards literal arguments and propagates the task exit code', async () => {
   let command: unknown
   const previousExitCode = process.exitCode
