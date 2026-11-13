@@ -1,0 +1,19 @@
+fleet ▸ homelab  ▲ DEGRADED
+No nodes online · 1 of 1 services running
+
+NODES
+NODE          PLATFORM     ROLE     LOAD  MEMORY  RUNS       STATUS
+✖ pi-builder  linux/arm64  builder  —     —       db, cache  ✖ offline
+
+SERVICES
+SERVICE  NODE        STATUS     LAST DEPLOY  FAILURES (7D)
+db       pi-builder  ● running  0s ago       0
+
+PROBLEMS
+✖ pi-builder stopped reporting 0s ago
+  → fleet doctor
+
+✖ db assigned to offline node pi-builder
+  → fleet doctor
+
+updated 0s ago · --watch for live view · --json for scripts

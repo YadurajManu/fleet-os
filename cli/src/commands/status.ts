@@ -1,7 +1,8 @@
 import { request, requireFleet, CliError, EXIT } from '../api.js'
-import { c, glyphs, table, statusColour, mb, relativeTime } from '../render.js'
+import { c, cursor, glyphs, table, mb, memoryPair, relativeTime, loadBar, statusBadge, header, section, hint } from '../render.js'
 import { operationHeader } from '../presentation.js'
 import type { Flags } from '../args.js'
+import { failureKey, translateFailure } from '../error-translation.js'
 
 type MapNode = { id: string; name: string; arch: string; status: string; reliabilityTier: string; ramMb: number; freeRamMb: number; loadFactor: number | null; services: Array<{ name: string; policy: string; status: string }> }
 type Node = {
@@ -37,7 +38,7 @@ async function snapshot(fleetId: string, flags: Flags): Promise<StatusSnapshot> 
     request<{ nodes: MapNode[]; unplaced: string[] }>('GET', `/fleets/${fleetId}/placement-map`),
     request<{ nodes: Node[] }>('GET', `/fleets/${fleetId}/nodes`),
     request<{ services: Service[] }>('GET', `/fleets/${fleetId}/services`),
-    request<{ events: Event[] }>('GET', `/fleets/${fleetId}/events?limit=${flags.since ? 200 : 5}`),
+    request<{ events: Event[] }>('GET', `/fleets/${fleetId}/events?limit=${flags.since || flags.all ? 200 : 5}`),
   ])
   const window = sinceMs(flags.since)
   return {
@@ -69,45 +70,43 @@ const nodeServices = (node: Node, services: Service[]): Service[] => services.fi
 
 function renderNodes(data: StatusSnapshot): string {
   return table(
-    ['node', 'platform', 'sample age', 'load', 'memory free/total', 'services', 'status'],
+    ['node', 'platform', 'role', 'load', 'memory', 'runs', 'status'],
     data.nodes.map((node) => {
       const assigned = nodeServices(node, data.services)
       const age = node.telemetry?.ageMs
       const hasLiveTelemetry = node.live && node.telemetry && typeof age === 'number' && age >= 0 && age <= (data.fleet.heartbeatIntervalSec ?? 5) * (data.fleet.heartbeatMissThreshold ?? 3) * 1000
       const memoryTotalMb = node.effectiveMemBytes ? node.effectiveMemBytes / 1048576 : node.ramMb
-      const memoryTotal = mb(memoryTotalMb)
       // Older macOS agents mixed host RAM used with Docker-engine capacity.
       // Used > capacity is evidence that those figures describe different
       // machines, not a reason to print 0 MB free with false precision.
       const memoryComparable = hasLiveTelemetry && node.telemetry!.ramUsedMb <= memoryTotalMb
+      const freeMb = Math.max(0, memoryTotalMb - (node.telemetry?.ramUsedMb ?? 0))
+      const memoryLabel = memoryPair(freeMb, memoryTotalMb)
       return [
-        node.name,
+        `${node.live ? c.green(glyphs.online) : c.red(glyphs.fail)} ${node.name}${node.status === 'cordoned' ? ` ${c.yellow('[cordoned]')}` : ''}`,
         node.platform || `linux/${node.arch}`,
-        typeof age === 'number' ? `${Math.round(age / 1000)}s${hasLiveTelemetry ? '' : ' · stale'}` : 'unavailable',
-        hasLiveTelemetry ? `${Math.round(node.telemetry!.cpuPct)}%` : c.dim('unavailable'),
-        memoryComparable ? `${mb(Math.max(0, memoryTotalMb - node.telemetry!.ramUsedMb))}/${memoryTotal}` : c.dim(`unavailable · ${memoryTotal} total`),
-        assigned.length ? assigned.map((service) => service.current?.status === 'running' ? service.name : c.yellow(service.name)).join(' ') : c.dim('—'),
-        statusColour(nodeStatus(node)),
+        node.canBuild ? 'builder' : node.reliabilityTier,
+        hasLiveTelemetry ? loadBar(node.telemetry!.cpuPct, (process.stdout.columns ?? 80) >= 100 ? 8 : 5) : '—',
+        memoryComparable ? memoryLabel : '—',
+        assigned.length ? (node.telemetry?.containers.map((container) => container.name).join(', ') || assigned.map((service) => service.name).join(', ')) : '—',
+        statusBadge(nodeStatus(node)),
       ]
-    })
+    }),
+    { priorities: [0, 3, 7, 3, 3, 5, 0] }
   )
 }
 
-function renderCapabilities(data: StatusSnapshot, verbose = false): string {
+function renderNodeDetails(data: StatusSnapshot): string {
   return data.nodes.map((node) => {
-    const parts: Array<string | null | undefined> = [node.engineKind, node.agentVersion ? `agent v${node.agentVersion.replace(/^v/, '')}` : null]
-    if (node.canBuild) parts.push('builder')
-    if (verbose) {
-      parts.push(node.status === 'cordoned' ? 'cordoned · run fleet nodes uncordon' : node.schedulable === false ? 'unschedulable' : 'schedulable')
-      parts.push(node.tunnelConnected ? 'tunnel connected' : 'tunnel disconnected')
-      parts.push(node.live && node.diskMb != null ? `${mb(node.diskMb)} disk available (last heartbeat)` : 'disk availability unknown')
-      if (node.canBuild) parts.push(`${mb((node.buildDiskReserveBytes ?? 0) / 1048576)} build disk reserve`)
-    }
-    if (verbose && node.telemetry?.runtime) {
-      for (const error of [node.telemetry.runtime.dockerError, node.telemetry.runtime.registryError, node.telemetry.runtime.lastReconcileError]) if (error) parts.push(`last reported error: ${error}`)
-    }
-    if (node.effectiveCpu) parts.push(`${node.effectiveCpu} CPU`)
-    return `  ${c.dim(glyphs.branch)} ${node.name} · ${parts.filter(Boolean).join(' · ') || 'capabilities unavailable'}`
+    const age = node.telemetry?.ageMs
+    const details = [node.engineKind, node.agentVersion ? `agent v${node.agentVersion.replace(/^v/, '')}` : null, node.effectiveCpu ? `${node.effectiveCpu} CPU` : null]
+    details.push(node.tunnelConnected ? 'tunnel connected' : 'tunnel disconnected')
+    details.push(node.live && node.diskMb != null ? `${mb(node.diskMb)} disk free` : 'disk —')
+    details.push(age == null ? 'sample age —' : `sample ${Math.round(age / 1000)}s${age > (data.fleet.heartbeatIntervalSec ?? 5) * (data.fleet.heartbeatMissThreshold ?? 3) * 1000 ? ' stale' : ''}`)
+    const errors = node.telemetry?.runtime && [node.telemetry.runtime.dockerError, node.telemetry.runtime.registryError, node.telemetry.runtime.lastReconcileError].filter(Boolean)
+    if (errors?.length) details.push(`runtime: ${errors.join('; ')}`)
+    if (node.canBuild) details.push(`${mb((node.buildDiskReserveBytes ?? 0) / 1048576)} build reserve`)
+    return `  ${c.dim(glyphs.branch)} ${node.name} · ${details.filter(Boolean).join(' · ')}`
   }).join('\n')
 }
 
@@ -117,24 +116,74 @@ function renderServices(data: StatusSnapshot): string {
     data.services.map((service) => [
       service.name,
       service.current?.nodeName ?? service.last?.nodeName ?? c.dim('unplaced'),
-      statusColour(service.current?.status ?? service.last?.status ?? 'not deployed'),
+      statusBadge(service.current?.status ?? service.last?.status ?? 'not deployed'),
       relativeTime(service.last?.startedAt),
       service.recentFailures ? c.yellow(String(service.recentFailures)) : '0',
-    ])
+    ]),
+    { priorities: [0, 3, 0, 4, 2] }
   )
 }
 
+function builderHint(service: Service, data: StatusSnapshot): string | undefined {
+  if (!service.last?.failureReason || !/build/i.test(service.last.failureReason)) return undefined
+  const used = data.nodes.find((node) => node.name === service.last?.nodeName)
+  const stronger = data.nodes.filter((node) => node.live && node.canBuild && node.effectiveCpu && (!used?.effectiveCpu || node.effectiveCpu > used.effectiveCpu)).sort((a, b) => (b.effectiveCpu ?? 0) - (a.effectiveCpu ?? 0))[0]
+  return used && stronger?.effectiveCpu && used.effectiveCpu
+    ? `  ${c.dim(`built on ${used.name} (${used.effectiveCpu} CPU); ${stronger.name} has ${stronger.effectiveCpu} CPU` )}`
+    : undefined
+}
+
 function renderProblems(data: StatusSnapshot): string[] {
-  const lines: string[] = []
-  for (const node of data.nodes.filter((item) => !item.live)) lines.push(`${c.red(glyphs.fail)} ${node.name} stopped reporting ${relativeTime(node.lastHeartbeatAt)}`)
-  for (const service of affectedServices(data)) {
+  const blocks: string[] = []
+  for (const node of data.nodes.filter((item) => !item.live)) {
+    blocks.push(`${c.red(`${glyphs.fail} ${node.name}`)} stopped reporting ${relativeTime(node.lastHeartbeatAt)}\n${hint('fleet doctor')}`)
+  }
+
+  const failedGroups = new Map<string, Service[]>()
+  const other = affectedServices(data).filter((service) => {
+    const status = service.current?.status ?? service.last?.status ?? 'not deployed'
+    if (status === 'failed' && service.last?.failureReason) {
+      const key = failureKey(service.last.failureReason)
+      failedGroups.set(key, [...(failedGroups.get(key) ?? []), service])
+      return false
+    }
+    return true
+  })
+
+  for (const services of failedGroups.values()) {
+    const names = services.map((service) => service.name).join(', ')
+    const lines = [`${c.red(`${glyphs.fail} ${names}`)}  ${translateFailure(services[0]!.last!.failureReason!)}`]
+    for (const service of services) {
+      const clue = builderHint(service, data)
+      if (clue) lines.push(clue)
+      lines.push(hint(`fleet logs ${service.name} --follow`))
+    }
+    blocks.push(lines.join('\n'))
+  }
+
+  for (const service of other) {
     const status = service.current?.status ?? service.last?.status ?? 'not deployed'
     const node = data.nodes.find((item) => item.id === service.current?.nodeId)
+    const offlineNode = node && !node.live ? node : undefined
     const cordoned = status === 'pinned_unavailable' && node?.status === 'cordoned'
-    lines.push(`${c.red(glyphs.fail)} ${service.name} ${cordoned ? 'node_cordoned' : status}${service.last?.failureReason ? ` · ${service.last.failureReason}` : ''}${cordoned ? ` · run fleet nodes uncordon ${node.name}, then fleet deploy ${service.name}` : ''}`)
+    if (status === 'not deployed') {
+      blocks.push(`${c.dim(`${glyphs.stepTodo} ${service.name}`)} never deployed\n${hint(`fleet deploy ${service.name}`)}`)
+    } else if (cordoned && node) {
+      blocks.push(`${c.yellow(`${glyphs.warn} ${service.name}`)} unavailable because ${node.name} is cordoned\n${hint(`fleet nodes uncordon ${node.name}`)}\n${hint(`fleet deploy ${service.name}`)}`)
+    } else if (offlineNode) {
+      blocks.push(`${c.red(`${glyphs.fail} ${service.name}`)} assigned to offline node ${offlineNode.name}\n${hint('fleet doctor')}`)
+    } else if (['deploying', 'building', 'pushing', 'queued'].includes(status)) {
+      blocks.push(`${statusBadge(status)} ${service.name}\n${hint('fleet status --watch')}`)
+    } else {
+      const cause = service.last?.failureReason ? translateFailure(service.last.failureReason) : status.replaceAll('_', ' ')
+      blocks.push(`${c.red(`${glyphs.fail} ${service.name}`)}  ${cause}\n${hint(`fleet logs ${service.name} --follow`)}`)
+    }
   }
-  for (const service of data.unplaced) lines.push(`${c.yellow(glyphs.warn)} ${service} has no eligible node`)
-  return [...new Set(lines)]
+  for (const name of data.unplaced) {
+    if (data.services.some((service) => service.name === name && !service.current && !service.last)) continue
+    blocks.push(`${c.yellow(`${glyphs.warn} ${name}`)} has no eligible node\n${hint('fleet doctor')}`)
+  }
+  return blocks
 }
 
 const renderEvents = (events: Event[]): string[] => events.map((event) => {
@@ -142,74 +191,87 @@ const renderEvents = (events: Event[]): string[] => events.map((event) => {
   return `  ${relativeTime(event.at).padEnd(9)} ${event.service.padEnd(20)} ${c.dim(event.reason)} ${route}`
 })
 
-function nextActions(data: StatusSnapshot): string[] {
-  const actions = new Set<string>()
-  if (data.nodes.some((node) => !node.live)) actions.add('fleet doctor')
-  for (const service of affectedServices(data)) {
-    const node = data.nodes.find((item) => item.id === service.current?.nodeId)
-    if (service.current?.status === 'pinned_unavailable' && node?.status === 'cordoned') {
-      actions.add(`fleet nodes uncordon ${node.name}`)
-      actions.add(`fleet deploy ${service.name}`)
-      continue
-    }
-    actions.add(`fleet logs ${service.name} --follow`)
-    if (data.nodes.some((node) => node.live)) actions.add(`fleet reschedule ${service.name}`)
-  }
-  if (!actions.size) actions.add('fleet services')
-  return [...actions].slice(0, 4)
-}
-
-export function renderStatus(data: StatusSnapshot, flags: Flags = {}): string {
+export function renderStatus(data: StatusSnapshot, flags: Flags = {}, newlyFailed: string[] = []): string {
   if (!data.nodes.length) return `${operationHeader(data.fleet.name, 'Status') }\nNo nodes in this fleet yet.\n  Run \`fleet nodes pair\` to connect a machine.\n`
   const health = fleetHealth(data)
   const affected = affectedServices(data)
-  const offline = data.nodes.filter((node) => !node.live)
   const onlyNodes = bool(flags.nodes)
   const onlyServices = bool(flags.services)
   const onlyFailures = bool(flags.failures)
-  const sections: string[] = [operationHeader(data.fleet.name, `Status ${statusColour(health)}`).trimEnd()]
+  const running = data.services.filter((service) => service.current?.status === 'running').length
+  const failed = data.services.filter((service) => service.current?.status === 'failed' || (!service.current && service.last?.status === 'failed')).length
+  const notDeployed = data.services.filter((service) => !service.current && (!service.last || service.last.status === 'not deployed')).length
+  const online = data.nodes.filter((node) => node.live).length
+  const healthLabel = health === 'healthy' ? 'HEALTHY' : health === 'critical' ? 'DOWN' : 'DEGRADED'
+  const onlineSummary = online ? `${online} ${online === 1 ? 'node' : 'nodes'} online` : 'No nodes online'
+  const sections: string[] = [`${header(`fleet ${glyphs.info} ${data.fleet.name}`, healthLabel)}\n${onlineSummary} · ${running} of ${data.services.length} services running${failed ? ` · ${failed} failed` : ''}${notDeployed ? ` · ${notDeployed} not deployed` : ''}`]
 
-  sections.push(health === 'healthy'
-    ? `${c.green(glyphs.ok)} ${data.nodes.length} node(s) reporting · ${data.services.length} service(s) available`
-    : `${c.yellow(glyphs.warn)} ${offline.length} node(s) offline · ${affected.length} service(s) affected`)
+  if (newlyFailed.length) sections.push(c.red(`${glyphs.fail} NEW FAILURE  ${newlyFailed.join(', ')}`))
 
   if (!onlyFailures && !onlyServices) {
-    sections.push(renderNodes(data))
-    sections.push(renderCapabilities(data, bool(flags.verbose) || bool(flags.v)))
+    sections.push(`${section('Nodes')}\n${renderNodes(data)}${bool(flags.verbose) || bool(flags.v) ? `\n${renderNodeDetails(data)}` : ''}`)
   }
   if (onlyServices || (!onlyNodes && data.services.length)) {
-    sections.push(data.services.length ? `${c.dim('Services')}\n${renderServices(data)}` : c.dim('No services deployed.'))
+    sections.push(data.services.length ? `${section('Services')}\n${renderServices(data)}` : c.dim('No services deployed.'))
   }
 
   const problems = renderProblems(data)
-  if (problems.length) sections.push(`${c.bold('Why degraded')}\n${problems.join('\n')}`)
+  if (problems.length && health !== 'healthy') sections.push(`${section('Problems')}\n${problems.join('\n\n')}`)
   else if (onlyFailures) sections.push(c.dim('No current failures.'))
-  if (!onlyNodes && !onlyServices && !onlyFailures && data.events.length) sections.push(`${c.dim('Recent activity')}\n${renderEvents(data.events).join('\n')}`)
-
-  const actions = nextActions(data)
-  if (actions.length && health !== 'healthy') sections.push(`${c.bold('Next actions')}\n${actions.map((action) => `  ${c.cyan(action)}`).join('\n')}`)
+  if (!onlyNodes && !onlyServices && !onlyFailures && data.events.length) sections.push(`${section('Recent')}\n${renderEvents(data.events.slice(0, bool(flags.all) ? data.events.length : 5)).join('\n')}`)
 
   const interval = data.fleet.heartbeatIntervalSec
-  sections.push(c.dim(`Snapshot ${relativeTime(data.fetchedAt)}${interval ? ` · heartbeat expected every ${interval}s` : ''}`))
+  const footer = [`updated ${relativeTime(data.fetchedAt)}`, '--watch for live view', '--json for scripts']
+  if (interval) footer.push(`heartbeat ${interval}s`)
+  sections.push(c.dim(footer.join(' · ')))
   return `${sections.filter(Boolean).join('\n\n')}\n`
+}
+
+export function statusJson(data: StatusSnapshot): string {
+  return JSON.stringify({ ...data, health: fleetHealth(data), affectedServices: affectedServices(data) }, null, 2)
 }
 
 async function printStatus(fleetId: string, flags: Flags): Promise<void> {
   const data = await snapshot(fleetId, flags)
-  if (flags.json) return console.log(JSON.stringify({ ...data, health: fleetHealth(data), affectedServices: affectedServices(data) }, null, 2))
+  if (flags.json) return console.log(statusJson(data))
   process.stdout.write(renderStatus(data, flags))
 }
 
 export const statusCommand = {
   async run(_args: string[], flags: Flags) {
     if (flags.watch && flags.json) throw new CliError('--watch cannot be combined with --json.', EXIT.usage)
+    if (flags.watch && !process.stdout.isTTY) throw new CliError('--watch needs an interactive terminal.', EXIT.usage)
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
     if (!flags.watch) return printStatus(fleetId, flags)
-    do {
-      if (process.stdout.isTTY) process.stdout.write('\x1b[2J\x1b[H')
-      await printStatus(fleetId, flags)
-      await new Promise((resolve) => setTimeout(resolve, 5_000))
-    } while (true)
+    let stopping = false
+    let previousFailed: Set<string> | null = null
+    let timer: NodeJS.Timeout | undefined
+    let wake: (() => void) | null = null
+    const onInterrupt = () => {
+      stopping = true
+      wake?.()
+      process.stdout.write(cursor.show())
+    }
+    process.on('SIGINT', onInterrupt)
+    process.stdout.write(cursor.hide())
+    try {
+      while (!stopping) {
+        const data = await snapshot(fleetId, flags)
+        const failedNow = new Set(affectedServices(data).filter((service) => service.current?.status === 'failed').map((service) => service.name))
+        const newlyFailed = previousFailed ? [...failedNow].filter((name) => !previousFailed!.has(name)) : []
+        previousFailed = failedNow
+        process.stdout.write(`\x1b[H\x1b[0J${renderStatus(data, flags, newlyFailed)}`)
+        if (stopping) break
+        await new Promise<void>((resolve) => {
+          timer = setTimeout(() => { wake = null; resolve() }, 2_000)
+          wake = () => { if (timer) clearTimeout(timer); wake = null; resolve() }
+        })
+      }
+    } finally {
+      if (timer) clearTimeout(timer)
+      process.removeListener('SIGINT', onInterrupt)
+      process.stdout.write(cursor.show())
+    }
   },
 }
 
@@ -219,10 +281,12 @@ export const eventsCommand = {
     const limit = typeof flags.limit === 'string' ? flags.limit : '30'
     const { body } = await request<{ events: Event[] }>('GET', `/fleets/${fleetId}/events?limit=${limit}`)
     if (flags.json) return console.log(JSON.stringify(body.events, null, 2))
-    if (!body.events.length) return console.log('no events yet')
-    console.log(table(['when', 'service', 'reason', 'from', 'to', 'score'], body.events.map((event) => [
-      relativeTime(event.at), event.service, event.reason === 'failover' ? c.yellow(event.reason) : event.reason,
-      event.from ?? c.dim('—'), event.to ?? c.dim('—'), typeof event.detail?.score === 'number' ? event.detail.score.toFixed(3) : c.dim('—'),
-    ])))
+    if (!body.events.length) return console.log('No events recorded yet.')
+    console.log(`${section('Recent events')}\n${table(['time', 'subject', 'event', 'details'], body.events.map((event) => {
+      const marker = /fail|error/i.test(event.reason) ? c.red(glyphs.fail) : event.reason === 'failover' ? c.yellow(glyphs.warn) : /running|healthy|online|complete/i.test(event.reason) ? c.green(glyphs.online) : c.cyan(glyphs.info)
+      const location = event.from || event.to ? `${event.from ?? '—'} → ${event.to ?? '—'}` : '—'
+      const score = typeof event.detail?.score === 'number' ? `score ${event.detail.score.toFixed(3)}` : ''
+      return [relativeTime(event.at), `${marker} ${event.service}`, event.reason.replaceAll('_', ' '), [location, score].filter(Boolean).join(' · ')]
+    }), { priorities: [0, 0, 2, 1] })}`)
   },
 }

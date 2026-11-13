@@ -1,0 +1,17 @@
+fleet ▸ homelab  ✖ DOWN
+1 node online · 0 of 1 services running
+
+NODES
+NODE                     PLATFORM     ROLE     LOAD          MEMORY       RUNS       STATUS
+● pi-builder [cordoned]  linux/arm64  builder  ##...... 21%  2.8 / 4.0GB  db, cache  ▲ cordoned
+
+SERVICES
+SERVICE  NODE        STATUS                LAST DEPLOY  FAILURES (7D)
+db       pi-builder  ▲ pinned unavailable  0s ago       0
+
+PROBLEMS
+▲ db unavailable because pi-builder is cordoned
+  → fleet nodes uncordon pi-builder
+  → fleet deploy db
+
+updated 0s ago · --watch for live view · --json for scripts

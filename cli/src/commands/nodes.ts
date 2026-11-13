@@ -1,5 +1,5 @@
 import { request, requireFleet, CliError, EXIT } from '../api.js'
-import { c, table, statusColour, relativeTime, mb } from '../render.js'
+import { c, table, glyphs, statusBadge, relativeTime, memoryPair, loadBar } from '../render.js'
 import type { Flags } from '../args.js'
 import { pairNode } from '../pairing.js'
 
@@ -10,12 +10,16 @@ type Node = {
   status: string
   schedulable?: boolean
   ramMb: number
+  effectiveMemBytes?: number | null
   cpuCores: number
   reliabilityTier: string
   live: boolean
+  platform?: string | null
+  canBuild?: boolean
+  effectiveCpu?: number | null
   agentAutoUpgrade: boolean | null
   lastHeartbeatAt: string | null
-  telemetry: { cpuPct: number; ramUsedMb: number; containers: Array<{ name: string }> } | null
+  telemetry: { cpuPct: number; ramUsedMb: number; containers: Array<{ name: string }>; ageMs?: number } | null
 }
 
 export const nodesCommand = {
@@ -32,17 +36,24 @@ export const nodesCommand = {
       }
       console.log(
         table(
-          ['name', 'arch', 'tier', 'cpu', 'ram', 'services', 'seen', 'status'],
-          body.nodes.map((n) => [
-            n.name,
-            n.arch,
-            n.reliabilityTier,
-            n.telemetry ? `${Math.round(n.telemetry.cpuPct)}%` : c.dim('—'),
-            n.telemetry ? `${mb(n.telemetry.ramUsedMb)}/${mb(n.ramMb)}` : mb(n.ramMb),
-            String(n.telemetry?.containers.length ?? 0),
-            relativeTime(n.lastHeartbeatAt),
-            statusColour(n.status === 'cordoned' ? 'cordoned' : n.live ? n.status : 'offline'),
-          ])
+          ['node', 'platform', 'role', 'load', 'memory', 'runs', 'seen', 'status'],
+          body.nodes.map((n) => {
+            const memoryTotal = n.effectiveMemBytes ? n.effectiveMemBytes / 1048576 : n.ramMb
+            const memory = n.live && n.telemetry && n.telemetry.ramUsedMb <= memoryTotal
+              ? memoryPair(Math.max(0, memoryTotal - n.telemetry.ramUsedMb), memoryTotal)
+              : '—'
+            return [
+              `${n.live ? c.green(glyphs.online) : c.red(glyphs.fail)} ${n.name}${n.status === 'cordoned' ? ` ${c.yellow('[cordoned]')}` : ''}`,
+              n.platform || `linux/${n.arch}`,
+              n.canBuild ? 'builder' : n.reliabilityTier,
+              n.live && n.telemetry ? loadBar(n.telemetry.cpuPct, (process.stdout.columns ?? 80) >= 100 ? 8 : 5) : '—',
+              memory,
+              n.live ? n.telemetry?.containers.map((container) => container.name).join(', ') || '—' : '—',
+              relativeTime(n.lastHeartbeatAt),
+              statusBadge(n.status === 'cordoned' ? 'cordoned' : n.live ? 'online' : 'offline'),
+            ]
+          }),
+          { priorities: [0, 3, 6, 5, 4, 2, 7, 0] }
         )
       )
       return

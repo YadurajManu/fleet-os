@@ -1,7 +1,8 @@
 /** Terminal rendering. Colour is dropped when output is piped or NO_COLOR is set. */
 const colorArg = process.argv.indexOf('--color')
 const colorMode = colorArg < 0 ? 'auto' : process.argv[colorArg + 1]
-const useColour = colorMode === 'always' || (colorMode !== 'never' && Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined)
+const useColour = !process.argv.includes('--no-color') && process.env.NO_COLOR === undefined &&
+  Boolean(process.stdout.isTTY) && colorMode !== 'never'
 
 /**
  * 0 none, 1 the sixteen ANSI colours, 2 twenty-four bit. The brand palette only
@@ -30,9 +31,7 @@ export const unicode: boolean = process.env.FLEET_ASCII || process.argv.includes
       ? false
       : /utf-?8/i.test(
             `${process.env.LC_ALL ?? ''} ${process.env.LC_CTYPE ?? ''} ${process.env.LANG ?? ''}`
-          ) ||
-        Boolean(process.env.WT_SESSION) ||
-        Boolean(process.env.TERM_PROGRAM)
+          )
 
 /**
  * One vocabulary, chosen once, so no caller ever branches on `unicode`. Every
@@ -43,10 +42,12 @@ export const glyphs = unicode
   ? {
       frames: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
       ok: '✔',
+      online: '●',
+      idle: '○',
       fail: '✖',
       warn: '▲',
       info: '›',
-      pending: '·',
+      pending: '◌',
       stepActive: '◆',
       stepTodo: '○',
       pointer: '❯',
@@ -58,10 +59,12 @@ export const glyphs = unicode
   : {
       frames: ['-', '\\', '|', '/'],
       ok: 'v',
+      online: '*',
+      idle: 'o',
       fail: 'x',
       warn: '!',
       info: '>',
-      pending: '.',
+      pending: 'o',
       stepActive: '>',
       stepTodo: '.',
       pointer: '>',
@@ -178,23 +181,70 @@ const graphemes = (text: string): string[] => {
 const visibleLength = (s: string) =>
   graphemes(s.replace(ANSI, '')).reduce((width, grapheme) => width + cellWidth(grapheme), 0)
 
-export function table(headers: string[], rows: string[][]): string {
+export function table(headers: string[], rows: string[][], options: { priorities?: number[] } = {}): string {
   // Printing a header over nothing looks like a bug; callers handle the
   // empty case with a sentence instead.
   if (!rows.length) return ''
 
-  const widths = headers.map((h, i) =>
+  const fullWidths = headers.map((h, i) =>
     Math.max(visibleLength(h), ...rows.map((r) => visibleLength(r[i] ?? '')))
   )
-  const available = process.stdout.columns || 80
-  if (widths.reduce((a, b) => a + b, 0) + (headers.length - 1) * 2 > available) {
-    return rows.map(row => headers.map((header, i) => `${c.bold(header)}: ${row[i] ?? ''}`).join('\n')).join('\n\n')
+  const available = Math.max(20, (process.stdout.columns || 80) - 1)
+  const minWidth = (i: number) => Math.min(fullWidths[i]!, i === 0 ? 12 : 8)
+  const priority = options.priorities ?? headers.map((_, i) => i)
+  const kept = headers.map((_, i) => i)
+  const desiredTotal = () => kept.reduce((sum, i) => sum + fullWidths[i]!, 0) + Math.max(0, kept.length - 1) * 2
+  while (kept.length > 1 && desiredTotal() > available) {
+    const drop = [...kept].sort((a, b) => (priority[b] ?? b) - (priority[a] ?? a))[0]!
+    kept.splice(kept.indexOf(drop), 1)
+  }
+  const hidden = headers.length - kept.length
+  const widths = kept.map((i) => fullWidths[i]!)
+  let extra = widths.reduce((sum, width) => sum + width, 0) + Math.max(0, widths.length - 1) * 2 - available
+  if (extra > 0) {
+    for (const [position, i] of [...kept].map((value, position) => [position, value] as const).sort((a, b) => (priority[b[1]] ?? b[1]) - (priority[a[1]] ?? a[1]))) {
+      const reducible = Math.max(0, widths[position]! - minWidth(i))
+      const reduction = Math.min(extra, reducible)
+      widths[position]! -= reduction
+      extra -= reduction
+    }
   }
   const pad = (s: string, width: number) => s + ' '.repeat(Math.max(0, width - visibleLength(s)))
 
-  const head = headers.map((h, i) => c.dim(pad(h.toUpperCase(), widths[i]!))).join('  ')
-  const body = rows.map((r) => r.map((cell, i) => pad(cell ?? '', widths[i]!)).join('  '))
-  return [head, ...body].join('\n')
+  const head = kept.map((i, column) => c.dim(pad(truncate(headers[i]!.toUpperCase(), widths[column]!), widths[column]!))).join('  ')
+  const body = rows.map((row) => kept.map((i, column) => pad(truncate(row[i] ?? '', widths[column]!), widths[column]!)).join('  '))
+  return [head, ...body, ...(hidden ? [c.dim(`… ${hidden} column${hidden === 1 ? '' : 's'} hidden`)] : [])].join('\n')
+}
+
+export function loadBar(percent: number, width = 8): string {
+  const clamped = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0))
+  const filled = Math.round((clamped / 100) * width)
+  const tone = clamped >= 90 ? c.red : clamped >= 75 ? c.yellow : c.green
+  return `${tone(glyphs.barFill.repeat(filled))}${c.dim(glyphs.barEmpty.repeat(width - filled))} ${Math.round(clamped)}%`
+}
+
+export function statusBadge(status: string): string {
+  const label = status.replaceAll('_', ' ')
+  const normalized = label.toLowerCase()
+  if (['running', 'online', 'healthy', 'operational', 'ok', 'succeeded', 'completed', 'complete'].includes(normalized)) return `${c.green(glyphs.online)} ${c.green(label)}`
+  if (['failed', 'offline', 'down', 'error'].includes(normalized)) return `${c.red(glyphs.fail)} ${c.red(label)}`
+  if (['degraded', 'warning', 'cordoned', 'draining', 'pinned unavailable'].includes(normalized)) return `${c.yellow(glyphs.warn)} ${c.yellow(label)}`
+  if (['pending', 'deploying', 'building', 'pushing', 'queued'].includes(normalized)) return `${c.yellow(glyphs.pending)} ${label}`
+  if (['not deployed', 'idle', 'stopped'].includes(normalized)) return `${c.dim(glyphs.idle)} ${c.dim(label)}`
+  return c.dim(label)
+}
+
+export const header = (title: string, status?: string): string => `${c.bold(title)}${status ? `  ${statusBadge(status)}` : ''}`
+export const section = (title: string): string => c.bold(title.toUpperCase())
+export const hint = (command: string): string => `  ${glyphs.info} ${c.cyan(command)}`
+export const problemBlock = (title: string, cause: string, command: string): string =>
+  `${c.red(`${glyphs.fail} ${title}`)}\n  ${cause}\n${hint(command)}`
+export const terminalLink = (label: string, url: string): string => {
+  if (!/^https?:\/\/[^\u0000-\u001f\u007f]+$/i.test(url)) return c.cyan(label)
+  return process.stdout.isTTY && !process.argv.includes('--no-color') && process.env.NO_COLOR === undefined &&
+    !(process.argv.includes('--color') && process.argv[process.argv.indexOf('--color') + 1] === 'never')
+    ? `\x1b]8;;${url}\x1b\\${c.cyan(label)}\x1b]8;;\x1b\\`
+    : c.cyan(label)
 }
 
 export function keyValues(pairs: Array<[string, string]>): string {
@@ -218,6 +268,11 @@ export function relativeTime(iso: string | null | undefined): string {
 export const mb = (value: number): string =>
   value >= 1024 ? `${(value / 1024).toFixed(1)}GB` : `${value}MB`
 
+export const memoryPair = (firstMb: number, secondMb: number): string =>
+  Math.max(firstMb, secondMb) >= 1024
+    ? `${(firstMb / 1024).toFixed(1)} / ${(secondMb / 1024).toFixed(1)}GB`
+    : `${Math.round(firstMb)} / ${Math.round(secondMb)}MB`
+
 /**
  * Cut to a visible width, stepping over colour codes rather than counting them.
  * Anything that redraws in place depends on this: a line that wraps occupies two
@@ -230,6 +285,7 @@ export function truncate(text: string, width: number): string {
   let out = ''
   let visible = 0
   let hasSgr = false
+  const ellipsisWidth = unicode ? 1 : 3
   for (let i = 0; i < text.length; i++) {
     const escape = text.slice(i).match(/^\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/)
     if (escape) {
@@ -240,12 +296,12 @@ export function truncate(text: string, width: number): string {
     }
     const [grapheme] = graphemes(text.slice(i))
     const cells = cellWidth(grapheme!)
-    if (visible + cells > limit - 1) break
+    if (visible + cells > limit - ellipsisWidth) break
     out += grapheme
     i += grapheme!.length - 1
     visible += cells
   }
-  return `${out}…${hasSgr ? `${ESC}0m` : ''}`
+  return `${out}${unicode ? '…' : '...'}${hasSgr ? `${ESC}0m` : ''}`
 }
 
 export { visibleLength }

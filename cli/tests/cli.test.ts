@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { packContext } from '../src/archive.js'
-import { table, relativeTime, mb, visibleLength, truncate, c } from '../src/render.js'
+import { table, relativeTime, mb, visibleLength, truncate, c, unicode } from '../src/render.js'
 import { readFileSync, readdirSync } from 'node:fs'
 import { affectedServices, fleetHealth, renderStatus, type StatusSnapshot } from '../src/commands/status.js'
 import { dockerCleanupMessage, namedVolumes, stateDirs } from '../src/commands/uninstall.js'
@@ -123,13 +123,13 @@ describe('rendering', () => {
     const coloured = '\x1b[38;2;63;224;139mdeploying 🚀 東京\x1b[0m'
     const cut = truncate(coloured, 10)
     assert.ok(visibleLength(cut) <= 10)
-    assert.match(cut, /…/)
+    assert.match(cut, /…|\.\.\./)
     assert.match(cut, /\x1b\[0m$/)
 
     // Combining marks are one visible character, and plain text must not
     // acquire a control sequence just because it was shortened.
     assert.equal(visibleLength('e\u0301'), 1)
-    assert.equal(truncate('abcdefgh', 4), 'abc…')
+    assert.equal(truncate('abcdefgh', 4), unicode ? 'abc…' : 'a...')
   })
 })
 
@@ -156,21 +156,23 @@ describe('fleet status', () => {
 
   test('uses the verified fleet name and explains degraded state', () => {
     const out = renderStatus(degraded)
-    assert.match(out, /Fleet . homelab/)
+    assert.match(out, /fleet . homelab/)
     assert.doesNotMatch(out, /no fleet selected/)
-    assert.match(out, /Why degraded/)
+    assert.match(out, /PROBLEMS/)
     assert.match(out, /sayyestoheaven stopped reporting/)
-    assert.match(out, /api running/)
+    assert.match(out, /api.*running/)
     assert.match(out, /fleet doctor/)
   })
 
   test('never presents stale resource readings as current', () => {
-    const out = renderStatus(degraded, { nodes: true })
-    assert.match(out, /unavailable/)
+    const out = renderStatus(degraded, { nodes: true, verbose: true })
+    assert.match(out, /—/)
     assert.doesNotMatch(out, /99%/)
     assert.doesNotMatch(out, /192MB/)
     assert.match(out, /linux\/arm64/)
-    assert.match(out, /docker-desktop . agent v0\.3\.0 . builder . 4 CPU/)
+    assert.match(out, /docker-desktop/)
+    assert.match(out, /agent v0\.3\.0/)
+    assert.match(out, /4 CPU/)
   })
 
   test('counts a running service on an offline node as affected', () => {
@@ -185,9 +187,9 @@ describe('fleet status', () => {
     healthy.nodes[0]!.telemetry!.ageMs = 0
     const out = renderStatus(healthy)
     assert.equal(fleetHealth(healthy), 'healthy')
-    assert.match(out, /1 node\(s\) reporting . 1 service\(s\) available/)
-    assert.match(out, /192MB\/8\.0GB/, 'memory uses Docker capacity, not stale registration capacity')
-    assert.doesNotMatch(out, /Why degraded/)
+    assert.match(out, /1 node online · 1 of 1 services running/)
+    assert.match(out, /0\.2 \/ 8\.0GB/, 'memory uses Docker capacity, not stale registration capacity')
+    assert.doesNotMatch(out, /PROBLEMS/)
     assert.doesNotMatch(out, /Next actions/)
   })
 
@@ -197,7 +199,7 @@ describe('fleet status', () => {
     mixed.nodes[0]!.status = 'online'
     mixed.nodes[0]!.telemetry!.ramUsedMb = 17_000
     const out = renderStatus(mixed, { nodes: true })
-    assert.match(out, /unavailable . 8\.0GB total/)
+    assert.match(out, /—/)
     assert.doesNotMatch(out, /0MB\/8\.0GB/)
   })
 })
