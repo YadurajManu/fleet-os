@@ -787,7 +787,7 @@ export const PAGES = {
 
       H('Who builds it'),
       P('Yaduraj Singh — a full-stack and AI/ML engineer in Dehradun and Greater Noida, India. Fleet OS is one project among a fairly wide range: a multi-tenant hospital SaaS, an anonymous video chat with WebRTC signalling written by hand, a cognitive OS running a local LLM on an ESP32-S3, and a couple of iOS apps. This one started as infrastructure for the others and turned out to be the piece worth generalising.'),
-      P('Saying so matters more here than it would for most software. Fleet OS asks for your machines, your credentials and eventually your customers\u2019 data, and \u201ctrust the README\u201d is not a reasonable thing to ask. The source is MIT-licensed and public, the control plane is a Compose file you run yourself, and it never phones home \u2014 so none of that trust has to be taken on faith.'),
+      P('Saying so matters more here than it would for most software. Fleet OS asks for your machines, your credentials and eventually your customers\u2019 data, and \u201ctrust the README\u201d is not a reasonable thing to ask. The agent, CLI and dashboard are Apache-licensed and public; the control plane is self-hostable under the Fleet OS Community Licence. It never phones home \u2014 so none of that trust has to be taken on faith.'),
       { t: 'links', items: [
         ['Who builds it', '/founder', 'The long version — why Fleet OS exists, and what a one-person project can and cannot promise you.'],
         ['yaduraj.me', 'https://yaduraj.me', 'Prior work, in more detail than fits here.'],
@@ -985,7 +985,7 @@ export const PAGES = {
         '  docs/            fleet.yaml spec, self-hosting, api reference',
       ]},
       H('Licence'),
-      P('The agent, CLI and dashboard are MIT. The control plane is source-available under the Fleet OS Community Licence — free for self-hosting, including commercially, with the single restriction that it may not be offered as a competing managed service. Full text on the licence page.'),
+      P('The agent, CLI and dashboard are licensed under Apache License 2.0. The control plane is source-available under the Fleet OS Community Licence — free for self-hosting, including commercially, with the single restriction that it may not be offered as a competing managed service. Full text on the licence page.'),
     ],
   },
 
@@ -1106,11 +1106,11 @@ export const PAGES = {
     group: 'Legal',
     title: 'Licence',
     kicker: 'open core',
-    lede: 'Two licences. Permissive for the parts that run on your machines, source-available with one restriction for the coordination layer.',
-    updated: '01 August 2026',
+    lede: 'Apache License 2.0 for the agent, CLI and dashboard; source-available under the Fleet OS Community Licence for the control plane.',
+    updated: '13 November 2026',
     blocks: [
-      H('MIT — agent, CLI, dashboard'),
-      P('The agent binary, the fleet CLI and the dashboard are MIT licensed. Use them, fork them, ship them inside something commercial. Keep the copyright notice, and accept that they come without warranty.'),
+      H('Apache License 2.0 — agent, CLI, dashboard'),
+      P('The agent binary, the fleet CLI and the dashboard are licensed under Apache License 2.0. See the repository LICENSE for the complete terms.'),
 
       H('Fleet OS Community Licence — control plane'),
       P('The control plane is source-available. You may read it, modify it, and run it for any purpose including commercially, in your own organisation, for as many fleets and nodes as you like, at no cost.'),

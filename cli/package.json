@@ -12,12 +12,13 @@
     "url": "https://github.com/YadurajManu/fleet-os/issues"
   },
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "bin": {
     "fleet": "dist/index.js"
   },
   "files": [
     "dist",
+    "LICENSE",
     "README.md",
     "CHANGELOG.md"
   ],

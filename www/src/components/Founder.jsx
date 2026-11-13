@@ -82,7 +82,7 @@ const BELIEFS = [
   {
     n: '05',
     claim: 'If you cannot leave, it is not really yours.',
-    why: 'MIT licence, the whole control plane in one Docker Compose file, no telemetry. The exit is not a feature I tolerate — it is the only thing that makes the rest of the promises checkable.',
+    why: 'Apache-licensed agent, CLI and dashboard; the whole control plane in one Docker Compose file under its Community Licence; no telemetry. The exit is not a feature I tolerate — it is the only thing that makes the rest of the promises checkable.',
   },
 ]
 
@@ -244,7 +244,7 @@ export default function Founder() {
                   ['The person who answers wrote the line that broke.', 'No first-line triage, no escalation path, no ticket that dies in a queue. You get the author, or you get nobody — and it has never yet been nobody.'],
                   ['Nothing ships to make a quarter look good.', 'There is no roadmap committee and no revenue target shaping what gets built. Features exist because something was actually annoying.'],
                   ['Decisions are cheap to reverse.', 'Managed databases, replicas and volume backups each went from idea to shipped inside a day. That speed is the one thing a small team beats a large one at.'],
-                  ['You can read all of it.', 'MIT, every line, including the parts I am not proud of. There is no enterprise fork with the good bits in it.'],
+                  ['You can read all of it.', 'The agent, CLI and dashboard are Apache-licensed; the control plane is source-available under its Community Licence. There is no enterprise fork with the good bits in it.'],
                 ].map(([h, p], i) => (
                   <li key={h} style={{ transitionDelay: `${i * 40}ms` }}>
                     <div className="text-[14.5px] font-medium leading-snug tracking-[-0.015em] text-[var(--color-fg)]">

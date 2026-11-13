@@ -50,5 +50,5 @@
   <!-- footer -->
   <line x1="84" y1="588" x2="1196" y2="588" stroke="#1b212a" stroke-width="1"/>
   <text x="84" y="616" font-size="16" fill="#5d6672">github.com/YadurajManu/fleet-os</text>
-  <text x="1196" y="616" font-size="16" fill="#5d6672" text-anchor="end">MIT · Go + TypeScript</text>
+  <text x="1196" y="616" font-size="16" fill="#5d6672" text-anchor="end">Apache-2.0 · Go + TypeScript</text>
 </svg>

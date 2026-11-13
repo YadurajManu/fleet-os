@@ -139,7 +139,7 @@ export default function Builder() {
 
         <Reveal i={2} className="mt-10 flex flex-wrap items-end justify-between gap-6">
           <p className="max-w-[62ch] text-[13.5px] leading-[1.7] text-[var(--color-fg-dim)] text-pretty">
-            Fleet OS is MIT-licensed and developed in the open. Read the source, file an issue,
+            The agent, CLI, and dashboard are Apache-licensed and developed in the open. Read the source, file an issue,
             or take the whole thing and run it yourself — the control plane is a Docker Compose
             file, and it never phones home.
           </p>

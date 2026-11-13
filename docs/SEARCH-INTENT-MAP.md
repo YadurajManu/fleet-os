@@ -25,6 +25,6 @@ English content for developers and homelab operators; geographic targeting is un
 | /community | Project evaluation / Community | Evaluators and contributors | House rules; Contributing | Make an informed adoption or contribution decision | /community, /contact |
 | /legal/privacy | Project evaluation / Privacy notice | Evaluators and contributors | What we collect; What we do not collect | Make an informed adoption or contribution decision | /docs, /about |
 | /legal/terms | Project evaluation / Terms of service | Evaluators and contributors | 1. The agreement; 2. The service | Make an informed adoption or contribution decision | /docs, /about |
-| /legal/licence | Project evaluation / Licence | Evaluators and contributors | MIT — agent, CLI, dashboard; Fleet OS Community Licence — control plane | Make an informed adoption or contribution decision | /docs, /about |
+| /legal/licence | Project evaluation / Licence | Evaluators and contributors | Apache License 2.0 — agent, CLI, dashboard; Fleet OS Community Licence — control plane | Make an informed adoption or contribution decision | /docs, /about |
 
 Status is informational, not a live monitoring feed. Legal pages support informed use, not acquisition keywords. Existing blog/roadmap pages should link evidence and releases before expansion. No search-volume or ranking claims were inferred.

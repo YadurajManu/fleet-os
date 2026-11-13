@@ -140,7 +140,7 @@ fleet logs web --follow
 
 ## License
 
-MIT License.
+Apache License 2.0. See [LICENSE](LICENSE).
 # Pairing and terminal presentation
 
 Run `fleet` for compact onboarding, `fleet --help` for the full reference, and

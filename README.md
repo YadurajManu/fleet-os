@@ -11,7 +11,7 @@ An open-source platform for building and running Linux containers across your Ma
 
 [![CI](https://github.com/YadurajManu/fleet-os/actions/workflows/ci.yml/badge.svg)](https://github.com/YadurajManu/fleet-os/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@yadurajfleetos/cli)](https://www.npmjs.com/package/@yadurajfleetos/cli)
-[![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Apache-2.0 license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 </div>
 
@@ -163,4 +163,5 @@ If Fleet is useful to you, ⭐ star the repository or watch releases to follow i
 
 ## License
 
-[MIT](LICENSE)
+The Fleet OS agent (`agent/`), CLI (`cli/`), and dashboard (`dashboard/`) are licensed under the [Apache License 2.0](LICENSE).
+The Apache License does not change the control plane's terms: `control-plane/` remains under the [Fleet OS Community Licence](https://fleet.plastikworld.xyz/legal/licence).
