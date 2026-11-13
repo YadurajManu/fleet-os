@@ -23,7 +23,7 @@ function assertSnapshot(name: string, render: () => string, width = 120) {
     Object.defineProperty(process.stdout, 'columns', { configurable: true, value: width })
     Date.now = () => fixedNow
     const normalized = render().replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g, '')
-      .replaceAll('█', '#').replaceAll('░', '.')
+      .replaceAll('█', '#').replaceAll('░', '.').replace('Fleet · ', 'Fleet - ')
       .replace(/[●*](?= )/g, '●').replace(/[✖x](?= )/g, '✖').replace(/[▲!](?= )/g, '▲')
       .replace(/fleet (?:›|>) /g, 'fleet ▸ ').replace(/(^|\n)  (?:>|›) /g, '$1  → ').replace(/[ \t]+$/gm, '')
     const path = new URL(`./snapshots/status-${name}.snap`, import.meta.url)
