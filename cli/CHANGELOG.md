@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.27.1 — prepared, unpublished
+
+- Redesigned human-readable CLI output with clearer status summaries, responsive tables, terminal-aware colors, and actionable errors.
+
 ## 0.27.0 — prepared, unpublished
 
 - Custom Dockerfiles, named build stages, build arguments and safer context uploads.
