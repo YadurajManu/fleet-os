@@ -32,17 +32,21 @@ test('probe -> hysteresis incident -> rollup -> public API, privacy, cache and r
     const url = '/v1/status' + path.replace(':slug', 'postgres')
     const res = await app.inject({ url }); assert.equal(res.statusCode, 200, `${url}: ${res.body}`); assert.equal(res.body.includes(secret), false); assert.equal(res.body.includes('192.0.2.123'), false)
   }
-  const id = response.json().incidents[0].id
+  const [activeIncident] = await ctx.sql`select i.id from status_incidents i join incident_components ic on ic.incident_id=i.id where ic.component_id='postgres' and i.resolved_at is null order by i.started_at desc limit 1`
+  const id = activeIncident!.id
   assert.equal((await app.inject({ url: `/v1/status/incidents/${id}` })).statusCode, 200)
   const same = await app.inject({ url: '/v1/status', headers: { 'if-none-match': String(response.headers.etag) } }); assert.equal(same.statusCode, 304)
   assert.equal((await app.inject({ url: '/v1/status/components/github' })).statusCode, 404)
+  const previousThreshold = process.env.STATUS_ERROR_RATE; process.env.STATUS_ERROR_RATE = '1'
   for (const component of ['postgres', 'api']) for (let i = 0; i < 3; i++) {
     const observations = [{ component, ts: new Date(Date.now() + i * 1000).toISOString(), ok: true, latency_ms: 1, status_code: 200, error: null }]
     await recordChecks(ctx, observations); await evaluate(ctx, observations)
   }
   const [state] = await ctx.sql`select status from status_component_state where component_id='postgres'`
-  // The 5-minute failure-rate window may deliberately retain degraded until it clears.
-  assert.ok(['operational','major_outage','degraded'].includes(state!.status))
+  assert.equal(state!.status, 'operational')
+  const [incident] = await ctx.sql`select resolved_at from status_incidents where id=${id}`
+  assert.ok(incident!.resolved_at, 'recovery resolves the grouped incident')
+  if (previousThreshold) process.env.STATUS_ERROR_RATE = previousThreshold; else delete process.env.STATUS_ERROR_RATE
   await ctx.sql`delete from users where id=${signup.json().user.id}`
 })
 test('retention deletes expired raw/hourly data and preserves daily history', async () => {

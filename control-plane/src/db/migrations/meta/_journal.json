@@ -275,6 +275,8 @@
       "tag": "0038_public_status",
       "breakpoints": true
     },
-    { "idx": 39, "version": "7", "when": 1794600000000, "tag": "0039_status_system", "breakpoints": true }
+    { "idx": 39, "version": "7", "when": 1794600000000, "tag": "0039_status_system", "breakpoints": true },
+    { "idx": 40, "version": "7", "when": 1794600000001, "tag": "0040_status_ingest", "breakpoints": true },
+    { "idx": 41, "version": "7", "when": 1794600000002, "tag": "0041_status_probe_metrics", "breakpoints": true }
   ]
 }

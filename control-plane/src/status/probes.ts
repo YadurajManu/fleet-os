@@ -5,7 +5,7 @@ import { connect } from 'node:tls'
 import WebSocket from 'ws'
 import type { AppContext } from '../api/context.js'
 
-export type Observation = { component: string; ts: string; ok: boolean | null; latency_ms: number | null; status_code: number | null; error: string | null }
+export type Observation = { component: string; ts: string; ok: boolean | null; latency_ms: number | null; status_code: number | null; error: string | null; metrics?: Record<string, number> }
 export type Probe = { component: string; interval: number; run: (signal: AbortSignal) => Promise<{ status_code?: number; metrics?: Record<string, number> } | void> }
 export const intervalMs = () => Math.max(5, Number(process.env.PROBE_INTERVAL_S) || 30) * 1000
 export const timeoutMs = () => Math.max(100, Number(process.env.PROBE_TIMEOUT_MS) || 5000)
@@ -23,7 +23,7 @@ export function probes(ctx?: AppContext): Probe[] {
   const list: Probe[] = []
   const add = (component: string, run: Probe['run'], interval = normal) => list.push({ component, run, interval })
   if (ctx) {
-    add('postgres', async () => { await ctx.sql`select 1`; return { metrics: { pool_connections: ctx.sql.options.max } } })
+    add('postgres', async () => { await ctx.sql`select 1`; const [pool] = await ctx.sql`select count(*)::int active from pg_stat_activity where datname=current_database()`; return { metrics: { pool_connections: Number(pool!.active) } } })
     add('redis', async signal => {
       await ctx.redis.ping()
       const subscriber = ctx.redis.duplicate({ lazyConnect: true, maxRetriesPerRequest: 1 })
@@ -89,7 +89,7 @@ export async function observe(probe: Probe): Promise<Observation> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const result = await Promise.race([probe.run(controller.signal), new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error('timeout')) }, timeoutMs()) })])
-    return { component: probe.component, ts: new Date().toISOString(), ok: true, latency_ms: performance.now() - start, status_code: result?.status_code ?? null, error: null }
+    return { component: probe.component, ts: new Date().toISOString(), ok: true, latency_ms: performance.now() - start, status_code: result?.status_code ?? null, error: null, ...(result?.metrics ? { metrics: result.metrics } : {}) }
   } catch {
     // Probe exceptions may contain private endpoints, credentials or database errors.
     return { component: probe.component, ts: new Date().toISOString(), ok: false, latency_ms: performance.now() - start, status_code: null, error: 'Health check failed or timed out.' }
