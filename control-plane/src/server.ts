@@ -21,6 +21,7 @@ import { registerLogStream } from './api/log-stream.js'
 import { pairingStatusRoutes } from './api/pairing-status.js'
 import { opsRoutes } from './api/ops.routes.js'
 import { instrumentApi } from './ops/metrics.js'
+import { statusRoutes } from './status/routes.js'
 import type { AppContext } from './api/context.js'
 
 export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
@@ -117,6 +118,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   await app.register(secretRoutes)
   await app.register(backupRoutes)
   await app.register(opsRoutes)
+  await app.register(statusRoutes, { prefix: '/v1/status' })
 
   registerLogStream(app)
 

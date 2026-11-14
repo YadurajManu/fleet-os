@@ -10,7 +10,7 @@ import { analyzeIncident } from '../ops/analysis.js'
 import { collectPublicStatus, publicStatus } from '../ops/public-status.js'
 
 /** Platform access is independent of customer fleet membership. No HTTP grant route. */
-async function requirePlatformOperator(req: FastifyRequest, reply: FastifyReply) {
+export async function requirePlatformOperator(req: FastifyRequest, reply: FastifyReply) {
   const explicitBearer = req.headers.authorization?.startsWith('Bearer ')
   await requireUser(req, reply)
   const [operator] = await req.server.ctx.db.select({
