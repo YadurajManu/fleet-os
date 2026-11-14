@@ -67,3 +67,7 @@ Each PR records actual check output, migration/rollback notes and limitations. S
 - The public uptime default uses measured coverage rather than manufacturing missing bars. High uptime with low coverage is shown alongside coverage and monitoring start.
 - The existing frontend bundle-size warnings remain; this work adds no frontend dependency.
 - Before production rollout, apply migrations, configure the separate prober, run a canary, and then deploy the page/router together. Restoring the preceding frontend/router commit is the application rollback; never delete historical tables to roll back.
+
+## Final cutover
+
+After the new page passed real local API checks at both widths, a separate final commit removed `/public/status` and its duplicate in-process checker. Operations incident collection remains unchanged. The original `public_status_samples` and `public_status_events` tables are untouched and remain available for audit and migration verification. Start the separate `fleet-prober` process when rolling out this version; a missing process yields unknown rather than fictitious operational status.
