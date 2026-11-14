@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises'
+import { observe, probes } from '../status/probes.js'
 import type { AppContext } from '../api/context.js'
 
 type Component = { id: string; name: string; status: 'operational' | 'degraded' | 'outage' | 'unknown'; message: string }
@@ -6,16 +6,11 @@ type Component = { id: string; name: string; status: 'operational' | 'degraded' 
 // shortcut: a control-plane outage leaves a gap instead of a recorded outage, add an external probe when independent outage attribution is required.
 
 async function check(ctx: AppContext): Promise<Component[]> {
-  const [database, redis, registry] = await Promise.allSettled([
-    ctx.sql`select 1`,
-    ctx.redis.ping(),
-    ctx.config.OPS_REGISTRY_STORAGE_PATH ? access(ctx.config.OPS_REGISTRY_STORAGE_PATH) : Promise.reject(new Error('not configured')),
-  ])
+  const results = await Promise.all(probes(ctx).filter(p => ['postgres', 'redis', 'registry'].includes(p.component)).map(observe))
+  const state = (id: string) => results.find(r => r.component === id)?.ok
   return [
     { id: 'api', name: 'Control plane API', status: 'operational', message: 'Public API is responding.' },
-    { id: 'postgres', name: 'Postgres', status: database.status === 'fulfilled' ? 'operational' : 'outage', message: database.status === 'fulfilled' ? 'Database checks are passing.' : 'Database health check failed.' },
-    { id: 'redis', name: 'Redis', status: redis.status === 'fulfilled' ? 'operational' : 'outage', message: redis.status === 'fulfilled' ? 'Cache and heartbeat checks are passing.' : 'Redis health check failed.' },
-    { id: 'registry', name: 'Registry storage', status: !ctx.config.OPS_REGISTRY_STORAGE_PATH ? 'unknown' : registry.status === 'fulfilled' ? 'operational' : 'outage', message: !ctx.config.OPS_REGISTRY_STORAGE_PATH ? 'Registry storage monitoring is not configured.' : registry.status === 'fulfilled' ? 'Registry storage is accessible.' : 'Registry storage check failed.' },
+    ...(['postgres', 'redis', 'registry'] as const).map(id => ({ id, name: id, status: state(id) === undefined ? 'unknown' as const : state(id) ? 'operational' as const : 'outage' as const, message: state(id) ? 'Health check passed.' : 'Health check unavailable or failed.' })),
   ]
 }
 
