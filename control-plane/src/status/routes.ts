@@ -23,7 +23,11 @@ export async function statusRoutes(app: FastifyInstance) {
   const ctx = app.ctx
   app.addHook('onRoute', options => {
     const path = options.url.replace(/:([\w]+)/g, '{$1}')
-    if (options.schema && options.method === 'GET') (openapi.paths as Record<string, unknown>)[path] = { get: { parameters: [], responses: Object.fromEntries(Object.entries(options.schema.response ?? {}).map(([code, schema]) => [code, { description: code === '200' ? 'Public status response' : 'Response', content: { 'application/json': { schema } } }])) } }
+    if (options.schema && typeof options.method === 'string' && options.method !== 'HEAD') {
+      const parameters = ['params','querystring'].flatMap(key => { const schema = options.schema?.[key as 'params'] as { properties?: Record<string, unknown>; required?: string[] } | undefined; return Object.entries(schema?.properties ?? {}).map(([name, value]) => ({ name, in: key === 'params' ? 'path' : 'query', required: key === 'params' || schema?.required?.includes(name) || false, schema: value })) })
+      const paths = openapi.paths as Record<string, Record<string, unknown>>
+      paths[path] ??= {}; paths[path]![options.method.toLowerCase()] = { parameters, ...(options.schema.body ? { requestBody: { required: true, content: { 'application/json': { schema: options.schema.body } } } } : {}), responses: Object.fromEntries(Object.entries(options.schema.response ?? {}).map(([code, schema]) => [code, { description: code === '200' ? 'Public status response' : 'Response', content: { 'application/json': { schema } } }])) }
+    }
   })
   const counters = new Map<string, { at: number; count: number }>()
   app.addHook('onRequest', async (req, reply) => {
@@ -73,7 +77,10 @@ export async function statusRoutes(app: FastifyInstance) {
     // Each deployment metric independently requires five contributing users and nodes.
     const [d] = await ctx.sql`select count(distinct om.user_id)::int users,count(distinct d.node_id)::int nodes,count(distinct d.id)::int total,count(distinct d.id) filter(where d.status='running')::int good,percentile_cont(.5) within group(order by extract(epoch from(d.finished_at-d.started_at))*1000) as median from deployments d join services s on s.id=d.service_id join fleets f on f.id=s.fleet_id join org_members om on om.org_id=f.org_id where d.started_at>now()-interval '7 days'`
     const [online] = await ctx.sql`select 100.0*count(*) filter(where last_heartbeat_at>now()-interval '30 seconds')/nullif(count(*),0) as pct from nodes`
-    return send(reply, { agents_online_percent: Number(online?.pct), deploys_24h: null, deploy_success_rate_7d: d!.users>=5 && d!.nodes>=5 ? Number(d!.good)/Number(d!.total)*100 : null, median_deploy_time_ms: d!.users>=5 && d!.nodes>=5 ? Number(d!.median) : null, failover_events_30d: null, median_failover_time_ms: null, agent_version_spread: null, latest_cli_version: process.env.STATUS_LATEST_CLI_VERSION ?? null })
+    const [daily] = await ctx.sql`select count(distinct d.id)::int total,count(distinct d.node_id)::int nodes,count(distinct m.user_id)::int users from deployments d join services s on s.id=d.service_id join fleets f on f.id=s.fleet_id join org_members m on m.org_id=f.org_id where d.started_at>now()-interval '24 hours'`
+    const [failovers] = await ctx.sql`select count(distinct e.id)::int total,count(distinct e.to_node_id)::int nodes,count(distinct m.user_id)::int users from placement_events e join services s on s.id=e.service_id join fleets f on f.id=s.fleet_id join org_members m on m.org_id=f.org_id where e.reason='failover' and e.created_at>now()-interval '30 days'`
+    const versions = await ctx.sql`select n.agent_version version,count(distinct n.id)::int nodes,count(distinct m.user_id)::int users from nodes n join fleets f on f.id=n.fleet_id join org_members m on m.org_id=f.org_id group by n.agent_version`
+    return send(reply, { agents_online_percent: Number(online?.pct), deploys_24h: daily!.users>=5 && daily!.nodes>=5 ? Number(daily!.total) : null, deploy_success_rate_7d: d!.users>=5 && d!.nodes>=5 ? Number(d!.good)/Number(d!.total)*100 : null, median_deploy_time_ms: d!.users>=5 && d!.nodes>=5 && d!.median !== null ? Number(d!.median) : null, failover_events_30d: failovers!.users>=5 && failovers!.nodes>=5 ? Number(failovers!.total) : null, median_failover_time_ms: null, agent_version_spread: versions.every(v => v.nodes>=5 && v.users>=5) ? versions.map(v => ({ version: v.version, count: v.nodes })) : null, latest_cli_version: process.env.STATUS_LATEST_CLI_VERSION ?? null })
   })
   const streams = new Set<NodeJS.Timeout>()
   app.addHook('onClose', async () => { for (const timer of streams) clearInterval(timer) })
@@ -125,7 +132,13 @@ export async function statusRoutes(app: FastifyInstance) {
   })
   app.post('/admin/incidents/:id/updates', { preHandler: requirePlatformOperator, schema: { params: { type: 'object', properties: { id: uuid }, required: ['id'] }, body: { type: 'object', properties: { status: { type: 'string', enum: ['investigating','identified','monitoring','resolved'] }, body: { type: 'string', minLength: 1, maxLength: 2000 } }, required: ['status','body'], additionalProperties: false }, response: { 200: object } } }, async (req) => {
     const id = (req.params as { id: string }).id; const b = req.body as { status: string; body: string }
-    await ctx.sql.begin(async tx => { const rows = await tx`update status_incidents set status=${b.status},resolved_at=${b.status === 'resolved' ? new Date() : null} where id=${id} returning id`; if (!rows.length) throw ApiError.notFound('Incident'); await tx`insert into incident_updates(incident_id,status,body,ts) values (${id},${b.status},${b.body},now())` })
+    await ctx.sql.begin(async tx => { const rows = await tx`update status_incidents set status=${b.status},resolved_at=${b.status === 'resolved' ? new Date().toISOString() : null} where id=${id} returning id`; if (!rows.length) throw ApiError.notFound('Incident'); await tx`insert into incident_updates(incident_id,status,body,ts) values (${id},${b.status},${b.body},now())` })
     cachedAt = 0; await ctx.redis.del('status:v1:snapshot'); return { updated: true }
+  })
+  app.post('/admin/maintenance', { preHandler: requirePlatformOperator, schema: { body: { type: 'object', additionalProperties: false, required: ['title','starts_at','ends_at','components'], properties: { title: { type: 'string', minLength: 1, maxLength: 200 }, starts_at: { type: 'string', format: 'date-time' }, ends_at: { type: 'string', format: 'date-time' }, components: { type: 'array', minItems: 1, maxItems: 17, uniqueItems: true, items: string } } }, response: { 201: object } } }, async (req, reply) => {
+    const b = req.body as { title: string; starts_at: string; ends_at: string; components: string[] }
+    if (Date.parse(b.ends_at)<=Date.parse(b.starts_at)) throw ApiError.badRequest('invalid_window','Maintenance must end after it starts.')
+    const id = await ctx.sql.begin(async tx => { const [m] = await tx`insert into maintenance_windows(title,starts_at,ends_at) values (${b.title},${b.starts_at},${b.ends_at}) returning id`; for (const component of b.components) await tx`insert into maintenance_components(maintenance_id,component_id) values (${m!.id},${component})`; return m!.id })
+    cachedAt = 0; await ctx.redis.del('status:v1:snapshot'); return reply.code(201).send({ id })
   })
 }

@@ -8,6 +8,7 @@ export const statusChecks = pgTable('status_checks', {
   id: bigint('id', { mode: 'number' }).generatedAlwaysAsIdentity().primaryKey(), componentId: text('component_id').notNull().references(() => statusComponents.id),
   ts: timestamp('ts', { withTimezone: true }).notNull(), ok: boolean('ok'), latencyMs: real('latency_ms'), statusCode: integer('status_code'), error: text('error'),
   legacySampleId: bigint('legacy_sample_id', { mode: 'number' }).unique(),
+  metrics: jsonb('metrics').notNull().default({}),
 }, t => [index('status_checks_component_time_idx').on(t.componentId, t.ts)])
 export const statusRollups = pgTable('status_rollups', {
   componentId: text('component_id').notNull().references(() => statusComponents.id), bucket: timestamp('bucket', { withTimezone: true }).notNull(),
@@ -35,3 +36,10 @@ export const statusSubscribers = pgTable('status_subscribers', {
   id: uuid('id').primaryKey().defaultRandom(), channel: text('channel').$type<'email' | 'webhook'>().notNull(), target: text('target').notNull(),
   componentIds: text('component_ids').array().notNull().default([]), verifiedAt: timestamp('verified_at', { withTimezone: true }), token: text('token').notNull().unique(),
 })
+export const statusProberHeartbeat = pgTable('status_prober_heartbeat', { id: text('id').primaryKey(), at: timestamp('at', { withTimezone: true }).notNull() })
+export const statusComponentState = pgTable('status_component_state', {
+  componentId: text('component_id').primaryKey().references(() => statusComponents.id), status: text('status').notNull().default('unknown'),
+  failures: integer('failures').notNull().default(0), successes: integer('successes').notNull().default(0), degradedSince: timestamp('degraded_since', { withTimezone: true }),
+  checkedAt: timestamp('checked_at', { withTimezone: true }), monitoringSince: timestamp('monitoring_since', { withTimezone: true }),
+})
+export const statusIngestBatches = pgTable('status_ingest_batches', { id: uuid('id').primaryKey(), receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow() })
