@@ -1,0 +1,852 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Fleet Public Status",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/v1/status": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "operational",
+                        "degraded",
+                        "partial_outage",
+                        "major_outage",
+                        "maintenance",
+                        "unknown"
+                      ]
+                    },
+                    "stale": {
+                      "type": "boolean"
+                    },
+                    "as_of": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "monitoring_since": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "components": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "slug": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "group": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "operational",
+                              "degraded",
+                              "partial_outage",
+                              "major_outage",
+                              "maintenance",
+                              "unknown"
+                            ]
+                          },
+                          "checked_at": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "monitoring_since": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "uptime": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "checks": {
+                            "type": "integer"
+                          },
+                          "ticks": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "start": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "operational",
+                                    "degraded",
+                                    "partial_outage",
+                                    "major_outage",
+                                    "maintenance",
+                                    "unknown"
+                                  ]
+                                },
+                                "uptime": {
+                                  "type": [
+                                    "null",
+                                    "number"
+                                  ]
+                                },
+                                "checks": {
+                                  "type": "integer"
+                                },
+                                "p50": {
+                                  "type": [
+                                    "null",
+                                    "number"
+                                  ]
+                                },
+                                "p95": {
+                                  "type": [
+                                    "null",
+                                    "number"
+                                  ]
+                                },
+                                "p99": {
+                                  "type": [
+                                    "null",
+                                    "number"
+                                  ]
+                                },
+                                "incidents": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "start",
+                                "status",
+                                "uptime",
+                                "checks",
+                                "p50",
+                                "p95",
+                                "p99",
+                                "incidents"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "slug",
+                          "name",
+                          "description",
+                          "group",
+                          "status",
+                          "checked_at",
+                          "monitoring_since",
+                          "uptime",
+                          "checks",
+                          "ticks"
+                        ]
+                      }
+                    },
+                    "incidents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "impact": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "started_at": {
+                            "type": "string"
+                          },
+                          "resolved_at": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "components": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "impact",
+                          "status",
+                          "started_at",
+                          "resolved_at",
+                          "components"
+                        ]
+                      }
+                    },
+                    "maintenance": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "starts_at": {
+                            "type": "string"
+                          },
+                          "ends_at": {
+                            "type": "string"
+                          },
+                          "components": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "starts_at",
+                          "ends_at",
+                          "components"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "stale",
+                    "as_of",
+                    "monitoring_since",
+                    "components",
+                    "incidents",
+                    "maintenance"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/components/{slug}": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "slug": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "group": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "operational",
+                        "degraded",
+                        "partial_outage",
+                        "major_outage",
+                        "maintenance",
+                        "unknown"
+                      ]
+                    },
+                    "checked_at": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "monitoring_since": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "uptime": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "checks": {
+                      "type": "integer"
+                    },
+                    "ticks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "start": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "operational",
+                              "degraded",
+                              "partial_outage",
+                              "major_outage",
+                              "maintenance",
+                              "unknown"
+                            ]
+                          },
+                          "uptime": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "checks": {
+                            "type": "integer"
+                          },
+                          "p50": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "p95": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "p99": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "incidents": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "status",
+                          "uptime",
+                          "checks",
+                          "p50",
+                          "p95",
+                          "p99",
+                          "incidents"
+                        ]
+                      }
+                    },
+                    "uptime_by_range": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "slug",
+                    "name",
+                    "description",
+                    "group",
+                    "status",
+                    "checked_at",
+                    "monitoring_since",
+                    "uptime",
+                    "checks",
+                    "ticks"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/components/{slug}/uptime": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "ticks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "start": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "operational",
+                              "degraded",
+                              "partial_outage",
+                              "major_outage",
+                              "maintenance",
+                              "unknown"
+                            ]
+                          },
+                          "uptime": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "checks": {
+                            "type": "integer"
+                          },
+                          "p50": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "p95": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "p99": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "incidents": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "status",
+                          "uptime",
+                          "checks",
+                          "p50",
+                          "p95",
+                          "p99",
+                          "incidents"
+                        ]
+                      }
+                    },
+                    "monitoring_since": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "coverage": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "uptime": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "checks": {
+                      "type": "integer"
+                    },
+                    "observed_ms": {
+                      "type": "number"
+                    },
+                    "granularity": {
+                      "type": "string",
+                      "enum": [
+                        "hour",
+                        "day"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ticks",
+                    "monitoring_since",
+                    "coverage",
+                    "uptime",
+                    "checks",
+                    "observed_ms",
+                    "granularity"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/components/{slug}/latency": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "ticks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "start": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "operational",
+                              "degraded",
+                              "partial_outage",
+                              "major_outage",
+                              "maintenance",
+                              "unknown"
+                            ]
+                          },
+                          "uptime": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "checks": {
+                            "type": "integer"
+                          },
+                          "p50": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "p95": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "p99": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "incidents": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "status",
+                          "uptime",
+                          "checks",
+                          "p50",
+                          "p95",
+                          "p99",
+                          "incidents"
+                        ]
+                      }
+                    },
+                    "monitoring_since": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "coverage": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "uptime": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "checks": {
+                      "type": "integer"
+                    },
+                    "observed_ms": {
+                      "type": "number"
+                    },
+                    "granularity": {
+                      "type": "string",
+                      "enum": [
+                        "hour",
+                        "day"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ticks",
+                    "monitoring_since",
+                    "coverage",
+                    "uptime",
+                    "checks",
+                    "observed_ms",
+                    "granularity"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/incidents": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/incidents/{id}": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/maintenance": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/metrics": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/stream": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/summary.json": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/badge/{slug}.svg": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/feed.rss": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/openapi.json": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status/subscriptions/verify": {
+      "get": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Public status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
