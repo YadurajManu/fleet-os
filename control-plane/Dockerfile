@@ -47,7 +47,7 @@ EXPOSE 8080 8081
 
 # Not root: ingress makes this process reachable from the internet.
 RUN groupadd -r fleet && useradd -m -r -g fleet -G root fleet \
- && mkdir -p /var/lib/fleet-os/builds /home/fleet/.docker && chown -R fleet:fleet /var/lib/fleet-os /home/fleet
+ && mkdir -p /var/lib/fleet-os/builds /var/lib/fleet-os/status /home/fleet/.docker && chown -R fleet:fleet /var/lib/fleet-os /home/fleet
 USER root
 RUN chmod 666 /var/run/docker.sock 2>/dev/null || true
 USER fleet

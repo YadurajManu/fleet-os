@@ -62,7 +62,7 @@ echo "Rollback command: bash $run_dir/rollback.sh"
 # backup and rollout.
 "${git_safe[@]}" merge --ff-only "$next"
 export FLEET_REVISION=$("${git_safe[@]}" rev-parse --short=12 HEAD)
-if ! "${compose[@]}" up -d --build control-plane dashboard www; then
+if ! "${compose[@]}" up -d --build control-plane dashboard www status-prober; then
   echo 'Compose failed; restoring the previous revision.' >&2
   bash "$run_dir/rollback.sh"
   exit 1

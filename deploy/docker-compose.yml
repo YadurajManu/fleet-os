@@ -86,7 +86,7 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       registry: { condition: service_started }
-    environment:
+    environment: &control-plane-environment
       DATABASE_URL: postgres://${POSTGRES_USER:-fleetos}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fleetos}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
@@ -148,11 +148,15 @@ services:
       HEARTBEAT_MISS_THRESHOLD: ${HEARTBEAT_MISS_THRESHOLD:-3}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       FLEET_REVISION: ${FLEET_REVISION:-unknown}
+      STATUS_SNAPSHOT_PATH: /var/lib/fleet-os/status/last-good.json
+      STATUS_INGEST_TOKEN: ${STATUS_INGEST_TOKEN:-}
+      STATUS_LATEST_CLI_VERSION: ${STATUS_LATEST_CLI_VERSION:-}
     ports:
       - '${API_PORT:-8080}:8080'      # control-plane API
       - '${INGRESS_PORT:-8081}:8081'  # public edge
     volumes:
       - builds:/var/lib/fleet-os/builds
+      - statusdata:/var/lib/fleet-os/status
       - registrydata:/var/lib/fleet-os/registry-metrics:ro
       # Backups are the one thing here that cannot be regenerated, so they get
       # their own volume rather than sharing scratch space that gets cleaned.
@@ -185,6 +189,49 @@ services:
       - "${DOCKER_GID:-988}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  status-prober:
+    image: fleet-os-control-plane
+    container_name: fleet-status-prober
+    restart: unless-stopped
+    depends_on:
+      control-plane: { condition: service_healthy }
+    command: ['node', 'dist/src/status/fleet-prober.js']
+    environment:
+      <<: *control-plane-environment
+      PROBE_INTERVAL_S: ${PROBE_INTERVAL_S:-30}
+      PROBE_TIMEOUT_MS: ${PROBE_TIMEOUT_MS:-5000}
+      PROBE_API_URL: ${PROBE_API_URL:-https://fleetapi.${INGRESS_ZONE:-fleetos.app}/healthz}
+      PROBE_WEBSITE_URL: ${PROBE_WEBSITE_URL:-https://fleet.${INGRESS_ZONE:-fleetos.app}/}
+      PROBE_DOCS_URL: ${PROBE_DOCS_URL:-https://fleet.${INGRESS_ZONE:-fleetos.app}/docs}
+      PROBE_DASHBOARD_URL: ${PROBE_DASHBOARD_URL:-${PUBLIC_DASHBOARD_URL:-https://fleetapp.${INGRESS_ZONE:-fleetos.app}}}
+      PROBE_API_CANARY_URL: ${PROBE_API_CANARY_URL:-}
+      PROBE_API_CANARY_TOKEN: ${PROBE_API_CANARY_TOKEN:-}
+      PROBE_REGISTRY_URL: ${PROBE_REGISTRY_URL:-}
+      PROBE_CLI_AUTH_URL: ${PROBE_CLI_AUTH_URL:-}
+      PROBE_THIRD_PARTY_ENABLED: ${PROBE_THIRD_PARTY_ENABLED:-false}
+      PROBE_INGRESS_ENABLED: ${PROBE_INGRESS_ENABLED:-false}
+      PROBE_INGRESS_URL: ${PROBE_INGRESS_URL:-}
+      PROBE_TUNNEL_ENABLED: ${PROBE_TUNNEL_ENABLED:-false}
+      PROBE_TUNNEL_URL: ${PROBE_TUNNEL_URL:-}
+      PROBE_TUNNEL_TOKEN: ${PROBE_TUNNEL_TOKEN:-}
+      PROBE_BUILD_ENABLED: ${PROBE_BUILD_ENABLED:-false}
+      PROBE_BUILD_URL: ${PROBE_BUILD_URL:-}
+      PROBE_SCHEDULER_ENABLED: ${PROBE_SCHEDULER_ENABLED:-false}
+      PROBE_SCHEDULER_URL: ${PROBE_SCHEDULER_URL:-}
+      PROBE_LOGS_ENABLED: ${PROBE_LOGS_ENABLED:-false}
+      PROBE_LOGS_URL: ${PROBE_LOGS_URL:-}
+      PROBE_GITHUB_APP_ENABLED: ${PROBE_GITHUB_APP_ENABLED:-false}
+      PROBE_GITHUB_APP_URL: ${PROBE_GITHUB_APP_URL:-}
+      PROBE_CANARY_TOKEN: ${PROBE_CANARY_TOKEN:-}
+      STATUS_DEGRADED_SECONDS: ${STATUS_DEGRADED_SECONDS:-300}
+      STATUS_LATENCY_P95_MS: ${STATUS_LATENCY_P95_MS:-1000}
+      STATUS_ERROR_RATE: ${STATUS_ERROR_RATE:-0.05}
+    volumes:
+      - registrydata:/var/lib/fleet-os/registry-metrics:ro
+    # The image's default check tests the API listener, which this process does not run.
+    healthcheck:
+      disable: true
 
   dashboard:
     build:
@@ -255,5 +302,6 @@ volumes:
   registrydata:
   builds:
   backups:
+  statusdata:
   caddydata:
   caddyconfig:
