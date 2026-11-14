@@ -14,6 +14,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
+export * from './status-schema.js'
 
 /* ── enums ─────────────────────────────────────────────────────────
    Kept as real Postgres enums rather than text + a check constraint:
