@@ -788,7 +788,64 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": false,
+                  "properties": {
+                    "incidents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "impact": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "started_at": {
+                            "type": "string"
+                          },
+                          "resolved_at": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "components": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "impact",
+                          "status",
+                          "started_at",
+                          "resolved_at",
+                          "components"
+                        ]
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "incidents",
+                    "next_cursor"
+                  ]
                 }
               }
             }
@@ -816,7 +873,73 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "impact": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "started_at": {
+                      "type": "string"
+                    },
+                    "resolved_at": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "components": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "updates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "body": {
+                            "type": "string"
+                          },
+                          "ts": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "status",
+                          "body",
+                          "ts"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "impact",
+                    "status",
+                    "started_at",
+                    "resolved_at",
+                    "components",
+                    "updates"
+                  ]
                 }
               }
             }
@@ -834,7 +957,46 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": false,
+                  "properties": {
+                    "maintenance": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "starts_at": {
+                            "type": "string"
+                          },
+                          "ends_at": {
+                            "type": "string"
+                          },
+                          "components": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "starts_at",
+                          "ends_at",
+                          "components"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "maintenance"
+                  ]
                 }
               }
             }
@@ -852,7 +1014,90 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": false,
+                  "properties": {
+                    "agents_online_percent": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "deploys_24h": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "deploy_success_rate_7d": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "median_deploy_time_ms": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "failover_events_30d": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "median_failover_time_ms": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "agent_version_spread": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "version": {
+                                "type": [
+                                  "null",
+                                  "string"
+                                ]
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "version",
+                              "count"
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "latest_cli_version": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "agents_online_percent",
+                    "deploys_24h",
+                    "deploy_success_rate_7d",
+                    "median_deploy_time_ms",
+                    "failover_events_30d",
+                    "median_failover_time_ms",
+                    "agent_version_spread",
+                    "latest_cli_version"
+                  ]
                 }
               }
             }

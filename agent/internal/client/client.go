@@ -43,7 +43,9 @@ type RegisterResponse struct {
 }
 
 type Container struct {
-	Name string `json:"name"`
+	ExternalReachability *bool  `json:"external_reachability,omitempty"`
+	CertExpiresAt        string `json:"cert_expires_at,omitempty"`
+	Name                 string `json:"name"`
 	// Short 12-char container ID
 	ID string `json:"id,omitempty"`
 	// Image repository:tag

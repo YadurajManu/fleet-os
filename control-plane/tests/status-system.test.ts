@@ -61,3 +61,25 @@ test('OpenAPI is served and generated from the route registry', async () => {
   const result = await app.inject({ url: '/v1/status/openapi.json' }); assert.equal(result.statusCode, 200)
   await writeFile('../docs/status-openapi.json', JSON.stringify(result.json(), null, 2) + '\n')
 })
+test('stale prober makes every component unknown without manufacturing downtime', async () => {
+  const [before] = await ctx.sql`select sum(checks) n from status_rollups`
+  await ctx.sql`update status_prober_heartbeat set at=now()-interval '10 minutes' where id='primary'`
+  const value = await assemble(ctx)
+  assert.equal(value.status, 'unknown'); assert.equal(value.stale, true)
+  assert.ok(value.components.every(c => c.status === 'unknown'))
+  const [after] = await ctx.sql`select sum(checks) n from status_rollups`
+  assert.equal(before!.n, after!.n)
+  await heartbeat(ctx)
+})
+test('SSE sends public status and heartbeat comments on a live local connection', async () => {
+  const address = await app.listen({ host: '127.0.0.1', port: 0 })
+  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 23000)
+  try {
+    const response = await fetch(address + '/v1/status/stream', { signal: controller.signal })
+    assert.equal(response.status, 200); assert.ok(response.headers.get('content-type')?.includes('text/event-stream'))
+    const reader = response.body!.getReader(); let text = ''
+    while (!text.includes(': heartbeat')) { const chunk = await reader.read(); assert.equal(chunk.done, false); text += new TextDecoder().decode(chunk.value) }
+    assert.ok(text.includes('event: status-change')); assert.equal(text.includes('private-user-secret-host'), false)
+    await reader.cancel()
+  } finally { clearTimeout(timeout); controller.abort() }
+})

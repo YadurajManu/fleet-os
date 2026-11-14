@@ -104,6 +104,13 @@ const heartbeat = z.object({
       z.object({
         name: z.string().max(128),
         state: z.string().max(32),
+        id: z.string().max(128).optional(),
+        image: z.string().max(512).optional(),
+        status: z.string().max(256).optional(),
+        cpu_pct: z.number().min(0).optional(),
+        restarts: z.number().int().min(0).optional(),
+        external_reachability: z.boolean().optional(),
+        cert_expires_at: z.string().datetime().optional(),
         health: z.string().max(32).optional(),
         /** Absent from agents older than the health-gated rollout. */
         deployment_id: z.string().max(64).optional(),

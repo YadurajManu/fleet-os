@@ -52,11 +52,15 @@ export function probes(ctx?: AppContext): Probe[] {
     npm: enabled('third-party') ? 'https://registry.npmjs.org' : undefined,
     'docker-hub': enabled('third-party') ? 'https://hub.docker.com/v2/' : undefined,
   }
-  for (const [id, url] of Object.entries(urls)) if (url) add(id, async signal => {
+  for (const [id, url] of Object.entries(urls)) if (url) {
+    const existing = list.find(p => p.component === id)
+    if (existing) list.splice(list.indexOf(existing), 1)
+    add(id, async signal => {
+    const extra = existing ? await existing.run(signal) : undefined
     const result = await http(url, signal)
     if (id === 'api' && process.env.PROBE_API_CANARY_URL && process.env.PROBE_API_CANARY_TOKEN) await http(process.env.PROBE_API_CANARY_URL, signal, process.env.PROBE_API_CANARY_TOKEN)
-    return result
-  })
+    return { ...result, ...(extra?.metrics ? { metrics: extra.metrics } : {}) }
+  }) }
   if (enabled('ingress') && process.env.PROBE_INGRESS_URL) add('ingress', async signal => {
     const result = await http(process.env.PROBE_INGRESS_URL!, signal)
     const url = new URL(process.env.PROBE_INGRESS_URL!)

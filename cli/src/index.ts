@@ -54,6 +54,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
       ['domains primary <service> <host>', 'Choose the URL shown after deploy'],
       ['domains rm <service> <host>', 'Remove an additional URL; keep the permanent Fleet address'],
       ['status [--watch] [--all] [--verbose]', 'Live health, grouped problems, and recent activity'],
+      ['status --public', 'Public platform status without signing in'],
       ['services', 'List services and where they are running'],
       ['nodes', 'List nodes'],
       ['where <service>', 'Explain where a service would be placed, and why'],

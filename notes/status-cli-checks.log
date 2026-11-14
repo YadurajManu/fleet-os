@@ -1,0 +1,372 @@
+
+> @yadurajfleetos/cli@0.27.1 test
+> node --test --import tsx tests/*.test.ts
+
+
+Local snapshot for backend
+  Source       local · "/var/folders/9l/xhdbzwqd0cz4gtrqh59p2z680000gn/T/fleet-changes-a9fA0p"
+  Snapshot     2a40f975fe66
+  Included     2 files
+  Compared     no verified successful release
+  Manifest     no previous manifest fingerprint
+  Excluded     ".git", "node_modules", ".DS_Store"
+  Upload       10kB
+
+No files uploaded.
+✔ fleet changes previews a local context without uploading or deploying it (199.095208ms)
+✔ status snapshots show concise healthy, failure, offline, cordoned, and empty views (134.867375ms)
+✔ status JSON keeps the established object shape and pretty printed bytes (0.108416ms)
+✔ table aligns, truncates and drops trailing low-priority columns at terminal widths (3.013709ms)
+✔ load bars clamp values and status badges always include a glyph (0.220208ms)
+✔ relative time and known error translations stay readable (0.116458ms)
+✔ no-color suppresses ANSI even when color is forced and non-UTF-8 locales use ASCII glyphs (284.518042ms)
+✔ status watch refuses to run when stdout is not a terminal (2.083042ms)
+✔ updates never presents an offline node version as current (1.968834ms)
+▶ argument parsing
+  ✔ uninstall flags remain separate and opt-in (0.480416ms)
+  ✔ separates positionals from flags (0.16275ms)
+  ✔ a flag with no value is boolean (0.136291ms)
+  ✔ a trailing flag does not swallow the next command (56.715792ms)
+  ✔ short and long forms both work (14.991792ms)
+  ✔ a flag value that looks like a path is kept (0.084125ms)
+✔ argument parsing (82.452958ms)
+✔ uninstall only considers named Docker volumes (0.10675ms)
+✔ uninstall finds the standard Unix agent state directory (0.417667ms)
+✔ Docker-off uninstall advice does not point to the control plane (2.770833ms)
+▶ rendering
+  ✔ columns align on visible width, ignoring colour codes (22.490417ms)
+  ✔ an empty table renders nothing rather than a lonely header (0.050375ms)
+  ✔ relative time works in both directions (0.085083ms)
+  ✔ memory is shown in the unit a human would use (0.048417ms)
+  ✔ truncation respects terminal cells and keeps ANSI sequences balanced (0.403292ms)
+✔ rendering (24.037333ms)
+▶ fleet status
+  ✔ uses the verified fleet name and explains degraded state (1.289708ms)
+  ✔ never presents stale resource readings as current (1.207625ms)
+  ✔ counts a running service on an offline node as affected (0.064292ms)
+  ✔ healthy output stays concise and recommends exploration (4.657667ms)
+  ✔ rejects impossible host-used versus engine-capacity memory readings (4.218125ms)
+✔ fleet status (11.612708ms)
+▶ apply --dry-run
+  ✔ is wired to the validate endpoint, not the apply one (0.211417ms)
+✔ apply --dry-run (0.250417ms)
+▶ unknown flags
+  ✔ every flag the CLI reads is in the registry (2.734417ms)
+  ✔ a truncated or extended flag suggests the real one (0.103292ms)
+  ✔ a mistyped flag suggests the real one (0.071583ms)
+  ✔ something with no relation suggests nothing (0.038041ms)
+✔ unknown flags (3.017625ms)
+▶ the deploy estimate
+  ✔ is drawn from real history, and says how much is left (0.115875ms)
+  ✔ says nothing at all on a first deploy (0.032959ms)
+  ✔ an overrun is reported as an overrun, not parked at the end (0.041708ms)
+  ✔ emulation is named on the build line (0.071709ms)
+✔ the deploy estimate (0.31125ms)
+▶ the alerts check
+  ✔ a fleet with no rules is warned about, and told what to run (0.072625ms)
+  ✔ rules that exist but are all disabled say so specifically (0.03425ms)
+  ✔ a working rule passes, naming the channels (0.041875ms)
+✔ the alerts check (0.187292ms)
+▶ the health paths a service actually answers on
+  ✔ suggests the path a service answers on but does not declare (0.166917ms)
+  ✔ prefers a dedicated endpoint over root when both answer (0.034542ms)
+  ✔ a service where nothing answered is not a warning (0.046125ms)
+  ✔ says nothing about services that were never swept (0.046458ms)
+✔ the health paths a service actually answers on (0.343417ms)
+▶ what a service should reserve, from what it used
+  ✔ advises shrinking a reservation the service never approaches (0.1085ms)
+  ✔ refuses to advise from an observation too short to mean anything (0.036708ms)
+  ✔ says nothing at all about a service never measured (0.029333ms)
+  ✔ never advises shrinking below the peak (0.055666ms)
+  ✔ warns rather than trims when a service is near its limit (0.033333ms)
+  ✔ leaves a reservation that is already about right alone (0.030333ms)
+  ✔ writes megabytes the way a manifest does (0.029084ms)
+✔ what a service should reserve, from what it used (0.391208ms)
+▶ the build context that leaves this machine
+  ✔ carries no AppleDouble files, whatever xattrs the source has (65.948084ms)
+✔ the build context that leaves this machine (66.119291ms)
+▶ writing a measured fact back into the manifest
+  ✔ a service that answers 2xx but declares no check gets the path (0.11475ms)
+  ✔ a check somebody declared is never overwritten (0.030791ms)
+  ✔ a service where nothing answered is left alone (0.033833ms)
+  ✔ a service never swept proposes nothing (0.025125ms)
+✔ writing a measured fact back into the manifest (0.266208ms)
+▶ the manifest editor
+  ✔ keeps the comments fleet init wrote (18.156792ms)
+  ✔ finds a database under its own block (5.564958ms)
+  ✔ refuses a field it may not write, and says so (2.818167ms)
+  ✔ refuses a service the manifest does not have (1.913292ms)
+✔ the manifest editor (28.743708ms)
+▶ the source an investigation is sent
+  ✔ carries the line that explains a connection failure (24.634666ms)
+  ✔ never sends dependencies or build output (19.8775ms)
+  ✔ is bounded, whatever the file holds (16.675084ms)
+  ✔ a service with no build context contributes nothing (9.5445ms)
+  ✔ keys what it collects by service name (11.562666ms)
+✔ the source an investigation is sent (83.196958ms)
+▶ changing a line of somebody else's source
+  ✔ accepts a line that exists once in the service it belongs to (226.990417ms)
+  ✔ refuses a path outside the service it is fixing (124.710959ms)
+  ✔ refuses a line that is not there (126.381541ms)
+  ✔ refuses a line that appears twice (114.022667ms)
+  ✔ refuses a file with uncommitted work (86.848792ms)
+  ✔ refuses a file git does not track (33.775208ms)
+  ✔ refuses a service the manifest does not build (51.370375ms)
+✔ changing a line of somebody else's source (764.539625ms)
+▶ how full a disk is
+  ✔ divides by capacity, not by what is left (0.149875ms)
+  ✔ never exceeds 100% for a disk that is merely full (0.039417ms)
+  ✔ says nothing rather than guessing when capacity is unknown (0.03525ms)
+  ✔ warns before it fails (0.030917ms)
+✔ how full a disk is (0.315542ms)
+▶ composeToFleet
+  ✔ carries image, ports and dependencies across (26.7675ms)
+  ✔ reads the port pair from the end, past a bind address (7.993334ms)
+  ✔ a database image becomes a managed database, not a container (1.233333ms)
+  ✔ recognises the other engines, including forks (11.957125ms)
+  ✔ asks for the node rather than inventing one (0.257833ms)
+  ✔ credentials become secrets, not env (0.893375ms)
+  ✔ a value compose left to interpolation becomes a secret (0.546875ms)
+  ✔ named volumes survive, bind mounts do not (0.353666ms)
+  ✔ memory limits convert, and a missing one is stated rather than hidden (0.675583ms)
+  ✔ a health path is lifted out of a healthcheck when there is one (0.916917ms)
+  ✔ refuses a file that is only databases, and says why (1.408916ms)
+  ✔ refuses input that is not a compose file (1.569917ms)
+  ✔ build and image together keeps image, and says so (0.824375ms)
+✔ composeToFleet (57.733333ms)
+▶ the output is a manifest the product accepts
+  ✔ parses, and says what it decided (2.81275ms)
+✔ the output is a manifest the product accepts (2.876166ms)
+▶ a connection string that names a converted database
+  ✔ is rewritten to the URL Fleet will inject, and is not made a secret (0.225667ms)
+  ✔ a connection string to something else is left alone (0.119791ms)
+  ✔ the password is a reference, never a value (0.168625ms)
+✔ a connection string that names a converted database (0.574625ms)
+▶ waiting for a deploy to become running
+  ✔ a deploy that lands just after the deadline still succeeds (0.733958ms)
+  ✔ a service already running is not waited for at all (0.11675ms)
+  ✔ a real failure is reported as a failure, with its reason (34.286ms)
+  ✔ a deploy that never settles is a timeout, carrying the last status (131.969292ms)
+  ✔ an unreadable status is not treated as a failure (11.575ms)
+  ✔ the caller is told what is being waited on (63.920833ms)
+✔ waiting for a deploy to become running (244.376416ms)
+▶ both commands share one deadline
+  ✔ the shared timeout outlives the control plane build timeout (0.211125ms)
+✔ both commands share one deadline (0.298208ms)
+▶ the message a failure carries
+  ✔ a timeout says the deploy may still be running (63.921833ms)
+  ✔ a failure says it did not start, and why (0.217458ms)
+✔ the message a failure carries (64.400166ms)
+▶ a name that two projects share
+  ✔ an unambiguous name needs no project (0.1325ms)
+  ✔ an id resolves without a project at all (0.036125ms)
+  ✔ --project picks the right one of two (0.041333ms)
+  ✔ --project naming a project without that service is an error, not a fallback (0.035209ms)
+  ✔ the directory decides when it owns one of them (0.038584ms)
+  ✔ an ambiguous name refuses rather than taking the first match (0.035458ms)
+✔ a name that two projects share (0.402417ms)
+✔ object build plans and defaults keep the context and selected Dockerfile (87.878833ms)
+✔ task arguments after -- are never interpreted as Fleet flags (0.974375ms)
+✔ Compose imports retain build targets, Dockerfiles and arguments (3.633291ms)
+✔ source editing resolves an object-form build context through the shared plan (11.431708ms)
+✔ .fleetignore and .dockerignore both apply while the selected Dockerfile travels (74.860584ms)
+✔ upload limits are validated and reject oversized snapshots before transfer (0.497666ms)
+✔ preserving a custom Dockerfile never exposes an excluded parent directory (31.280375ms)
+✔ verbose status labels stale resources and reports connection errors (15.090375ms)
+✔ secret import discovery includes build-only secrets and defaults without duplicates (0.675458ms)
+✔ a running old deployment cannot satisfy the requested deployment, including failed builds (127.549875ms)
+▶ the plan is a projection of discovery, not a second discovery
+  ✔ services and databases both become entries (0.777125ms)
+  ✔ a service claims only the engines its own dependencies imply (0.106708ms)
+  ✔ databases are pinned and persistent; services are neither (0.081458ms)
+  ✔ every RAM figure is labelled a recommendation (0.088583ms)
+  ✔ total memory is the sum of the entries (0.0685ms)
+✔ the plan is a projection of discovery, not a second discovery (1.775625ms)
+▶ secrets reach the plan as names and nothing else
+  ✔ names are collected, deduplicated and sorted (0.229625ms)
+  ✔ a rendered plan carries no secret values (0.183917ms)
+✔ secrets reach the plan as names and nothing else (0.493291ms)
+▶ what the plan refuses to invent
+  ✔ storage size is reported as unknown when a database is planned (0.118958ms)
+  ✔ no storage limit is mentioned when nothing is persistent (0.202333ms)
+  ✔ an unresolved node is stated rather than hidden (0.191ms)
+  ✔ the chosen node and its reason are both shown (0.0895ms)
+✔ what the plan refuses to invent (0.800334ms)
+▶ what crosses the wire to the model
+  ✔ the facts cross, the explanations do not (0.135792ms)
+  ✔ the chosen node crosses, so the model is told not to move it (0.062083ms)
+  ✔ secrets cross as names only (0.051375ms)
+  ✔ dependency edges cross intact (0.07225ms)
+✔ what crosses the wire to the model (0.400125ms)
+▶ framework detection
+  ✔ detects Next.js project and generates standalone Dockerfile (18.23625ms)
+  ✔ detects Vite project and generates nginx alpine Dockerfile (3.333416ms)
+  ✔ detects Python FastAPI project (7.128791ms)
+  ✔ detects Go project with go.mod (5.271958ms)
+  ✔ detects Rust project with Cargo.toml (4.906125ms)
+  ✔ preserves existing Dockerfile and detects its EXPOSE port (5.607542ms)
+✔ framework detection (46.789ms)
+▶ a single-project repository
+  ✔ finds one service and both databases (108.054708ms)
+  ✔ separates settings from credentials (6.211708ms)
+✔ a single-project repository (124.213292ms)
+▶ an npm-workspaces monorepo
+  ✔ finds every deployable package and skips the library (58.113042ms)
+  ✔ does not invent a service for the workspace root (36.168292ms)
+  ✔ an ML dependency asks for a GPU and more memory (18.468167ms)
+  ✔ reads the port out of an existing Dockerfile (23.922833ms)
+  ✔ databases are collected across every package, not just one (14.891542ms)
+  ✔ the manifest it renders is valid YAML with every service (21.376792ms)
+  ✔ without --node it asks instead of choosing a machine (11.959833ms)
+✔ an npm-workspaces monorepo (196.262792ms)
+▶ conventions without a workspace file
+  ✔ an apps/ directory is recognised on its own (11.185833ms)
+  ✔ backend/ beside a frontend is found too (20.962042ms)
+  ✔ an empty directory is reported, not guessed at (160.329125ms)
+✔ conventions without a workspace file (192.883833ms)
+▶ generated health checks
+  ✔ a backend API gets no invented health path (24.473792ms)
+  ✔ a frontend keeps the health check it actually answers (19.378208ms)
+  ✔ a project with its own Dockerfile is not assumed to serve / (9.15325ms)
+✔ generated health checks (53.387333ms)
+▶ generated container ports
+  ✔ port 80 is written out rather than left to a default that is not 80 (6.738125ms)
+✔ generated container ports (6.879833ms)
+▶ what is a service and what is part of one
+  ✔ a project's own src/ is not proposed as a second service (38.657875ms)
+✔ what is a service and what is part of one (38.921375ms)
+{"primary":"web.fleet.example"}
+✔ domains can restore the permanent Fleet URL as primary (89.103917ms)
+▶ parsing a .env
+  ✔ reads plain assignments, ignoring blanks and comments (0.88675ms)
+  ✔ accepts the shell-sourceable "export" form (0.092334ms)
+  ✔ single quotes are literal (0.078292ms)
+  ✔ double quotes take escapes, so a value can hold a newline (0.096916ms)
+  ✔ an unquoted value keeps its "#" rather than being truncated (0.091209ms)
+  ✔ a "#" with no space before it is just part of the value (0.051875ms)
+  ✔ an unterminated quote is skipped, not guessed at (0.0535ms)
+  ✔ a value containing "=" survives intact (0.048667ms)
+  ✔ an empty value is a value (0.057333ms)
+  ✔ names that are not usable variable names are skipped with a reason (0.091167ms)
+  ✔ a duplicated key keeps the last value and says so (0.084ms)
+  ✔ line numbers point at the file, for the warnings to be useful (0.05325ms)
+  ✔ CRLF files parse the same as LF (0.037417ms)
+✔ parsing a .env (2.41475ms)
+▶ which keys a manifest calls secrets
+  ✔ collects every declared secret and who wants it (3.815959ms)
+  ✔ plain env is not a secret (0.51225ms)
+  ✔ one secret shared by two services lists both (0.319125ms)
+  ✔ a manifest with no services is empty, not an error (0.126083ms)
+✔ which keys a manifest calls secrets (4.864291ms)
+✔ a pending rollout shows its error instead of stale pull progress (1.886625ms)
+✔ secret import skips empty values without printing credentials or contacting the API (114.143375ms)
+finding fleets you can access…
+finding fleets you can access — done
+✔ fleet use without a name lists fleets and keeps the current profile (78.764416ms)
+✔ local snapshot hashes only the included build context and compares file changes (325.738667ms)
+✔ follow receives build phases and log lines across split SSE chunks without a result event (223.53175ms)
+✔ login uses hosted Fleet without a URL and keeps the self-hosted override (599.130417ms)
+✔ target, not generator OS, selects the installer; arguments are quoted (1.378709ms)
+✔ registration alone is not pairing success (3.220834ms)
+✔ expired receipts terminate and missing heartbeat times out honestly (1.697208ms)
+✔ help is compact and description layouts fit 40, 80 and 120 columns (31.704458ms)
+✔ presentation flags before commands remain boolean; piped output has no cursor escapes (369.520792ms)
+▶ reading the manifest
+  ✔ finds every service, and which of them build from source (4.295417ms)
+  ✔ a manifest with no services plans nothing rather than throwing (0.20875ms)
+✔ reading the manifest (4.981292ms)
+▶ deploy order
+  ✔ a dependency is deployed before what depends on it (0.558208ms)
+  ✔ every service is deployed, not just the ones with edges (0.916292ms)
+  ✔ services with no relationship keep manifest order (0.317459ms)
+  ✔ a cycle still deploys everything instead of refusing (0.259041ms)
+  ✔ affinity on a service outside the manifest is ignored (0.183458ms)
+✔ deploy order (2.388875ms)
+▶ packing a build context
+  ✔ always excludes what is never part of an image (7.824333ms)
+  ✔ honours .dockerignore on top of those (117.9765ms)
+  ✔ negations are dropped rather than half-implemented (2.704041ms)
+✔ packing a build context (129.463042ms)
+▶ patterns that must never be honoured
+  ✔ a .dockerignore listing Dockerfile does not exclude it (5.900666ms)
+  ✔ Dockerfile variants are protected too (3.250167ms)
+  ✔ a bare * does not exclude the entire project (1.576625ms)
+✔ patterns that must never be honoured (11.1295ms)
+▶ project names
+  ✔ come from the directory, the way Compose does (0.368334ms)
+  ✔ are normalised to something the server will accept (0.484916ms)
+✔ project names (0.974667ms)
+▶ databases are part of the plan
+  ✔ a database is planned, and planned before the services that use it (2.022416ms)
+  ✔ a manifest with no databases is unchanged (0.472083ms)
+✔ databases are part of the plan (2.61675ms)
+{
+  "status": "unknown",
+  "stale": true,
+  "as_of": null,
+  "components": [
+    {
+      "name": "API",
+      "status": "unknown",
+      "uptime": null
+    }
+  ]
+}
+✔ public status needs no user credentials or selected fleet and sends no authorization (154.499375ms)
+▶ error recovery suggestions
+  ✔ suggests actions for port in use errors (3.723292ms)
+  ✔ suggests actions when no eligible nodes exist (0.284958ms)
+  ✔ suggests actions for missing container images (0.054083ms)
+  ✔ suggests actions for health check failures (0.056709ms)
+  ✔ suggests actions for connection refused to control plane (0.056292ms)
+  ✔ suggests actions when session has expired (0.045625ms)
+  ✔ suggests actions when missing Dockerfile (0.055208ms)
+  ✔ suggests actions when disk is full (0.049916ms)
+  ✔ caps suggestions at max limit (0.050792ms)
+  ✔ returns null for unrecognized messages (0.740958ms)
+  ✔ returns null for empty strings (0.3565ms)
+✔ error recovery suggestions (6.270959ms)
+▶ welcome box and first-run help
+  ✔ welcomeBox renders start steps and doc link (27.4345ms)
+  ✔ usage(true) appends welcome box (9.239875ms)
+  ✔ usage(false) omits welcome box (24.793875ms)
+✔ welcome box and first-run help (61.630541ms)
+✔ node lookup prefers exact matches and refuses ambiguous prefixes before mutations (71.737625ms)
+following web · new
+
+> choosing a node…
+v choosing a node
+> building the image…
+v building the image
+o pushing to the fleet registry — not observed
+o scheduling onto the node — not observed
+o waiting for the container — not observed
+{
+  "deployment": {
+    "id": "new",
+    "status": "running",
+    "startedAt": "2026-11-14T05:01:49.571Z",
+    "gitSha": null,
+    "failureReason": null
+  },
+  "progress": null
+}
+✔ attach follows the requested deployment using GET only, ignoring an older serving release (31.317417ms)
+✔ superseded attempts stop waiting immediately rather than timing out (1.040292ms)
+{
+  "exitCode": 7,
+  "output": "task output"
+}
+✔ run forwards literal arguments and propagates the task exit code (14.086542ms)
+✔ oversized prepacked uploads fail before making any API request (1.326042ms)
+Importing 3 key(s) into fleet scope; existing values at this scope will be replaced. Values are hidden.
+v stored  FIRST
+✔ partial secret imports report completed and pending keys without echoing values (17.435333ms)
+ℹ tests 223
+ℹ suites 43
+ℹ pass 223
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1298.951584

@@ -1,102 +1,93 @@
-import { useEffect, useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
-import StatusDot from './ui/StatusDot'
-import { EASE } from '../lib/motion'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { STATUS_RANGES, defaultRange, formatUptime, monthGroups, staleSnapshot, statusColor, statusLabel } from '../lib/status'
+import './status.css'
 
 const API = import.meta.env.VITE_FLEET_API_URL ?? (import.meta.env.DEV ? 'http://localhost:8080' : 'https://fleetapi.plastikworld.xyz')
-const TITLES = { api: 'Control plane API', postgres: 'Postgres', redis: 'Redis', registry: 'Registry storage' }
-const SECTIONS = [['current-status', 'Current status'], ['components', 'Components'], ['incident-history', 'Incident history']]
-const MIN_DAILY_CHECKS = 24 * 60 * 2 * 0.95
-
-function label(status) {
-  return ({ operational: 'Operational', degraded: 'Degraded', outage: 'Outage', unknown: 'Checking' })[status] ?? 'Checking'
+const SNAPSHOT = import.meta.env.VITE_STATUS_SNAPSHOT_URL
+const stamp = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Not yet recorded'
+const date = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value)) : 'the first recorded check'
+const numeric = value => typeof value === 'number' ? value.toLocaleString() : '—'
+function Chevron({ open }) { return <svg className={`status-chevron ${open ? 'is-open' : ''}`} width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg> }
+function TickBar({ ticks = [], compact = false }) {
+  if (!ticks.length) return <span className="status-no-ticks">Awaiting measurements</span>
+  return <div className={compact ? 'status-mini-bar' : 'status-tick-bar'} aria-label="Recorded uptime checks">{(compact ? ticks.slice(-30) : ticks).map(tick => {
+    const title = `${stamp(tick.start)} · ${statusLabel(tick.status)} · ${formatUptime(tick.uptime)} uptime · ${numeric(tick.checks)} checks · ${tick.incidents?.length ?? 0} incidents`
+    return <span key={tick.start} {...(!compact ? { tabIndex: 0, role: 'img', 'aria-label': title } : { 'aria-hidden': true })} title={title} className="status-tick" style={{ '--tick-color': statusColor(tick.status) }} />
+  })}</div>
 }
-function tone(status) { return ({ operational: 'online', degraded: 'warn', outage: 'down', unknown: 'idle' })[status] ?? 'idle' }
-function timestamp(value) {
-  if (!value) return 'Waiting for first check'
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value))
-}
-function percent(points) {
-  const samples = points.reduce((sum, point) => sum + point.samples, 0)
-  if (samples < MIN_DAILY_CHECKS) return null
-  const healthy = points.reduce((sum, point) => sum + Math.round((point.uptime / 100) * point.samples), 0)
-  return (healthy / samples * 100).toFixed(2)
-}
-function Toc({ active }) {
-  return <aside className="hidden lg:col-span-3 lg:col-start-10 lg:block"><div className="sticky top-24"><span className="mono-label">on this page</span><ul className="mt-5 space-y-2.5 border-l border-[var(--color-line)]">{SECTIONS.map(([id, title]) => <li key={id} className="relative">{active === id && <motion.span layoutId="status-toc-marker" className="absolute -left-px top-0 h-full w-px bg-[var(--color-signal)]" transition={{ duration: .3, ease: EASE.expo }} />}<a href={`#${id}`} onClick={(event) => { event.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }) }} className={`block py-0.5 pl-4 text-[12.5px] leading-snug transition-colors ${active === id ? 'text-[var(--color-fg)]' : 'text-[var(--color-fg-dim)] hover:text-[var(--color-fg-muted)]'}`}>{title}</a></li>)}</ul><div className="mt-8 border-t border-[var(--color-line)] pt-6"><span className="mono-label">elsewhere</span><ul className="mt-4 space-y-2 text-[12.5px] text-[var(--color-fg-dim)]"><li><a className="transition-colors hover:text-[var(--color-fg)]" href="/docs">Documentation</a></li><li><a className="transition-colors hover:text-[var(--color-fg)]" href="/docs/cli">CLI reference</a></li><li><a className="transition-colors hover:text-[var(--color-fg)]" href="https://fleetapp.plastikworld.xyz">Fleet dashboard ↗</a></li></ul></div></div></aside>
-}
-function UptimeBars({ points }) {
-  if (!points.length) return <span className="font-mono text-[10px] text-[var(--color-fg-dim)]">Collecting history</span>
-  const byDay = new Map(points.map((point) => [String(point.date).slice(0, 10), point]))
-  const days = Array.from({ length: 90 }, (_, index) => {
-    const date = new Date()
-    date.setUTCHours(0, 0, 0, 0)
-    date.setUTCDate(date.getUTCDate() - 89 + index)
-    const key = date.toISOString().slice(0, 10)
-    return byDay.get(key) ?? { date: key, uptime: null, samples: 0 }
-  })
-  return <div className="flex h-7 items-end gap-[2px]" aria-label={`Uptime measurements for ${points.length} days`}>
-    {days.map((point) => { const complete = point.uptime !== null && point.samples >= MIN_DAILY_CHECKS; return <span key={point.date} title={complete ? `${point.date} · ${point.uptime}% of recorded checks passed` : `${point.date} · incomplete or missing measurements`} className={`min-w-[2px] flex-1 rounded-[1px] ${!complete ? 'bg-[var(--color-line-2)]' : point.uptime >= 99.9 ? 'bg-[var(--color-signal)]' : point.uptime >= 95 ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-down)]'}`} style={{ height: `${complete ? Math.max(20, point.uptime) : 35}%` }} />})}
-  </div>
-}
-function EventTimeline({ events, monitoredSince }) {
-  if (!events.length) return <div className="border-l border-[var(--color-line)] py-1 pl-5 text-[13.5px] leading-relaxed text-[var(--color-fg-muted)]">{monitoredSince ? 'No health changes have been recorded since monitoring began.' : 'The incident timeline will start after the first health check is recorded.'}</div>
-  return <ol className="border-l border-[var(--color-line)]">{events.map((event) => <li key={event.id} className="relative grid gap-2 border-b border-[var(--color-line)] py-4 pl-5 sm:grid-cols-[150px_1fr]"><span className="absolute -left-[4px] top-[22px] h-[7px] w-[7px] rounded-full" style={{ background: event.status === 'operational' ? 'var(--color-signal)' : 'var(--color-down)' }} /><time className="font-mono text-[10px] text-[var(--color-fg-dim)]">{timestamp(event.occurred_at)}</time><div><h3 className="text-[13px] font-medium">{TITLES[event.component] ?? event.component} · {label(event.status)}</h3><p className="mt-1 text-[12px] text-[var(--color-fg-muted)]">{event.message}</p></div></li>)}</ol>
-}
-
-export default function StatusPage() {
-  const reduce = useReducedMotion()
-  const [active, setActive] = useState(SECTIONS[0][0])
-  const [data, setData] = useState(null)
-  const [error, setError] = useState(false)
-  const [refreshedAt, setRefreshedAt] = useState(null)
-  const [refreshing, setRefreshing] = useState(false)
-
+function ComponentCard({ component, asOf }) {
+  const id = useId(); const reduce = useReducedMotion(); const chosen = useRef(false)
+  const [open,setOpen] = useState(false); const [histories,setHistories] = useState({}); const [range,setRange] = useState('24h'); const [error,setError] = useState(false)
   useEffect(() => {
-    let live = true
-    let controller
-    const refresh = async () => {
-      controller?.abort()
-      controller = new AbortController()
-      setRefreshing(true)
+    if (!open) return
+    const controller = new AbortController()
+    const get = async () => {
       try {
-        const response = await fetch(`${API}/public/status`, { signal: controller.signal, cache: 'no-store' })
-        if (!response.ok) throw new Error(`Status API returned ${response.status}`)
-        const result = await response.json()
-        if (live) { setData(result); setError(false); setRefreshedAt(new Date()) }
-      } catch (err) { if (live && err.name !== 'AbortError') setError(true) }
-      finally { if (live) setRefreshing(false) }
+        const results = await Promise.all(STATUS_RANGES.map(async r => { const response = await fetch(`${API}/v1/status/components/${component.slug}/uptime?range=${r}`, { signal: controller.signal }); if (!response.ok) throw Error('History unavailable'); return [r,await response.json()] }))
+        if (controller.signal.aborted) return
+        const values = Object.fromEntries(results); setHistories(values); setError(false); if (!chosen.current) setRange(defaultRange(values))
+      } catch (err) { if (err.name !== 'AbortError') setError(true) }
     }
-    refresh()
-    const interval = window.setInterval(refresh, 30_000)
-    const headings = SECTIONS.map(([id]) => document.getElementById(id)).filter(Boolean)
-    const observer = new IntersectionObserver((entries) => { const visible = entries.find(entry => entry.isIntersecting); if (visible) setActive(visible.target.id) }, { rootMargin: '-80px 0px -70% 0px' })
-    headings.forEach((heading) => observer.observe(heading))
-    return () => { live = false; controller?.abort(); window.clearInterval(interval); observer.disconnect() }
+    get(); return () => controller.abort()
+  }, [open,component.slug,asOf])
+  const history = histories[range]; const ticks = history?.ticks ?? []; const incidents = new Set(ticks.flatMap(t => t.incidents ?? [])).size
+  return <article className="status-component" data-status={component.status}><div className="status-component-top">
+    <button type="button" className="status-component-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}><Chevron open={open} /><span className="status-component-name">{component.name}</span><span className="status-component-level" style={{ color: statusColor(component.status) }}>{statusLabel(component.status)}</span></button>
+    <span className="status-info" tabIndex={0} role="img" aria-label={component.description || `${component.name}: health measured by platform probes.`} title={component.description || `${component.name}: health measured by platform probes.`}>ⓘ</span>
+    <div className="status-component-compact"><TickBar ticks={component.ticks} compact /></div><span className="status-component-uptime">{formatUptime(component.uptime)} <span>uptime</span></span>
+  </div><AnimatePresence initial={false}>{open && <motion.div id={id} key="details" initial={{ height:0,opacity:0 }} animate={{ height:'auto',opacity:1 }} exit={{ height:0,opacity:0 }} transition={{ duration:reduce ? 0 : .2 }} className="status-component-expand"><div className="status-component-body">
+    <div className="status-range-row"><span className="status-label">Recorded availability</span><div className="status-ranges" role="group" aria-label={`${component.name} history range`}>{STATUS_RANGES.map(r => <button key={r} type="button" aria-pressed={range === r} onClick={() => { chosen.current = true; setRange(r) }}>{r}</button>)}</div></div>
+    {error && <p className="status-history-warning" role="status">History could not be refreshed. Available readings keep their original timestamps.</p>}<TickBar ticks={ticks} />
+    <p className="status-history-caption">Monitoring since {date(history?.monitoring_since ?? component.monitoring_since)}{history ? ` · ${(history.coverage * 100).toFixed(1)}% recorded coverage` : ' · Loading recorded history…'}</p>
+    <dl className="status-stats"><div><dt>Uptime</dt><dd>{formatUptime(history?.uptime)}</dd></div><div><dt>Checks</dt><dd>{numeric(history?.checks)}</dd></div><div><dt>Last checked</dt><dd>{stamp(component.checked_at)}</dd></div><div><dt>Incidents</dt><dd>{history ? incidents : '—'}</dd></div></dl>
+  </div></motion.div>}</AnimatePresence></article>
+}
+function IncidentList({ incidents,since }) {
+  if (!incidents.length) return <div className="status-empty"><span className="status-empty-icon" aria-hidden="true">✓</span><div><h3>No incidents recorded</h3><p>{since ? `Monitoring began ${date(since)}.` : 'Monitoring begins with the first recorded check.'}</p></div></div>
+  return <ol className="status-incidents">{incidents.map(incident => <li key={incident.id}><span className="status-incident-dot" style={{ background:statusColor(incident.status === 'resolved' ? 'operational' : incident.impact) }} aria-hidden="true" /><div><div className="status-incident-title"><h3>{incident.title}</h3><span className="status-label">{incident.status}</span></div><p><time dateTime={incident.started_at}>{stamp(incident.started_at)}</time>{incident.resolved_at ? ` · Resolved ${stamp(incident.resolved_at)}` : ' · Investigation in progress'}</p><p>{(incident.components ?? []).join(' · ')}</p></div></li>)}</ol>
+}
+export default function StatusPage() {
+  const [data,setData] = useState(null); const [error,setError] = useState(false); const [refreshing,setRefreshing] = useState(false); const [tab,setTab] = useState('overview'); const [explain,setExplain] = useState(false)
+  const mounted = useRef(false); const activeFetch = useRef(null); const bannerId = useId()
+  const [history,setHistory] = useState(null); const [historyError,setHistoryError] = useState(false); const [historyCursor,setHistoryCursor] = useState(null); const [historyLoading,setHistoryLoading] = useState(false)
+  const loadHistory = useCallback(async (cursor,signal) => {
+    setHistoryLoading(true)
+    try {
+      const query = new URLSearchParams({ limit:'100' }); if (cursor) query.set('cursor',cursor)
+      const response = await fetch(`${API}/v1/status/incidents?${query}`,{ signal }); if (!response.ok) throw Error('Incident history unavailable')
+      const result = await response.json(); if (!Array.isArray(result.incidents)) throw Error('Invalid incident history')
+      if (!signal?.aborted && mounted.current) { setHistory(previous => cursor ? [...(previous ?? []),...result.incidents] : result.incidents); setHistoryCursor(result.next_cursor ?? null); setHistoryError(false) }
+    } catch (err) { if (err.name !== 'AbortError' && mounted.current) setHistoryError(true) }
+    finally { if (mounted.current) setHistoryLoading(false) }
+  },[])
+  const refresh = useCallback(async () => {
+    setData(previous => previous ? staleSnapshot(previous) : previous)
+    activeFetch.current?.abort(); const controller = new AbortController(); activeFetch.current = controller; setRefreshing(true)
+    try {
+      let response
+      try { response = await fetch(`${API}/v1/status`, { signal:controller.signal }); if (!response.ok) throw Error('Status unavailable') }
+      catch (err) { if (err.name === 'AbortError' || !SNAPSHOT) throw err; response = await fetch(SNAPSHOT, { signal:controller.signal,cache:'no-cache' }); if (!response.ok) throw Error('Snapshot unavailable') }
+      const value = staleSnapshot(await response.json()); if (mounted.current) { setData(value); setError(false) }
+    } catch (err) { if (mounted.current && err.name !== 'AbortError') { setError(true); setData(previous => previous ? { ...previous,status:'unknown',stale:true,components:previous.components.map(c => ({ ...c,status:'unknown' })) } : null) } }
+    finally { if (mounted.current) setRefreshing(false) }
   }, [])
-
-  const status = error && !data ? 'unavailable' : data?.status ?? 'checking'
-  const statusTone = status === 'operational' ? 'online' : status === 'degraded' ? 'warn' : status === 'unavailable' ? 'down' : 'idle'
-  const statusText = ({ operational: 'All monitored systems operational', degraded: 'Some monitored systems need attention', outage: 'Service interruption detected', unavailable: 'Status service unreachable', checking: 'Checking platform health', unknown: 'Monitoring is collecting data' })[status] ?? 'Checking platform health'
-
-  return <article className="relative"><div className="pointer-events-none absolute inset-x-0 top-0 h-[340px] dot-bg opacity-40" aria-hidden="true" />
-    <header className="rail relative border-b border-[var(--color-line)] pb-12 pt-28 lg:pt-32">
-      <motion.div initial={reduce ? { opacity: 0 } : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .5, ease: EASE.expo }} className="flex items-center gap-2.5 font-mono text-[11px]"><a href="/#top" className="link-draw text-[var(--color-fg-dim)] hover:text-[var(--color-fg-muted)]">fleet·os</a><span className="text-[var(--color-line-2)]">/</span><span className="text-[var(--color-fg-dim)]">Company</span><span className="text-[var(--color-line-2)]">/</span><span className="text-[var(--color-signal)]">platform status</span></motion.div>
-      <motion.h1 initial={reduce ? { opacity: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .55, delay: .06, ease: EASE.expo }} className="mt-6 text-[clamp(2.1rem,4.6vw,3.3rem)] font-semibold leading-[1.02] tracking-[-0.04em] text-balance">Service status</motion.h1>
-      <p className="mt-5 max-w-[62ch] text-[15.5px] leading-[1.7] text-[var(--color-fg-muted)] text-pretty">Live health for Fleet-operated infrastructure. Customer nodes and deployed services remain private to your fleet dashboard.</p>
-      <div className="mt-8 flex flex-wrap items-center gap-2.5 font-mono text-[10.5px] text-[var(--color-fg-dim)]"><StatusDot size={6} tone={statusTone} /><span>{statusText}</span><span className="text-[var(--color-line-2)]">·</span><span>{refreshedAt ? `refreshed ${timestamp(refreshedAt)}` : refreshing ? 'connecting to monitoring' : 'waiting for status API'}</span><button type="button" onClick={() => window.location.reload()} className="ml-1 underline decoration-[var(--color-line-2)] underline-offset-4 hover:text-[var(--color-fg)]">refresh</button></div>
-    </header>
-    <div className="rail relative grid gap-12 py-14 lg:grid-cols-12 lg:py-16"><div className="min-w-0 lg:col-span-8">
-      <motion.section id="current-status" initial={reduce ? { opacity: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .45, delay: .12, ease: EASE.expo }} className="scroll-mt-24 border-l-2 pl-5" style={{ borderColor: status === 'operational' ? 'var(--color-signal)' : status === 'degraded' || status === 'unavailable' ? 'var(--color-warn)' : 'var(--color-line-2)' }} aria-live="polite">
-        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--color-fg-dim)]">Current status</span><h2 className="mt-2 text-[19px] font-medium tracking-[-0.025em]">{statusText}</h2><p className="mt-2 text-[13.5px] leading-[1.7] text-[var(--color-fg-muted)]">{error ? 'Could not reach the live status API. The last successful readings remain visible with their original timestamps.' : data?.monitoredSince ? `Checks run every ${data.refreshSeconds} seconds. Historical measurements are shown from ${timestamp(data.monitoredSince)}.` : 'Waiting for the first persisted health check.'}</p>
-      </motion.section>
-      <section id="components" className="mt-12 scroll-mt-24"><div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--color-line)] pb-3"><div><h2 className="text-[18px] font-medium tracking-[-0.025em]">Monitored components</h2><p className="mt-2 text-[13.5px] text-[var(--color-fg-muted)]">Health checks for Fleet platform services and their data dependencies. Percentages use recorded checks; gray days indicate missing measurements.</p></div><span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-fg-dim)]">90 day view</span></div>
-        {!data?.components?.length ? <p className="border-b border-[var(--color-line)] py-5 text-[13px] text-[var(--color-fg-muted)]">{error ? 'Live component checks are temporarily unavailable.' : 'Waiting for monitoring data…'}</p> : <div className="border-t border-[var(--color-line)]">{data.components.map((component, index) => { const points = component.uptime90d ?? []; const uptime = percent(points); const sampleCount = points.reduce((sum, point) => sum + point.samples, 0); return <motion.article key={component.id} initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .32, delay: index * .04, ease: EASE.expo }} className="grid gap-3 border-b border-[var(--color-line)] py-4 sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.8fr)_120px] sm:items-center">
-          <div className="flex items-start gap-3"><StatusDot className="mt-1" tone={tone(component.status)} size={6} /><div><h3 className="text-[13px] font-medium">{component.name}</h3><p className="mt-1 text-[11px] text-[var(--color-fg-dim)]">{component.checkedAt ? `Checked ${timestamp(component.checkedAt)}` : 'First check pending'}</p></div></div><UptimeBars points={points} /><div className="font-mono text-[10px] text-[var(--color-fg-dim)] sm:text-right"><span className="block text-[var(--color-fg-muted)]">{uptime ? `${uptime}% · ${sampleCount} checks` : `Collecting · ${sampleCount} checks`}</span>{label(component.status)}</div>
-        </motion.article> })}</div>}
-      </section>
-      <section id="incident-history" className="mt-12 scroll-mt-24 border-t border-[var(--color-line)] pt-6"><span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--color-fg-dim)]">Incident history</span><h2 className="mt-2 text-[17px] font-medium tracking-[-0.02em]">Platform health events</h2><p className="mb-5 mt-2 text-[13.5px] leading-[1.7] text-[var(--color-fg-muted)]">Events are created automatically when a monitored component changes health.</p><EventTimeline events={data?.events ?? []} monitoredSince={data?.monitoredSince} /></section>
-      <aside className="mt-12 border-t border-[var(--color-line)] pt-5 lg:hidden"><span className="mono-label">checking your fleet?</span><p className="mt-3 text-[13px] leading-relaxed text-[var(--color-fg-muted)]">This public page covers Fleet infrastructure only. Inspect your own nodes and workloads in your dashboard.</p><a href="https://fleetapp.plastikworld.xyz" className="mt-3 inline-flex items-center gap-2 font-mono text-xs text-[var(--color-signal)]">Open dashboard ↗</a></aside>
-    </div><Toc active={active} /></div>
+  useEffect(() => {
+    mounted.current = true; refresh(); const poll = setInterval(refresh,30000); const stream = new EventSource(`${API}/v1/status/stream`)
+    stream.addEventListener('status-change',event => { try { if (mounted.current) { setData(staleSnapshot(JSON.parse(event.data))); setError(false) } } catch { /* Polling remains available for invalid stream events. */ } })
+    return () => { mounted.current = false; activeFetch.current?.abort(); stream.close(); clearInterval(poll) }
+  }, [refresh])
+  useEffect(() => { if (tab !== 'history') return; const controller = new AbortController(); loadHistory(null,controller.signal); return () => controller.abort() },[tab,data?.as_of,loadHistory])
+  const stale = data?.stale || error; const level = stale ? 'unknown' : data?.status ?? 'unknown'; const incidents = data?.incidents ?? []
+  const recent = incidents.filter(i => Date.parse(i.started_at) >= Date.now() - 14*86400000).sort((a,b) => Date.parse(b.started_at)-Date.parse(a.started_at)).slice(0,3)
+  const groups = [...new Set((data?.components ?? []).map(c => c.group))]
+  const historicalIncidents = history ?? incidents
+  const headings = { operational:'All systems operational',degraded:'Some systems are experiencing delays',partial_outage:'Some systems are unavailable',major_outage:'A service interruption is in progress',maintenance:'Scheduled maintenance is in progress',unknown:stale ? 'Live status is temporarily unavailable' : 'Waiting for monitoring data' }
+  return <article className="fleet-status"><header className="status-page-header"><nav aria-label="Breadcrumb" className="status-breadcrumb"><a href="/">fleet·os</a><span aria-hidden="true">/</span><span>Service status</span></nav><div className="status-heading-row"><h1>Service status</h1><span className="status-version">public platform health</span></div><p>Live health for Fleet-operated infrastructure. Your nodes and services stay private.</p></header>
+    <div className="status-tabs" role="tablist" aria-label="Status views">{['overview','history'].map(t => <button id={`status-tab-${t}`} key={t} role="tab" aria-selected={tab === t} aria-controls={`status-panel-${t}`} tabIndex={tab === t ? 0 : -1} onClick={() => setTab(t)} onKeyDown={event => { if (['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 'overview' : event.key === 'End' ? 'history' : t === 'overview' ? 'history' : 'overview'; setTab(next); document.getElementById(`status-tab-${next}`)?.focus() } }}>{t === 'overview' ? 'Overview' : 'History'}</button>)}</div>
+    <section className="status-banner" style={{ '--status-color':statusColor(level) }} aria-live="polite"><button className="status-banner-toggle" type="button" aria-expanded={explain} aria-controls={bannerId} onClick={() => setExplain(!explain)}><span className={`status-banner-dot ${level === 'operational' ? 'is-pulsing' : ''}`} aria-hidden="true" /><span className="status-banner-heading">{headings[level] ?? headings.unknown}</span><span className="status-chip">{stale ? 'Stale readings' : statusLabel(level)}</span><Chevron open={explain} /></button>{explain && <div className="status-banner-explainer" id={bannerId}><p>Checks run every 30 seconds, with slower synthetic checks for builds and scheduling. Uptime uses recorded observations only. Unknown readings and monitoring gaps never count as downtime.</p><p>{stale ? 'Last known measurements keep their original timestamps.' : 'For your own fleet health, sign in to the dashboard or use the CLI.'}</p><code className="status-command">$ fleet status</code><a href="/docs/status-api">Status API documentation ↗</a></div>}</section>
+    <div className="status-toolbar"><details className="status-method"><summary>How is uptime calculated?</summary><div><strong>Successful checks ÷ recorded checks.</strong><p>Unknown periods are excluded from both counts. Bars show actual measurements. Coverage shows how much of the selected range was measured.</p></div></details><div className="status-refresh"><span>Updated {data?.as_of ? stamp(data.as_of) : '—'} <span className="status-refresh-frequency">· auto-refresh 30s</span></span><button type="button" aria-label="Refresh service status" title="Refresh service status" disabled={refreshing} onClick={refresh}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13 7a5 5 0 1 0-1 4M13 2v5H8" stroke="currentColor" strokeWidth="1.5" /></svg></button></div></div>
+    {tab === 'overview' ? <div role="tabpanel" id="status-panel-overview" aria-labelledby="status-tab-overview"><section aria-label="Monitored components">{!data?.components?.length ? <div className="status-empty"><p>{refreshing ? 'Loading component measurements…' : 'No component measurements are available yet.'}</p></div> : groups.map(group => <div className="status-group" key={group}><h2 className="status-label">{group}</h2>{data.components.filter(c => c.group === group).map(c => <ComponentCard key={c.slug} component={c} asOf={data.as_of} />)}</div>)}</section><section className="status-recent"><div className="status-section-heading"><h2>Recent incidents</h2><span className="status-label">Last 14 days</span></div><IncidentList incidents={recent} since={data?.monitoring_since} /><button type="button" className="status-history-link" onClick={() => setTab('history')}>View incident history →</button></section></div> : <section role="tabpanel" id="status-panel-history" aria-labelledby="status-tab-history" className="status-history"><h2>Incident history</h2>{historyError && <p className="status-history-warning" role="status">Could not refresh the incident archive. Available incidents are shown below.</p>}{historyLoading && !history && <p role="status">Loading incident history…</p>}{historicalIncidents.length ? monthGroups(historicalIncidents).map(([month,entries]) => <section key={month}><h3 className="status-label">{new Intl.DateTimeFormat(undefined,{ month:'long',year:'numeric',timeZone:'UTC' }).format(new Date(`${month}-01T00:00:00Z`))}</h3><IncidentList incidents={entries} since={data?.monitoring_since} /></section>) : <IncidentList incidents={[]} since={data?.monitoring_since} />}{historyCursor && <button type="button" className="status-history-link" disabled={historyLoading} onClick={() => loadHistory(historyCursor)}>Load earlier incidents →</button>}</section>}
+    <aside className="status-private-note"><span className="status-label">Checking your fleet?</span><p>View your own nodes, deployments and services in the <a href="https://fleetapp.plastikworld.xyz">Fleet dashboard ↗</a>.</p></aside>
   </article>
 }

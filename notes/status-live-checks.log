@@ -1,0 +1,82 @@
+[
+  {
+    "width": 1440,
+    "status": "major_outage",
+    "components": [
+      "api",
+      "postgres",
+      "redis",
+      "registry",
+      "ingress",
+      "tunnel",
+      "build",
+      "scheduler",
+      "logs",
+      "github-app",
+      "cli-auth",
+      "website",
+      "docs",
+      "dashboard"
+    ],
+    "snapshotHTTP": 200,
+    "uptimeHTTP": 200,
+    "headerLabels": [
+      {
+        "text": "",
+        "aria": "Join Fleet OS Discord Community",
+        "title": "Discord Community"
+      },
+      {
+        "text": "",
+        "aria": "Join Fleet OS Discussions on GitHub",
+        "title": "GitHub Discussions"
+      },
+      {
+        "text": "",
+        "aria": "Open menu",
+        "title": "Open menu"
+      }
+    ],
+    "networkFixtures": false
+  },
+  {
+    "width": 390,
+    "status": "major_outage",
+    "components": [
+      "api",
+      "postgres",
+      "redis",
+      "registry",
+      "ingress",
+      "tunnel",
+      "build",
+      "scheduler",
+      "logs",
+      "github-app",
+      "cli-auth",
+      "website",
+      "docs",
+      "dashboard"
+    ],
+    "snapshotHTTP": 200,
+    "uptimeHTTP": 200,
+    "headerLabels": [
+      {
+        "text": "",
+        "aria": "Join Fleet OS Discord Community",
+        "title": "Discord Community"
+      },
+      {
+        "text": "",
+        "aria": "Join Fleet OS Discussions on GitHub",
+        "title": "GitHub Discussions"
+      },
+      {
+        "text": "",
+        "aria": "Open menu",
+        "title": "Open menu"
+      }
+    ],
+    "networkFixtures": false
+  }
+]

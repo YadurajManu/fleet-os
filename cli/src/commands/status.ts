@@ -3,6 +3,7 @@ import { c, cursor, glyphs, table, mb, memoryPair, relativeTime, loadBar, status
 import { operationHeader } from '../presentation.js'
 import type { Flags } from '../args.js'
 import { failureKey, translateFailure } from '../error-translation.js'
+import { loadProfile } from '../config.js'
 
 type MapNode = { id: string; name: string; arch: string; status: string; reliabilityTier: string; ramMb: number; freeRamMb: number; loadFactor: number | null; services: Array<{ name: string; policy: string; status: string }> }
 type Node = {
@@ -239,6 +240,17 @@ async function printStatus(fleetId: string, flags: Flags): Promise<void> {
 
 export const statusCommand = {
   async run(_args: string[], flags: Flags) {
+    if (flags.public) {
+      if (flags.watch) throw new CliError('--public does not support --watch; the public status page updates live.', EXIT.usage)
+      const profile = await loadProfile()
+      const response = await request<{ status: string; stale: boolean; as_of: string | null; components: Array<{ name: string; status: string; uptime: number | null }> }>('GET', '/v1/status', { auth: false, profile: { ...profile, api: profile.api || 'https://fleetapi.plastikworld.xyz' } })
+      if (flags.json) { console.log(JSON.stringify(response.body, null, 2)); return }
+      console.log(header('Fleet public status'))
+      console.log(`${response.body.status.replaceAll('_', ' ')}${response.body.stale ? ' · stale readings' : ''}`)
+      console.log(table(['COMPONENT', 'STATUS', 'UPTIME'], response.body.components.map(component => [component.name, component.status.replaceAll('_', ' '), typeof component.uptime === 'number' ? `${component.uptime.toFixed(2)}%` : 'unknown'])))
+      console.log(`As of: ${response.body.as_of ?? 'No measurements yet'}`)
+      return
+    }
     if (flags.watch && flags.json) throw new CliError('--watch cannot be combined with --json.', EXIT.usage)
     if (flags.watch && !process.stdout.isTTY) throw new CliError('--watch needs an interactive terminal.', EXIT.usage)
     const fleetId = await requireFleet(typeof flags.fleet === 'string' ? flags.fleet : undefined)
