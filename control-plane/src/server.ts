@@ -23,6 +23,7 @@ import { opsRoutes } from './api/ops.routes.js'
 import { instrumentApi } from './ops/metrics.js'
 import { statusRoutes } from './status/routes.js'
 import { statusIngestRoutes } from './status/ingest.js'
+import { fleetHealthRoutes } from './status/private.js'
 import type { AppContext } from './api/context.js'
 
 export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
@@ -121,6 +122,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   await app.register(opsRoutes)
   await app.register(statusRoutes, { prefix: '/v1/status' })
   await app.register(statusIngestRoutes)
+  await app.register(fleetHealthRoutes, { prefix: '/v1/fleet' })
 
   registerLogStream(app)
 

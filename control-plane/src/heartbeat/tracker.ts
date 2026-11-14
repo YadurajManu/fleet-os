@@ -27,6 +27,7 @@ export type HeartbeatPayload = {
   }>
   meshConnected: boolean
   agentVersion?: string
+  tunnelRttMs?: number
   runtime?: {
     dockerAvailable: boolean
     dockerVersion?: string

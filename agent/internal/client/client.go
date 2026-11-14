@@ -104,6 +104,7 @@ type DeployStage struct {
 }
 
 type Heartbeat struct {
+	TunnelRTTMs  *float64           `json:"tunnel_rtt_ms,omitempty"`
 	Capabilities *capability.Report `json:"capabilities,omitempty"`
 	CPUPct       float64            `json:"cpu_pct"`
 	RAMUsedMb    int                `json:"ram_used_mb"`
