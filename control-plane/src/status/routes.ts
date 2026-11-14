@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { ApiError } from '../api/errors.js'
 import { requirePlatformOperator } from '../api/ops.routes.js'
 import { webhook } from './subscriptions.js'
-import { snapshotSchema, componentSchema, seriesSchema, incidentSchema, maintenanceSchema } from './schemas.js'
+import { snapshotSchema, componentSchema, seriesSchema, incidentListSchema, incidentDetailSchema, maintenanceListSchema, metricsSchema } from './schemas.js'
 import { snapshot, publicIncidents, maintenance, series, ranges, digest, xml, type Range } from './public.js'
 const object = { type: 'object', additionalProperties: true } as const
 const array = { type: 'array', items: object } as const
@@ -33,10 +33,10 @@ export async function statusRoutes(app: FastifyInstance) {
   app.addHook('onRequest', async (req, reply) => {
     reply.header('access-control-allow-origin', '*')
     if (counters.size > 10000) for (const [key, value] of counters) if (value.at < Date.now() - 60000) counters.delete(key)
-    const key = req.ip; let counter = counters.get(key)
+    const key = req.method + ':' + req.ip; let counter = counters.get(key)
     if (!counter || counter.at < Date.now() - 60000) { counter = { at: Date.now(), count: 0 }; counters.set(key, counter) }
     // Allow the documented 200 rps cache benchmark while bounding abusive clients.
-    if (++counter.count > 15000 || counters.size > 20000) return reply.code(429).header('retry-after', '60').send({ error: 'Rate limit exceeded' })
+    if (++counter.count > (req.method === 'POST' ? 10 : 15000) || counters.size > 20000) return reply.code(429).header('retry-after', '60').send({ error: 'Rate limit exceeded' })
   })
   let cached: Awaited<ReturnType<typeof snapshot>> | undefined; let cachedAt = 0; let pending: Promise<Awaited<ReturnType<typeof snapshot>>> | undefined
   const current = async () => {
@@ -58,20 +58,21 @@ export async function statusRoutes(app: FastifyInstance) {
     const c = await component((req.params as { slug: string }).slug)
     return send(reply, await series(ctx, c.slug, ((req.query as { range?: Range }).range ?? '90d')))
   })
-  app.get('/incidents', { schema: { querystring: { type: 'object', properties: { status: { type: 'string', enum: ['investigating','identified','monitoring','resolved'] }, from: { type: 'string', format: 'date-time' }, limit: { type: 'integer', minimum: 1, maximum: 100, default: 30 }, cursor: uuid }, additionalProperties: false }, response: { 200: object } } }, async (req, reply) => {
+  app.get('/incidents', { schema: { querystring: { type: 'object', properties: { status: { type: 'string', enum: ['investigating','identified','monitoring','resolved'] }, from: { type: 'string', format: 'date-time' }, limit: { type: 'integer', minimum: 1, maximum: 100, default: 30 }, cursor: uuid }, additionalProperties: false }, response: { 200: incidentListSchema } } }, async (req, reply) => {
     const q = req.query as { status?: string; from?: string; limit?: number; cursor?: string }
     const incidents = await publicIncidents(ctx, q.limit ?? 30, q.from ? new Date(q.from) : undefined, q.status ?? null, q.cursor ?? null)
     return send(reply, { incidents, next_cursor: incidents.length === (q.limit ?? 30) ? incidents.at(-1)!.id : null })
   })
-  app.get('/incidents/:id', { schema: { params: { type: 'object', properties: { id: uuid }, required: ['id'] }, response: { 200: object } } }, async (req, reply) => {
+  app.get('/incidents/:id', { schema: { params: { type: 'object', properties: { id: uuid }, required: ['id'] }, response: { 200: incidentDetailSchema } } }, async (req, reply) => {
     const id = (req.params as { id: string }).id
     const [i] = await ctx.sql`select i.id,i.title,i.impact,i.status,i.started_at,i.resolved_at from status_incidents i where i.id=${id} and exists(select 1 from incident_components ic join status_components c on c.id=ic.component_id where ic.incident_id=i.id and c.public)`
     if (!i) throw ApiError.notFound('Incident')
     const updates = await ctx.sql`select id,status,body,ts from incident_updates where incident_id=${id} order by ts`
-    return send(reply, { ...i, updates: [...updates] })
+    const components = await ctx.sql`select c.slug from incident_components ic join status_components c on c.id=ic.component_id where ic.incident_id=${id} and c.public order by c.sort`
+    return send(reply, { ...i, components: components.map(c => c.slug), updates: [...updates] })
   })
-  app.get('/maintenance', { schema: { response: { 200: object } } }, async (_, reply) => send(reply, { maintenance: await maintenance(ctx) }))
-  app.get('/metrics', { schema: { response: { 200: object } } }, async (_, reply) => {
+  app.get('/maintenance', { schema: { response: { 200: maintenanceListSchema } } }, async (_, reply) => send(reply, { maintenance: await maintenance(ctx) }))
+  app.get('/metrics', { schema: { response: { 200: metricsSchema } } }, async (_, reply) => {
     const [population] = await ctx.sql`select count(distinct n.id)::int nodes,count(distinct om.user_id)::int users from nodes n join fleets f on f.id=n.fleet_id join org_members om on om.org_id=f.org_id`
     if (population!.nodes < 5 || population!.users < 5) return send(reply, { agents_online_percent: null, deploys_24h: null, deploy_success_rate_7d: null, median_deploy_time_ms: null, failover_events_30d: null, median_failover_time_ms: null, agent_version_spread: null, latest_cli_version: process.env.STATUS_LATEST_CLI_VERSION ?? null })
     // Each deployment metric independently requires five contributing users and nodes.
@@ -95,7 +96,7 @@ export async function statusRoutes(app: FastifyInstance) {
     req.raw.on('close', () => { clearInterval(changes); clearInterval(heart); streams.delete(changes); streams.delete(heart) })
   })
   app.get('/summary.json', { schema: { response: { 200: object } } }, async (_, reply) => {
-    const s = await current(); return send(reply, { page: { id: 'fleet', name: 'Fleet OS', updated_at: s.as_of }, status: { indicator: s.status === 'operational' ? 'none' : s.status === 'unknown' ? 'none' : 'minor', description: s.status }, components: s.components.map(c => ({ id: c.slug, name: c.name, status: c.status })), incidents: s.incidents, scheduled_maintenances: s.maintenance })
+    const s = await current(); return send(reply, { page: { id: 'fleet', name: 'Fleet OS', updated_at: s.as_of }, status: { indicator: ({ operational: 'none', unknown: 'none', maintenance: 'maintenance', degraded: 'minor', partial_outage: 'major', major_outage: 'critical' })[s.status], description: s.status }, components: s.components.map(c => ({ id: c.slug, name: c.name, status: c.status })), incidents: s.incidents, scheduled_maintenances: s.maintenance })
   })
   app.get('/badge/:slug.svg', { schema: { response: { 200: string } } }, async (req, reply) => {
     const c = await component((req.params as { slug: string }).slug)

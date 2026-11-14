@@ -34,7 +34,7 @@ export async function evaluate(ctx: AppContext, readings: Observation[]) {
     await tx`update status_component_state set status=${next.status},failures=${next.failures},successes=${next.successes},degraded_since=${next.degraded_since},checked_at=${r.ts} where component_id=${r.component}`
     if (next.status === previous!.status) return
     if (outage(next.status)) {
-      const existing = await tx`select distinct i.id from status_incidents i join incident_components ic on ic.incident_id=i.id where i.auto and i.resolved_at is null and (ic.component_id=${r.component} or exists(select 1 from status_components c where c.id=${r.component} and ic.component_id=any(c.depends_on))) limit 1`
+      const existing = await tx`select distinct i.id from status_incidents i join incident_components ic on ic.incident_id=i.id where i.auto and i.resolved_at is null and (ic.component_id=${r.component} or exists(select 1 from status_components c where c.id=${r.component} and ic.component_id=any(c.depends_on)) or exists(select 1 from status_components c where c.id=ic.component_id and ${r.component}=any(c.depends_on))) limit 1`
       let incidentId = existing[0]?.id
       if (!incidentId) {
         const [component] = await tx`select name from status_components where id=${r.component}`
@@ -42,7 +42,7 @@ export async function evaluate(ctx: AppContext, readings: Observation[]) {
         incidentId = incident!.id
       }
       await tx`insert into incident_components(incident_id,component_id) select ${incidentId},id from status_components where id=${r.component} or ${r.component}=any(depends_on) on conflict do nothing`
-      await tx`update status_incidents set impact=${next.status} where id=${incidentId}`
+      await tx`update status_incidents set impact=case when impact='major_outage' or ${next.status}='major_outage' then 'major_outage' when impact='partial_outage' or ${next.status}='partial_outage' then 'partial_outage' else 'degraded' end where id=${incidentId}`
       await tx`insert into incident_updates(incident_id,status,body,ts) values (${incidentId},'investigating','Automated checks detected a component health change.',${r.ts})`
     } else if (next.status === 'operational') {
       const incidents = await tx`select i.id from status_incidents i join incident_components ic on ic.incident_id=i.id where i.auto and i.resolved_at is null and ic.component_id=${r.component}`
@@ -63,7 +63,7 @@ export async function rollup(ctx: AppContext) {
     // Whole buckets only: never overwrite an older complete daily bucket with a partial raw tail.
     await tx`insert into status_rollups(component_id,bucket,granularity,checks,ok_checks,p50,p95,p99,downtime_s)
       select component_id,date_trunc(g,ts at time zone 'UTC') at time zone 'UTC',g,count(ok)::int,count(*) filter(where ok)::int,
-      percentile_cont(.5) within group(order by latency_ms)::real,percentile_cont(.95) within group(order by latency_ms)::real,percentile_cont(.99) within group(order by latency_ms)::real,count(*) filter(where ok=false)*${intervalMs() / 1000}
+      percentile_cont(.5) within group(order by latency_ms)::real,percentile_cont(.95) within group(order by latency_ms)::real,percentile_cont(.99) within group(order by latency_ms)::real,count(*) filter(where ok=false)*(case when component_id in ('build','scheduler') then 900 else ${intervalMs() / 1000} end)
       from status_checks cross join (values ('hour'),('day')) as grain(g) where ts>=date_trunc('day',now() at time zone 'UTC') at time zone 'UTC'-interval '6 days'
       group by component_id,g,date_trunc(g,ts at time zone 'UTC')
       on conflict(component_id,bucket,granularity) do update set checks=excluded.checks,ok_checks=excluded.ok_checks,p50=excluded.p50,p95=excluded.p95,p99=excluded.p99,downtime_s=excluded.downtime_s`

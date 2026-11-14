@@ -1,0 +1,15 @@
+ok  	github.com/fleet-os/fleet-os/agent/cmd/agent	(cached)
+?   	github.com/fleet-os/fleet-os/agent/internal/backup	[no test files]
+ok  	github.com/fleet-os/fleet-os/agent/internal/build	(cached)
+ok  	github.com/fleet-os/fleet-os/agent/internal/capability	(cached)
+?   	github.com/fleet-os/fleet-os/agent/internal/client	[no test files]
+?   	github.com/fleet-os/fleet-os/agent/internal/diagnostics	[no test files]
+ok  	github.com/fleet-os/fleet-os/agent/internal/docker	(cached)
+ok  	github.com/fleet-os/fleet-os/agent/internal/health	(cached)
+ok  	github.com/fleet-os/fleet-os/agent/internal/heartbeat	(cached)
+ok  	github.com/fleet-os/fleet-os/agent/internal/reconcile	(cached)
+?   	github.com/fleet-os/fleet-os/agent/internal/sampler	[no test files]
+?   	github.com/fleet-os/fleet-os/agent/internal/state	[no test files]
+?   	github.com/fleet-os/fleet-os/agent/internal/terminal	[no test files]
+ok  	github.com/fleet-os/fleet-os/agent/internal/tunnel	(cached)
+ok  	github.com/fleet-os/fleet-os/agent/internal/upgrade	(cached)

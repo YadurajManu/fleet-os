@@ -25,13 +25,8 @@ export default function AmbientMesh({ className = '' }) {
     let raf = 0
     let t0 = performance.now()
 
-    // A slightly denser field than the hero: extra drifting peers in the deep bg.
-    const extra = [
-      [-2.6, 1.25], [2.55, 1.1], [-1.15, -1.5], [1.65, -1.35], [0.05, 1.5],
-    ]
     const pts = [
       ...NODES.map((n, i) => ({ x: n.p[0], y: n.p[1], r: n.r * 34, live: !!n.live, ph: i * 1.31 })),
-      ...extra.map(([x, y], i) => ({ x, y, r: 1.9, live: false, ph: 3 + i * 0.9 })),
     ]
 
     const resize = () => {

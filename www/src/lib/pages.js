@@ -6,6 +6,44 @@ const H = (text) => ({ t: 'h', text })
 const L = (items) => ({ t: 'list', items })
 
 export const PAGES = {
+  'docs/status-api': {
+    group: 'Developers', title: 'Status API', kicker: 'public platform health',
+    lede: 'Read Fleet platform health, recorded uptime and incident history without signing in. Customer fleet telemetry stays behind authentication.',
+    updated: '14 November 2026',
+    blocks: [
+      H('Public endpoints'),
+      P('The public API is served at https://fleetapi.plastikworld.xyz/v1/status. GET requests permit cross-origin access and use a 15-second cache with ETag conditional requests. An unreachable monitor is unknown, never a measured outage.'),
+      { t: 'table', head: ['Endpoint', 'Response'], rows: [
+        ['/v1/status', 'Overall state, public components, incidents and maintenance'],
+        ['/v1/status/components/:slug', 'Component details and uptime for 24h, 7d, 30d and 90d'],
+        ['/v1/status/components/:slug/uptime?range=7d', 'Recorded ticks, check counts, coverage and monitoring start'],
+        ['/v1/status/components/:slug/latency?range=24h', 'Measured p50, p95 and p99 latency'],
+        ['/v1/status/incidents', 'Incident history; status, from, limit and cursor filters'],
+        ['/v1/status/incidents/:id', 'Incident details and update timeline'],
+        ['/v1/status/maintenance', 'Active and upcoming maintenance windows'],
+        ['/v1/status/metrics', 'Anonymous aggregate platform metrics; small cohorts are suppressed'],
+        ['/v1/status/stream', 'Server-sent status-change and incident events'],
+        ['/v1/status/summary.json', 'Statuspage-compatible summary'],
+        ['/v1/status/badge/api.svg', 'Embeddable component badge'],
+        ['/v1/status/feed.rss', 'Incident RSS feed'],
+        ['/v1/status/openapi.json', 'Machine-readable API description'],
+      ] },
+      H('Read status'),
+      { t: 'code', lang: 'sh', lines: ['$ curl -fsS https://fleetapi.plastikworld.xyz/v1/status', '$ fleet status --public', '$ fleet status --public --json'] },
+      { t: 'code', lang: 'js', lines: ["const response = await fetch('https://fleetapi.plastikworld.xyz/v1/status')", 'const status = await response.json()', 'console.log(status.status, status.as_of, status.stale)'] },
+      H('Uptime and coverage'),
+      P('Uptime is successful checks divided by recorded checks. Unknown observations are excluded from both sides. Empty time periods are not filled with invented ticks. The monitoring_since timestamp is the start of recorded history; coverage describes how much of the selected window was measured. Historical checks imported from the old monitor have no latency measurements, so percentiles can be null.'),
+      H('Privacy guarantees'),
+      P('Public responses contain Fleet-operated component names and approved public incident information only. User, node, service and project names, customer addresses, hostnames and per-customer telemetry are excluded. Metrics backed by fewer than five distinct contributing users or nodes are null. Your own fleet telemetry requires an authenticated /v1/fleet request.'),
+      H('Subscribe'),
+      P('POST /v1/status/subscriptions accepts channel, target and optional component_ids. HTTPS webhooks must echo the verification challenge. Email is available only when the operator has configured a mail provider and requires confirmation before delivery. Never put an access token into a public status URL.'),
+      { t: 'code', lang: 'json', lines: ['{ "channel": "webhook", "target": "https://example.com/status-hook", "component_ids": ["api"] }'] },
+      H('Embed a badge'),
+      { t: 'code', lang: 'html', lines: ['<a href="https://fleet.plastikworld.xyz/status">', '  <img src="https://fleetapi.plastikworld.xyz/v1/status/badge/api.svg"', '       alt="Fleet control plane API status" />', '</a>'] },
+      H('Independent monitoring'),
+      P('A standalone prober can publish a status.json snapshot from a separate machine. The status page can fall back to that public snapshot when the API cannot be reached. Stale readings retain their original timestamps and render neutrally. See the repository status-system setup documentation for operator configuration.'),
+    ],
+  },
   /* ─────────────────────────── Developers ─────────────────────────── */
   docs: {
     group: 'Developers',
@@ -738,6 +776,8 @@ export const PAGES = {
     lede: 'What shipped, when, and what broke. Dates are release dates, not merge dates.',
     updated: '20 Aug 2026',
     blocks: [
+      H('Unreleased — public status system'),
+      L(['Public Status API with recorded uptime, latency and incident history.', 'Redesigned Service status page with accessible component details, live updates and neutral unknown/stale states.', 'fleet status --public reads platform health without signing in.']),
       H('v0.9.2 — 18 August 2026'),
       L([
         'Pinned-service alerts now route to their own channel, separate from reschedule notifications.',
@@ -898,13 +938,13 @@ export const PAGES = {
     group: 'Company',
     title: 'Service status',
     kicker: 'Fleet platform availability',
-    lede: 'Fleet is preparing public health checks for its hosted platform components. Live availability and measured uptime are not connected yet.',
-    updated: '12 Nov 2026',
+    lede: 'Live Fleet platform health, measured uptime and public incident history. Your fleet nodes and services stay private.',
+    updated: '14 Nov 2026',
     blocks: [
       H('What does this page cover?'),
       P('This public page is for Fleet-operated platform components. It does not report the availability of your own nodes or deployed services; check those in your fleet dashboard.'),
       H('Availability data'),
-      P('Health checks, uptime history and incident reporting are not connected yet. No live status or uptime percentage is claimed until those measurements are available.'),
+      P('The status page reads measured checks and incidents from the public Status API. Missing or stale observations are unknown and never count as downtime. Only recorded history is shown.'),
       { t: 'links', items: [
         ['Self-hosting guide', '/docs/self-hosting', 'Deployment and operating guidance.'],
         ['CLI reference', '/docs/cli', 'Commands for inspecting your fleet.'],
@@ -1143,7 +1183,7 @@ export const PAGES = {
 // Order used for prev/next navigation at the foot of each page.
 export const PAGE_ORDER = [
   'docs', 'docs/fleet-yaml', 'docs/scheduler', 'docs/mesh', 'docs/failover',
-  'docs/cli', 'docs/updates', 'docs/domains', 'docs/api', 'docs/self-hosting', 'github', 'changelog',
+  'docs/cli', 'docs/updates', 'docs/domains', 'docs/api', 'docs/status-api', 'docs/self-hosting', 'github', 'changelog',
   'roadmap', 'about', 'blog', 'security', 'status', 'contact', 'community',
   'legal/privacy', 'legal/terms', 'legal/licence',
 ]

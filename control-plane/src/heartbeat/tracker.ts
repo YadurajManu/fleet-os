@@ -24,9 +24,12 @@ export type HeartbeatPayload = {
     memory_mb?: number
     cpu_pct?: number
     restarts?: number
+    external_reachability?: boolean
+    cert_expires_at?: string
   }>
   meshConnected: boolean
   agentVersion?: string
+  tunnelRttMs?: number
   runtime?: {
     dockerAvailable: boolean
     dockerVersion?: string

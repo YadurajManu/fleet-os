@@ -17,8 +17,8 @@ export async function writeSnapshot(value: unknown, path = snapshotPath()) {
 export async function publicIncidents(ctx: AppContext, limit = 30, from = new Date(Date.now() - 90 * 86400000), status: string | null = null, cursor: string | null = null) {
   const rows = await ctx.sql`select i.id,i.title,i.impact,i.status,i.started_at,i.resolved_at,array_agg(c.slug order by c.sort) as components
     from status_incidents i join incident_components ic on ic.incident_id=i.id join status_components c on c.id=ic.component_id and c.public
-    where i.started_at>=${from.toISOString()} and (${status}::text is null or i.status=${status}) and (${cursor}::uuid is null or i.id<${cursor}::uuid)
-    group by i.id order by i.id desc limit ${limit}`
+    where i.started_at>=${from.toISOString()} and (${status}::text is null or i.status=${status}) and (${cursor}::uuid is null or (i.started_at,i.id)<(select started_at,id from status_incidents where id=${cursor}::uuid))
+    group by i.id order by i.started_at desc,i.id desc limit ${limit}`
   return rows.map(r => ({ id: r.id, title: r.title, impact: r.impact, status: r.status, started_at: r.started_at, resolved_at: r.resolved_at, components: r.components }))
 }
 export async function maintenance(ctx: AppContext) {

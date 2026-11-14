@@ -71,6 +71,7 @@ const heartbeat = z.object({
   swap_used_mb: z.number().int().min(0).optional(),
   uptime_sec: z.number().int().min(0).optional(),
   mesh_connected: z.boolean().default(false),
+  tunnel_rtt_ms: z.number().min(0).max(300000).optional(),
   agent_version: z.string().max(32).optional(),
   advertise_addr: z.string().max(255).optional(),
   /*
@@ -103,6 +104,13 @@ const heartbeat = z.object({
       z.object({
         name: z.string().max(128),
         state: z.string().max(32),
+        id: z.string().max(128).optional(),
+        image: z.string().max(512).optional(),
+        status: z.string().max(256).optional(),
+        cpu_pct: z.number().min(0).optional(),
+        restarts: z.number().int().min(0).optional(),
+        external_reachability: z.boolean().optional(),
+        cert_expires_at: z.string().datetime().optional(),
         health: z.string().max(32).optional(),
         /** Absent from agents older than the health-gated rollout. */
         deployment_id: z.string().max(64).optional(),
@@ -331,6 +339,7 @@ export async function agentRoutes(app: FastifyInstance) {
       containers: hb.containers,
       meshConnected: hb.mesh_connected,
       agentVersion: hb.agent_version,
+      tunnelRttMs: hb.tunnel_rtt_ms,
       runtime: {
         dockerAvailable: hb.runtime.docker_available,
         dockerVersion: hb.runtime.docker_version,

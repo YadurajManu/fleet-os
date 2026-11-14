@@ -43,7 +43,9 @@ type RegisterResponse struct {
 }
 
 type Container struct {
-	Name string `json:"name"`
+	ExternalReachability *bool  `json:"external_reachability,omitempty"`
+	CertExpiresAt        string `json:"cert_expires_at,omitempty"`
+	Name                 string `json:"name"`
 	// Short 12-char container ID
 	ID string `json:"id,omitempty"`
 	// Image repository:tag
@@ -104,6 +106,7 @@ type DeployStage struct {
 }
 
 type Heartbeat struct {
+	TunnelRTTMs  *float64           `json:"tunnel_rtt_ms,omitempty"`
 	Capabilities *capability.Report `json:"capabilities,omitempty"`
 	CPUPct       float64            `json:"cpu_pct"`
 	RAMUsedMb    int                `json:"ram_used_mb"`

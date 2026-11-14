@@ -17,6 +17,7 @@ export function MenuToggle({ open, onClick }) {
       aria-expanded={open}
       aria-controls="mobile-menu"
       aria-label={open ? 'Close menu' : 'Open menu'}
+      title={open ? 'Close menu' : 'Open menu'}
       className="relative -mr-2 flex h-10 w-10 items-center justify-center md:hidden"
     >
       <span className="relative block h-[11px] w-[18px]">

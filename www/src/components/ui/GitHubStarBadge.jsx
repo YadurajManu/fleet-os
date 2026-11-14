@@ -91,14 +91,9 @@ export default function GitHubStarBadge({ className = '', compact = false }) {
       {!compact && <span className="font-medium">Star</span>}
 
       {/* Star Count with Skeleton Loader */}
-      {loading ? (
-        <span
-          className="inline-block h-3.5 w-6 animate-pulse rounded bg-[var(--color-line-2)]"
-          aria-hidden="true"
-        />
-      ) : (
+      {!loading && stars >= 50 && (
         <span className="tabular-nums text-[var(--color-fg-muted)] transition-colors duration-300 group-hover:text-[var(--color-signal)]">
-          {formatStars(stars) ?? '★'}
+          {formatStars(stars)}
         </span>
       )}
     </a>
