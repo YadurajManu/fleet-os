@@ -1,0 +1,45 @@
+
+> fleet-os-site@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ reject malformed canonical configuration (0.677458ms)
+✔ JSON-LD escapes HTML script delimiters without changing data (0.424584ms)
+✔ legacy routes, unknown paths and page anchors remain distinct (0.72675ms)
+✔ built metadata, content and links: / (3.982292ms)
+✔ built metadata, content and links: /founder (1.088209ms)
+✔ built metadata, content and links: /docs (1.186ms)
+✔ built metadata, content and links: /docs/fleet-yaml (1.34225ms)
+✔ built metadata, content and links: /docs/scheduler (1.192416ms)
+✔ built metadata, content and links: /docs/mesh (1.076458ms)
+✔ built metadata, content and links: /docs/failover (1.714791ms)
+✔ built metadata, content and links: /docs/cli (1.024083ms)
+✔ built metadata, content and links: /docs/updates (0.9135ms)
+✔ built metadata, content and links: /docs/domains (0.868833ms)
+✔ built metadata, content and links: /docs/api (0.788833ms)
+✔ built metadata, content and links: /docs/status-api (0.892584ms)
+✔ built metadata, content and links: /docs/self-hosting (0.768208ms)
+✔ built metadata, content and links: /github (0.886875ms)
+✔ built metadata, content and links: /changelog (0.883916ms)
+✔ built metadata, content and links: /roadmap (0.701291ms)
+✔ built metadata, content and links: /about (0.574667ms)
+✔ built metadata, content and links: /blog (0.609542ms)
+✔ built metadata, content and links: /security (1.380583ms)
+✔ built metadata, content and links: /status (0.832542ms)
+✔ built metadata, content and links: /contact (0.669667ms)
+✔ built metadata, content and links: /community (0.694375ms)
+✔ built metadata, content and links: /legal/privacy (0.692208ms)
+✔ built metadata, content and links: /legal/terms (0.719209ms)
+✔ built metadata, content and links: /legal/licence (0.658042ms)
+✔ sitemap and robots expose only canonical public routes (1.021708ms)
+✔ 404 is excluded from indexing and has no canonical (0.496875ms)
+✔ history chooses longest range with at least half measured coverage (0.436167ms)
+✔ stale snapshots keep timestamps and history while component states become unknown (0.24825ms)
+✔ history groups incidents into months in descending date order (0.29025ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 115.255916

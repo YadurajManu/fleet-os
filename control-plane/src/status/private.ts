@@ -35,7 +35,7 @@ export async function fleetHealthRoutes(app: FastifyInstance) {
     return { services: await Promise.all(rows.map(async s => {
       const hb = s.node_id ? await ctx.heartbeats.last(s.node_id) : null
       const container = hb?.containers.find(c => c.deployment_id === s.deployment_id)
-      return { ...s, restarts: container?.restarts ?? null, health_check: container?.health ?? null, external_reachability: null, cert_expires_at: null, telemetry_age_ms: hb ? Date.now()-hb.at : null }
+      return { ...s, restarts: container?.restarts ?? null, health_check: container?.health ?? null, external_reachability: container?.external_reachability ?? null, cert_expires_at: container?.cert_expires_at ?? null, telemetry_age_ms: hb ? Date.now()-hb.at : null }
     })) }
   })
   app.get('/failovers', async req => ({ failovers: [...await ctx.sql`select distinct e.id,e.service_id,e.from_node_id,e.to_node_id,e.created_at,e.reason from placement_events e join services s on s.id=e.service_id join fleets f on f.id=s.fleet_id join org_members m on m.org_id=f.org_id where m.user_id=${req.userId!} and e.reason='failover' order by e.created_at desc limit 100`] }))

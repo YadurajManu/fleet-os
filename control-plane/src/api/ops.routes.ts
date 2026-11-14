@@ -7,7 +7,6 @@ import { z } from 'zod'
 import { infrastructure } from '../ops/metrics.js'
 import { syncOpsSignals, incidentEvidence } from '../ops/incidents.js'
 import { analyzeIncident } from '../ops/analysis.js'
-import { collectPublicStatus, publicStatus } from '../ops/public-status.js'
 
 /** Platform access is independent of customer fleet membership. No HTTP grant route. */
 export async function requirePlatformOperator(req: FastifyRequest, reply: FastifyReply) {
@@ -46,15 +45,12 @@ export async function opsRoutes(app: FastifyInstance) {
     const collect = () => {
       if (pending) return pending
       pending = syncOpsSignals(app.ctx).catch((err) => { app.log.error({ err }, 'Operations signal collection failed') })
-        .then(async () => collectPublicStatus(app.ctx))
-        .catch((err) => { app.log.error({ err }, 'Public status collection failed') })
         .finally(() => { pending = undefined })
       return pending
     }
     app.addHook('onReady', async () => { await collect(); collector = setInterval(() => { void collect() }, 30_000); collector.unref() })
     app.addHook('onClose', async () => { if (collector) clearInterval(collector); await pending })
   }
-  app.get('/public/status', async () => publicStatus(app.ctx))
   app.get('/ops/me', { preHandler: requirePlatformOperator }, async (req) => ({ operator: true, userId: req.userId }))
 
   app.get('/ops/infrastructure', { preHandler: requirePlatformOperator }, async () => infrastructure(app.ctx))

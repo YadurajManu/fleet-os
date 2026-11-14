@@ -1,0 +1,146 @@
+[
+  {
+    "width": 1440,
+    "scenario": "operational",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 1440,
+    "scenario": "expanded",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 1440,
+    "scenario": "degraded",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 1440,
+    "scenario": "major_outage",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 1440,
+    "scenario": "maintenance",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 1440,
+    "scenario": "unknown",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 1440,
+    "scenario": "stale",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 1440,
+    "scenario": "history_incident",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 1440,
+    "scenario": "history_empty",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 390,
+    "scenario": "operational",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 390,
+    "scenario": "expanded",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 390,
+    "scenario": "degraded",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 390,
+    "scenario": "major_outage",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 390,
+    "scenario": "maintenance",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 390,
+    "scenario": "unknown",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 390,
+    "scenario": "stale",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 390,
+    "scenario": "history_incident",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  },
+  {
+    "width": 390,
+    "scenario": "history_empty",
+    "horizontalOverflow": false,
+    "componentLabelOverlap": false,
+    "footerLinksClickable": true,
+    "pageErrors": []
+  }
+]

@@ -67,34 +67,8 @@ export default function Footer() {
       ref={ref}
       className="relative overflow-hidden border-t border-[var(--color-line)] bg-[var(--color-ink-950)]"
     >
-      <AmbientMesh className="absolute inset-0" />
+      <AmbientMesh className="pointer-events-none absolute inset-x-0 bottom-20 top-0 z-0 opacity-[.12] [mask-image:linear-gradient(to_bottom,transparent_45%,black_75%,transparent)]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[var(--color-ink-950)] to-transparent" />
-
-      {/* ── status strip ─────────────────────────────────────────── */}
-      <div className="relative border-b border-[var(--color-line)]">
-        <div className="rail flex flex-wrap items-center justify-between gap-y-3 py-4">
-          <motion.a
-            href="/status"
-            {...rise(0)}
-            className="group flex items-center gap-2.5"
-          >
-            <StatusDot size={7} />
-            <span className="font-mono text-[11.5px] text-[var(--color-fg)]">
-              <span className="link-draw">Service status information</span>
-            </span>
-            <span className="hidden font-mono text-[11px] text-[var(--color-fg-dim)] sm:inline">
-              · Fleet-operated platform components
-            </span>
-          </motion.a>
-
-          <motion.div
-            {...rise(0.08)}
-            className="font-mono text-[10.5px] text-[var(--color-fg-dim)]"
-          >
-            Current platform status · uptime · incidents
-          </motion.div>
-        </div>
-      </div>
 
       {/* ── main body ────────────────────────────────────────────── */}
       <div className="rail relative grid gap-12 py-16 lg:grid-cols-12 lg:gap-8 lg:py-20">

@@ -11,4 +11,7 @@ export const incidentSchema = record({ id: text, title: text, impact: text, stat
 export const maintenanceSchema = record({ id: text, title: text, starts_at: text, ends_at: text, components: strings })
 export const snapshotSchema = record({ status: level, stale: { type: 'boolean' }, as_of: nullableText, monitoring_since: nullableText, components: list(componentSchema), incidents: list(incidentSchema), maintenance: list(maintenanceSchema) })
 export const seriesSchema = record({ ticks: list(tickSchema), monitoring_since: nullableText, coverage: { type: 'number', minimum: 0, maximum: 1 }, uptime: number, checks: { type: 'integer' }, observed_ms: { type: 'number' }, granularity: { type: 'string', enum: ['hour','day'] } })
-export const metricsSchema = record(Object.fromEntries(['agents_online_percent','deploys_24h','deploy_success_rate_7d','median_deploy_time_ms','failover_events_30d','median_failover_time_ms'].map(k => [k, number])).valueOf() as Record<string, unknown>, [])
+export const metricsSchema = record({ ...Object.fromEntries(['agents_online_percent','deploys_24h','deploy_success_rate_7d','median_deploy_time_ms','failover_events_30d','median_failover_time_ms'].map(k => [k, number])), agent_version_spread: { anyOf: [{ type: 'null' }, list(record({ version: nullableText, count: { type: 'integer' } }))] }, latest_cli_version: nullableText })
+export const incidentListSchema = record({ incidents: list(incidentSchema), next_cursor: nullableText })
+export const incidentDetailSchema = record({ ...incidentSchema.properties, updates: list(record({ id: text, status: text, body: text, ts: text })) })
+export const maintenanceListSchema = record({ maintenance: list(maintenanceSchema) })
