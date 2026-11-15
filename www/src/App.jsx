@@ -18,6 +18,7 @@ import { useRoute } from './lib/router'
 import { useDocumentTitle } from './lib/useDocumentTitle'
 
 const Founder = lazy(() => import('./components/Founder'))
+const ReleasesPage = lazy(() => import('./components/ReleasesPage'))
 
 function Landing() {
   return (
@@ -67,6 +68,8 @@ export default function App() {
           <Suspense fallback={<p role="status">Loading founder page…</p>}><Founder /></Suspense>
         ) : route === 'status' ? (
           <StatusPage />
+        ) : route === 'releases' ? (
+          <Suspense fallback={<p role="status">Loading releases…</p>}><ReleasesPage /></Suspense>
         ) : (
           <PageShell route={route} />
         )}

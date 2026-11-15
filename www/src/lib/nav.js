@@ -11,6 +11,7 @@ export const SITE_MAP = [
       ['Pricing', '/#pricing'],
       ['Who built this', '/#builder'],
       ['Changelog', '/changelog'],
+      ['Releases', '/releases'],
     ],
   },
   {

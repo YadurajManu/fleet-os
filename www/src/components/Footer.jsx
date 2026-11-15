@@ -92,7 +92,7 @@ export default function Footer() {
             <GitHubStarBadge />
             <span className="inline-flex items-center gap-2 border border-[var(--color-line)] px-3 py-1.5 font-mono text-[10.5px] text-[var(--color-fg-dim)]">
               <StatusDot size={5} />
-              v0.9.2 · open beta
+              open beta
             </span>
             <a
               href="/legal/licence"

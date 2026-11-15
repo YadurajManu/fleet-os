@@ -21,7 +21,7 @@ const PAGE_LINKS = [
   ['Docs', '/docs'],
   ['CLI', '/docs/cli'],
   ['API', '/docs/api'],
-  ['Changelog', '/changelog'],
+  ['Releases', '/releases'],
   ['Pricing', '/#pricing'],
 ]
 

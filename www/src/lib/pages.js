@@ -6,6 +6,21 @@ const H = (text) => ({ t: 'h', text })
 const L = (items) => ({ t: 'list', items })
 
 export const PAGES = {
+  releases: {
+    group: 'Product', title: 'Releases', kicker: 'the release log',
+    lede: 'Verified Fleet OS component versions, release notes and practical update commands for your CLI, control plane and agents.',
+    updated: '15 November 2026',
+    blocks: [
+      H('Built to keep moving.'),
+      P('Fleet OS has three independently versioned components: the CLI on your computer, the control plane that coordinates the fleet, and the agent on each node. This release log brings their verified versions and source links together.'),
+      H('Update with context'),
+      P('Review the source and upgrade notes for your target version. Run fleet updates to compare the installed CLI, server revision and agents before changing a running installation.'),
+      { t: 'code', lang: 'sh', lines: ['$ fleet updates', '$ npm install -g @yadurajfleetos/cli@latest'] },
+      H('Release notes and compatibility'),
+      P('Component version numbers do not need to match. Check the update guide for migration, canary rollout and rollback instructions. Version publication dates and source checks are shown alongside the release information.'),
+      { t: 'links', items: [['Update guide','/docs/updates','Prepare and verify an update.'],['Product changelog','/changelog','Read the broader product history.'],['Platform status','/status','Check Fleet-operated infrastructure health.']] },
+    ],
+  },
   'docs/status-api': {
     group: 'Developers', title: 'Status API', kicker: 'public platform health',
     lede: 'Read Fleet platform health, recorded uptime and incident history without signing in. Customer fleet telemetry stays behind authentication.',
@@ -1184,6 +1199,6 @@ export const PAGES = {
 export const PAGE_ORDER = [
   'docs', 'docs/fleet-yaml', 'docs/scheduler', 'docs/mesh', 'docs/failover',
   'docs/cli', 'docs/updates', 'docs/domains', 'docs/api', 'docs/status-api', 'docs/self-hosting', 'github', 'changelog',
-  'roadmap', 'about', 'blog', 'security', 'status', 'contact', 'community',
+  'releases', 'roadmap', 'about', 'blog', 'security', 'status', 'contact', 'community',
   'legal/privacy', 'legal/terms', 'legal/licence',
 ]

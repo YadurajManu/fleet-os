@@ -214,6 +214,7 @@ export const FOOTER_LINKS = [
       ['Failover', '/docs/failover'],
       ['Pricing', '/#pricing'],
       ['Changelog', '/changelog'],
+      ['Releases', '/releases'],
     ],
   },
   {

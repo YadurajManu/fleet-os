@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PAGES, PAGE_ORDER } from '../src/lib/pages.js'
+import { RELEASE_COMPONENTS, RELEASES, RELEASES_CHECKED_AT } from '../src/lib/releases.js'
 import { siteOrigin, metadata, structuredData, serializeJsonLd, HOME_DESCRIPTION, FOUNDER } from '../src/lib/seo.js'
 const dist = join(dirname(fileURLToPath(import.meta.url)), '../dist')
 const origin = siteOrigin(process.env.SITE_ORIGIN)
@@ -67,7 +68,10 @@ function render(route, page, content) {
 for (const route of PAGE_ORDER) {
   const page = PAGES[route]
   await mkdir(join(dist, route), { recursive: true })
-  await writeFile(join(dist, route, 'index.html'), render(route, page, `<article><h1>${esc(page.title)}</h1><p>${esc(page.lede)}</p>${page.blocks.map(block).join('\n')}</article>`))
+  const content = route === 'releases'
+    ? `<article><h1>Releases</h1><p>${esc(page.lede)}</p><p>Sources checked ${esc(RELEASES_CHECKED_AT)}.</p><h2>Latest verified versions</h2>${RELEASE_COMPONENTS.map(component => `<section><h3>${esc(component.name)} · v${esc(component.version)}</h3><p>${esc(component.channel)}${component.revision ? ` · ${esc(component.revision)}` : ''}</p><p>${esc(component.summary)}</p><a href="${esc(component.sourceUrl)}">Verify ${esc(component.name)} source</a><pre><code>${esc(component.command)}</code></pre><p>${esc(component.note)}</p></section>`).join('')}<h2>Release history</h2>${RELEASES.map(release => `<section id="${esc(release.id)}"><h3>${esc(release.title)} · v${esc(release.version)}</h3><p>${esc(release.channel)} · ${esc(release.publishedAt.slice(0,10))}</p><p>${esc(release.summary)}</p><ul>${release.changes.map(change => `<li>${esc(change)}</li>`).join('')}</ul><p>${esc(release.upgradeNote)}</p><a href="${esc(release.sourceUrl)}">Release source</a></section>`).join('')}<a href="/docs/updates">Update guide</a></article>`
+    : `<article><h1>${esc(page.title)}</h1><p>${esc(page.lede)}</p>${page.blocks.map(block).join('\n')}</article>`
+  await writeFile(join(dist, route, 'index.html'), render(route, page, content))
 }
 await mkdir(join(dist, 'founder'), { recursive: true })
 await writeFile(join(dist, 'founder/index.html'), render('founder', FOUNDER, `<article><h1>${esc(FOUNDER.title)}</h1><p>${esc(FOUNDER.lede)}</p><a href="https://github.com/YadurajManu">GitHub profile</a></article>`))
