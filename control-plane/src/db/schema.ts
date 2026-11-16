@@ -386,7 +386,7 @@ export const services = pgTable(
     requiresGpu: boolean('requires_gpu').notNull().default(false),
     minReliabilityTier: reliabilityTier('min_reliability_tier').notNull().default('opportunistic'),
     compatibleArches: text('compatible_arches').array().notNull().default([]),
-    platforms: jsonb('platforms').$type<'auto' | string[]>().notNull().default('auto'),
+    platforms: jsonb('platforms').$type<'auto' | string[]>().notNull().default(sql`'"auto"'::jsonb`),
     placementArch: text('placement_arch'),
     allowEmulation: boolean('allow_emulation').notNull().default(false),
     imagePlatforms: text('image_platforms').array().notNull().default([]),
