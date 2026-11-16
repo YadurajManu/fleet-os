@@ -1,5 +1,15 @@
 # Fleet Databases build notes
 
+## 2026-11-16 — Autonomous continuation, engine milestone started
+
+- CONTINUATION.md records the updated execution rules; PROGRESS.md tracks every milestone and acceptance scenario without upgrading component evidence to E2E proof.
+- Pinned official base-image indexes, WAL-G v3.0.9 per-architecture binary hashes, pgvector 0.8.7 commit/archive hash and PgBouncer 1.26.1 source hash from upstream release metadata. Recipes compile portable pgvector and verify downloaded artifacts before installation. Builds use a disposable named Buildx builder and local image/OCI output only.
+- Safe interpretation of registry restriction: no remote registry/image/release-channel publication. An isolated localhost registry may be used solely for real integration tests and removed afterwards; release registry transfer remains prohibited.
+- Existing untracked workspace files remain untouched. GitHub origin and the active YadurajManu GitHub credentials are available; branch pushes are authorized, merges and releases are not.
+- Engine plugin contract now generates private container/file plans, independent credentials, default privileges/ACLs, pooled/direct URLs, readiness, engine backup/recovery/export commands and bounded metric parsing. Images must be digest pinned; registry resolution reuses existing credential-safe inspection and never falls back to an unverified tag/platform. Secret material stays in protected files, stdin or Docker exec environment, not process arguments.
+- Added disk-budgeted cached/pinned image pre-pull in the agent Docker package; capability advertisement remains off until actual runtime handlers are installed. Unit checks: six engine/catalog tests, API typecheck and Go Docker tests passed. Real maintained-image tests are written and await the ongoing build; no milestone/E2E completion claim.
+- Native build friction: PG development-package dependencies include substantial compiler/LLVM downloads. The build is live, with no feature substitution; unrelated fixture/contract work proceeds while it runs. Buildx owns a uniquely named disposable builder so cleanup never prunes another project's cache.
+
 ## 2026-11-16 — Discovery and design
 
 - Starting revision: `4c041c1`, branch already `feat/db-v1`. Existing untracked workspace/Graphify/marketing/release files are preserved and excluded from commits.
