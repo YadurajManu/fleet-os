@@ -32,4 +32,15 @@
 
 ## Remaining acceptance gates
 
+## 2026-11-16 — Engine tuning groundwork
+
+- Implemented bounded Postgres profiles with memory shared between server and a future PgBouncer sidecar, combined pool caps, concurrent work-memory budgeting, checkpoint/WAL/autovacuum settings, SCRAM/logging defaults, allowlisted numeric overrides and SD-storage warnings.
+- Implemented explicit Redis cache/durable configurations, memory headroom, persistence/eviction settings and honest warnings. ACL file is required; credential creation/runtime mounting are not yet implemented.
+- `database-tuning.test.ts`: **4/4 passed**, covering profile budgets, override rejection, storage behavior and Redis modes.
+- `database-engines.docker.ts`: **4/4 passed with real Docker**, separately testing Postgres 16/17 settings/pg_stat_statements/row persistence and Redis cache/durable authentication, eviction/write refusal and restart behavior. Disposable tenant-engine fixtures are separate from the control-plane test container and are cleaned up, including their volumes/credential files.
+- Local Linux arm64 on Docker Desktop only; no Windows or amd64 hardware claim. These tests use official engine images and do not establish maintained-image, PgBouncer, backup/PITR, agent-runtime or product E2E readiness.
+- Actual tuning behavior, limitations, units and official references are recorded in `tuning.md`. API/UI wiring and the complete engine plugin contract remain ahead.
+
+## Outstanding work (unchanged scope)
+
 All V1 product acceptance scenarios and all V2 scenarios in REQUEST.md remain incomplete. Still required: complete engine contract and maintained images, agent stateful runtime/TCP/exec, scheduler accounting/placement, lifecycle API plus matching UI, role/link injection and PgBouncer, targets/encrypted streamed backups/PITR/recovery/import/export, deploy migration gate/declarative transition, metrics/alerts, complete CLI/UI, hardening/E2E/Playwright, docs/runbooks and release preparation. V1 PR has not been opened, V2 branch has not been created, and no npm/agent/image release has been published. Raunak has not been accessed or changed.
