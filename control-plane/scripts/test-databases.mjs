@@ -39,7 +39,7 @@ try {
   }
   for (const script of ['test', 'typecheck', 'build']) await run('npm', ['run', script], { cwd: resolve(root, 'control-plane'), env })
   await run('go', ['test', './...'], { cwd: resolve(root, 'agent') })
-  await run('node', ['--test', '--import', 'tsx', 'tests/database-engines.docker.ts', 'tests/database-plugins.docker.ts'], { cwd: resolve(root, 'control-plane'), env })
+  await run('node', ['--test', '--test-concurrency=1', '--import', 'tsx', 'tests/database-engines.docker.ts', 'tests/database-plugins.docker.ts', 'tests/database-registry.docker.ts'], { cwd: resolve(root, 'control-plane'), env })
 } finally {
   for (const name of containers) await run('docker', ['rm', '-f', name], { capture: true }).catch(() => {})
   for (const name of volumes) await run('docker', ['volume', 'rm', name], { capture: true }).catch(() => {})

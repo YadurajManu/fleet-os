@@ -8,6 +8,10 @@ Continuation milestone 1: engine plugin contract, maintained Postgres 16/17 (WAL
 
 Engine/image increment: `node --test --import tsx tests/database-plugins.test.ts` passes 6 tests; API typecheck passes; Go Docker package tests pass including pinned-image/cache/disk pre-pull checks. Maintained image builds are still running, and `database-plugins.docker.ts` must pass against their outputs before this milestone is verified. `control-plane/scripts/test-databases.mjs` now creates labeled isolated API test dependencies and runs the full required gate plus real engine/plugin checks. No product acceptance scenario has advanced to verified.
 
+Latest evidence: all four native maintained images built locally. `node --test --test-concurrency=1 --import tsx tests/database-plugins.docker.ts` passed 3/3 with real Go resource creation, idempotent retries, clean stops/restarts, role ACLs, PgBouncer, all curated extensions, metrics and portable exports (including Postgres custom-dump restore). `node --test --import tsx tests/database-registry.docker.ts` passed 1/1 with a real authenticated registry and Go pre-pull/cache/disk test inside an isolated daemon; no host Docker settings or remote registry changed. The full native milestone gate is running and the dual-architecture OCI build is running; neither is claimed complete yet.
+
+Live work to revalidate after context loss: native gate session 16123 (`deploy/databases/.native-milestone-gate.log`); multi-arch image build session 85191 (`deploy/databases/.build-multiarch.log`). Observe the actual handle/process before waiting/restarting. Builder ownership is recorded in ignored `deploy/databases/.build/builder.json`; `node deploy/databases/build.mjs --clean` removes only that builder after all builds/tests using it finish. Native test images remain in use by subsequent verification.
+
 ## Original V1 milestones
 
 | # | Milestone | Status | Evidence / remaining proof |

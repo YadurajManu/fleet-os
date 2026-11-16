@@ -25,6 +25,7 @@ export type BackupPlan = { type: 'wal-g'; command: EngineCommand }
 export type RestoreTarget = { backup: string; to?: { type: 'time' | 'name'; value: string } }
 export type RestorePlan = { type: 'wal-g'; command: EngineCommand; recovery: Record<string, string> }
   | { type: 'redis-rdb'; path: string }
+export type ImportPlan = { type: 'pg-restore'; command: EngineCommand } | { type: 'redis-rdb'; path: string }
 
 export interface DatabaseEnginePlugin {
   engine: 'postgres' | 'redis'; versions: readonly string[]; defaultVersion: string;
@@ -35,12 +36,23 @@ export interface DatabaseEnginePlugin {
   backup(options: EngineOptions): BackupPlan;
   restore(options: EngineOptions, target: RestoreTarget): RestorePlan;
   export(options: EngineOptions): EngineCommand;
+  import(options: EngineOptions): ImportPlan;
+  extension(options: EngineOptions, name: string, enabled: boolean): EngineCommand;
   metrics(options: EngineOptions): EngineCommand;
   parseMetrics(output: string): Record<string, unknown>;
 }
 
 const name = z.string().regex(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/)
 const image = z.string().regex(/^(?:sha256:[a-f0-9]{64}|[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64})$/)
+const metricNumber = z.number().nonnegative()
+const postgresMetrics = z.object({
+  connections: z.object({ active: metricNumber, idle: metricNumber, max: metricNumber }).optional(),
+  transactions: metricNumber.optional(), cache_hits: metricNumber.optional(), disk_reads: metricNumber.optional(), size_bytes: metricNumber.optional(),
+  tables: z.array(z.object({ schemaname: z.string().max(128), relname: z.string().max(128), size_bytes: metricNumber })).max(20).optional(),
+  slow: z.array(z.object({ queryid: z.string().regex(/^-?[0-9]+$/), calls: metricNumber, total_exec_time: metricNumber, mean_exec_time: metricNumber, rows: metricNumber })).max(20).optional(),
+  blocked: metricNumber.optional(),
+  archiver: z.object({ archived_count: metricNumber, last_archived_wal: z.string().max(128).nullable(), last_archived_time: z.string().max(64).nullable(), failed_count: metricNumber, last_failed_wal: z.string().max(128).nullable(), last_failed_time: z.string().max(64).nullable(), stats_reset: z.string().max(64) }).optional(),
+})
 const credential = z.object({ username: z.string().regex(/^fleet_(owner|app|readonly)$/), password: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/) })
 const optionsSchema = z.object({
   id: z.string().uuid(), fleetId: z.string().uuid(), project: z.string().min(1).max(128), name,
@@ -135,6 +147,12 @@ export const postgresEngine: DatabaseEnginePlugin = {
     return { type: 'wal-g', command: pgCommand(options, ['wal-g', 'backup-fetch', '/var/lib/postgresql/data/pgdata', target.backup]), recovery }
   },
   export(options) { validate(options, this); return pgCommand(options, ['pg_dump', '--format=custom', '--no-owner', '--no-acl']) },
+  import(options) { validate(options, this); return { type: 'pg-restore', command: pgCommand(options, ['pg_restore', '--dbname', databaseName(options), '--exit-on-error', '--no-owner', '--no-acl', '--single-transaction']) } },
+  extension(options, name, enabled) {
+    validate(options, this)
+    if (!this.extensions.includes(name)) fail('Choose an extension from the maintained image catalog.')
+    return pgCommand(options, ['psql', '-X', '-v', 'ON_ERROR_STOP=1', '-q'], enabled ? `CREATE EXTENSION IF NOT EXISTS ${sqlIdentifier(name)};` : `DROP EXTENSION IF EXISTS ${sqlIdentifier(name)} RESTRICT;`)
+  },
   metrics(options) {
     validate(options, this)
     const query = `SELECT json_build_object('connections', (SELECT json_build_object('active', count(*) FILTER (WHERE state = 'active'), 'idle', count(*) FILTER (WHERE state = 'idle'), 'max', current_setting('max_connections')::int) FROM pg_stat_activity WHERE datname = current_database()), 'transactions', xact_commit + xact_rollback, 'cache_hits', blks_hit, 'disk_reads', blks_read, 'size_bytes', pg_database_size(current_database()), 'tables', (SELECT coalesce(json_agg(t), '[]') FROM (SELECT schemaname, relname, pg_total_relation_size(relid) AS size_bytes FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 20) t), 'slow', (SELECT coalesce(json_agg(q), '[]') FROM (SELECT queryid::text, calls, total_exec_time, mean_exec_time, rows FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) ORDER BY total_exec_time DESC LIMIT 20) q), 'blocked', (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0), 'archiver', (SELECT row_to_json(a) FROM pg_stat_archiver a)) FROM pg_stat_database WHERE datname = current_database()`
@@ -142,7 +160,11 @@ export const postgresEngine: DatabaseEnginePlugin = {
   },
   parseMetrics(output) {
     if (Buffer.byteLength(output) > 262144) fail('Engine metric response exceeded its limit.')
-    try { const result: unknown = JSON.parse(output); if (!result || Array.isArray(result) || typeof result !== 'object') fail('Engine metrics must be a JSON object.'); return result as Record<string, unknown> } catch { fail('Engine returned invalid metrics.') }
+    try {
+      const result = postgresMetrics.safeParse(JSON.parse(output))
+      if (!result.success || !Object.keys(result.data).length) fail('Engine returned no supported Postgres metrics.')
+      return result.data
+    } catch { fail('Engine returned invalid metrics.') }
   },
 }
 
@@ -181,6 +203,8 @@ export const redisEngine: DatabaseEnginePlugin = {
   },
   restore(options, target) { validate(options, this); if (target.to) fail('Redis snapshots do not support point-in-time recovery. Choose a specific RDB backup.'); return { type: 'redis-rdb', path: '/data/dump.rdb' } },
   export(options) { validate(options, this); return redisCommand(options, '--rdb', '-') },
+  import(options) { validate(options, this); return { type: 'redis-rdb', path: '/data/dump.rdb' } },
+  extension() { fail('Redis does not provide SQL extensions. Use the Postgres extension commands for a Postgres database.') },
   metrics(options) { validate(options, this); return redisCommand(options, 'INFO', 'ALL') },
   parseMetrics(output) {
     if (Buffer.byteLength(output) > 262144) fail('Engine metric response exceeded its limit.')
@@ -189,7 +213,15 @@ export const redisEngine: DatabaseEnginePlugin = {
     for (const line of output.split(/\r?\n/)) {
       const colon = line.indexOf(':'); if (colon < 0) continue
       const key = line.slice(0, colon), value = line.slice(colon + 1)
-      if (allowed.has(key)) values[key] = /^\d+(\.\d+)?$/.test(value) && Number.isFinite(Number(value)) ? Number(value) : value.slice(0, 64)
+      if (allowed.has(key)) {
+        if (key.endsWith('_status')) {
+          if (value !== 'ok' && value !== 'err') fail('Engine returned an invalid Redis persistence status.')
+          values[key] = value
+        } else {
+          if (!/^\d+(\.\d+)?$/.test(value) || !Number.isFinite(Number(value))) fail('Engine returned an invalid numeric Redis metric.')
+          values[key] = Number(value)
+        }
+      }
     }
     if (!Object.keys(values).length) fail('Engine returned no supported Redis metrics.')
     return values
