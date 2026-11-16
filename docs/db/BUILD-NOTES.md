@@ -30,8 +30,6 @@
 - Tests cover concurrent identical enqueue, conflicting idempotency inputs, encrypted input/history privacy, fleet/project isolation, competing claims, checkpoint resume, expired/stale lease rejection, generation changes, retry exhaustion, invalid input/progress/error codes and schema safety constraints.
 - Reproduce focused tests with disposable `DATABASE_URL`/`REDIS_URL` and test config: `npx dotenv -e .env.test -- node --test --test-concurrency=1 --import tsx tests/database-agent-capabilities.test.ts tests/database-operations.test.ts tests/migrations.test.ts` from `control-plane/`. Never point test variables at a deployed installation.
 
-## Remaining acceptance gates
-
 ## 2026-11-16 — Engine tuning groundwork
 
 - Implemented bounded Postgres profiles with memory shared between server and a future PgBouncer sidecar, combined pool caps, concurrent work-memory budgeting, checkpoint/WAL/autovacuum settings, SCRAM/logging defaults, allowlisted numeric overrides and SD-storage warnings.
@@ -40,6 +38,14 @@
 - `database-engines.docker.ts`: **4/4 passed with real Docker**, separately testing Postgres 16/17 settings/pg_stat_statements/row persistence and Redis cache/durable authentication, eviction/write refusal and restart behavior. Disposable tenant-engine fixtures are separate from the control-plane test container and are cleaned up, including their volumes/credential files.
 - Local Linux arm64 on Docker Desktop only; no Windows or amd64 hardware claim. These tests use official engine images and do not establish maintained-image, PgBouncer, backup/PITR, agent-runtime or product E2E readiness.
 - Actual tuning behavior, limitations, units and official references are recorded in `tuning.md`. API/UI wiring and the complete engine plugin contract remain ahead.
+
+## 2026-11-16 — Increment verification
+
+- Final full control-plane suite: **697/697 passed**, zero skipped, after all new tests were included. Control-plane typecheck and build passed. All Go package tests passed.
+- Explicit Docker engine suite: **4/4 passed**. The real-container configuration checks are run separately from the default API suite using the command in `tuning.md`.
+- Applied generated migration 0042 to a separately populated pre-change declared-schema fixture: existing service name/image/platform values were unchanged and the pre-existing node received an empty/unsupported capability list.
+- Refreshed the code graph with `graphify update .`: 4,273 nodes / 10,497 edges. Community names changed and some were automatically named from hubs; semantic documentation extraction was not refreshed.
+- Temporary test containers/volumes and `.db-build` scratch files are removed after verification. Existing untracked workspace files remain untouched. No production validation or deployment performed.
 
 ## Outstanding work (unchanged scope)
 
