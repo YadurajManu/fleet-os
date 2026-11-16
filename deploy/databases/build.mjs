@@ -2,7 +2,7 @@ import { readFile, mkdir, writeFile, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import assert from 'node:assert/strict'
 
 const dir = dirname(fileURLToPath(import.meta.url))
@@ -12,6 +12,7 @@ assert.match(platforms, /^linux\/(arm64|amd64)(,linux\/(arm64|amd64))?$/)
 const output = join(dir, '.build')
 await mkdir(output, { recursive: true })
 const record = join(output, 'builder.json')
+const owner = createHash('sha256').update(dir).digest('hex')
 let builder
 try {
   const saved = JSON.parse(await readFile(record, 'utf8'))
@@ -26,16 +27,23 @@ const run = args => new Promise((resolve, reject) => {
 })
 if (process.argv[2] === '--clean') {
   if (builder) {
-    const owner = execFileSync('docker', ['inspect', '--format', '{{index .Config.Labels "com.docker.buildx.builder"}}', `buildx_buildkit_${builder}0`], { encoding: 'utf8' }).trim()
-    assert.equal(owner, builder, 'Refusing to remove an unrelated build container')
+    const [owned] = JSON.parse(execFileSync('docker', ['inspect', `buildx_buildkit_${builder}0`], { encoding: 'utf8' }))
+    assert.equal(owned.Name, `/buildx_buildkit_${builder}0`)
+    assert.equal(owned.Config.Labels['fleet.db-build-test'], 'true')
+    assert.ok(owned.Mounts.some(mount => mount.Type === 'volume' && mount.Name === `buildx_buildkit_${builder}0_state` && mount.Destination === '/var/lib/buildkit'), 'Refusing to remove a builder outside this workspace ownership record')
     await run(['buildx', 'rm', '--force', builder])
     await rm(record)
   }
   process.exit(0)
 }
 if (!builder) {
+  let builderBase
+  try { builderBase = execFileSync('docker', ['image', 'inspect', '--format', '{{index .Config.Labels "io.fleet.builder-base"}}', 'fleet-db-build/buildkit:local'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch {}
+  if (builderBase !== lock.buildkit) await run(['image', 'build', '-f', join(dir, 'Builder.Dockerfile'), '--build-arg', `BUILDKIT_IMAGE=${lock.buildkit}`, '-t', 'fleet-db-build/buildkit:local', dir])
   builder = `fleet-db-images-${randomUUID().slice(0, 8)}`
-  await run(['buildx', 'create', '--name', builder, '--driver', 'docker-container', '--driver-opt', 'memory=3g'])
+  const state = `buildx_buildkit_${builder}0_state`
+  await run(['volume', 'create', '--label', 'fleet.db-build-test=true', '--label', `io.fleet.builder-root=${owner}`, state])
+  await run(['buildx', 'create', '--name', builder, '--driver', 'docker-container', '--driver-opt', 'memory=3g', '--driver-opt', 'image=fleet-db-build/buildkit:local'])
   await writeFile(record, JSON.stringify({ name: builder, root: dir }) + '\n')
 }
 const base = ['buildx', 'build', '--builder', builder, '--platform', platforms, '--label', 'fleet.db-build-test=true', '--progress', 'plain']

@@ -16,7 +16,12 @@ async function run(program: string, args: string[], stdin?: string | Buffer, env
     child.stderr.resume()
     child.stdin.on('error', () => {})
     child.once('error', reject)
-    child.once('exit', code => code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`Docker test command failed (${code}); raw engine output withheld`)))
+    child.once('exit', code => {
+      const output = Buffer.concat(chunks)
+      if (code === 0) { resolve(output); return }
+      const detail = program === 'go' ? output.toString().replace(/[A-Za-z0-9_-]{43,}/g, '[redacted]').slice(-4000) : 'raw engine output withheld'
+      reject(new Error(`${program} database test command failed (${code}): ${detail}`))
+    })
     child.stdin.end(stdin)
   })
 }
@@ -32,7 +37,8 @@ async function ready(check: () => Promise<unknown>) {
     try { return await check() } catch (error) { if (Date.now() >= until) throw error; await delay(250) }
   }
 }
-async function imageId(tag: string) { return (await docker(['image', 'inspect', '--platform', platform, '--format', '{{.Id}}', tag])).toString().trim() }
+// Docker creates multi-platform images from the index ID; a platform config ID is not an image reference.
+async function imageId(tag: string) { return (await docker(['image', 'inspect', '--format', '{{.Id}}', tag])).toString().trim() }
 
 for (const engine of [postgresEngine, redisEngine]) {
   for (const version of engine.versions) test(`maintained ${engine.engine} ${version} (${platform}): private runtime plan, roles, health, metrics and portable export`, { timeout: 180000 }, async () => {

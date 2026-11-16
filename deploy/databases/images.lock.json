@@ -7,6 +7,7 @@
   "debian": "debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc",
   "dindTest": "docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce",
   "registryTest": "registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",
+  "buildkit": "moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe",
   "walG": {
     "version": "v3.0.9",
     "arm64": "072eb4a4a119f817e1fa888c64a776b01e3453b2e0d967a67d149adb18fde652",

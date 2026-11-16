@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { resolveDatabaseImages } from '../src/databases/images.js'
+import { mergeManifests } from '../src/build/manifests.js'
 
 const hostEnv = { ...process.env }
 function run(command: string, args: string[], stdin?: string, env = hostEnv): Promise<string> {
@@ -15,11 +16,21 @@ function run(command: string, args: string[], stdin?: string, env = hostEnv): Pr
     child.stdout.on('data', chunk => chunks.push(chunk)); child.stderr.resume()
     child.stdin.on('error', () => {}); child.stdin.end(stdin)
     child.once('error', reject)
-    child.once('exit', code => code === 0 ? resolve(Buffer.concat(chunks).toString().trim()) : reject(new Error(`Registry fixture ${command} ${args[0] ?? ''} failed (${code}); raw output withheld`)))
+    child.once('exit', code => {
+      const output = Buffer.concat(chunks).toString().trim()
+      if (code === 0) { resolve(output); return }
+      let detail = 'raw output withheld'
+      if (command === 'go' && env.FLEET_DB_PREPULL_TEST) {
+        const setup = JSON.parse(env.FLEET_DB_PREPULL_TEST) as { auth: string }
+        const auth = JSON.parse(setup.auth) as { password: string }
+        detail = output.replaceAll(auth.password, '[redacted]').replaceAll(setup.auth, '[redacted]').slice(-4000)
+      }
+      reject(new Error(`Registry fixture ${command} ${args[0] ?? ''} failed (${code}): ${detail}`))
+    })
   })
 }
-async function transferImage(tag: string, env: NodeJS.ProcessEnv) {
-  const save = spawn('docker', ['image', 'save', tag], { env: hostEnv, stdio: ['ignore', 'pipe', 'ignore'], timeout: 180000 })
+async function transferImage(tag: string, platform: string, env: NodeJS.ProcessEnv) {
+  const save = spawn('docker', ['image', 'save', '--platform', platform, tag], { env: hostEnv, stdio: ['ignore', 'pipe', 'ignore'], timeout: 180000 })
   const load = spawn('docker', ['image', 'load'], { env, stdio: ['pipe', 'ignore', 'ignore'], timeout: 180000 })
   save.stdout.pipe(load.stdin); load.stdin.on('error', () => {})
   await Promise.all([save, load].map(child => new Promise<void>((resolve, reject) => {
@@ -42,7 +53,11 @@ test('private registry authenticates and the real agent pre-pulls verified diges
   const user = 'fleet-integration', password = randomBytes(32).toString('base64url'), port = await freePort(), host = `127.0.0.1:${port}`
   const saved: Record<string, string | undefined> = Object.fromEntries(['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'].map(key => [key, process.env[key]]))
   try {
-    await run('node', ['../deploy/databases/build.mjs', 'registry-test:local'])
+    try {
+      assert.equal(await run('docker', ['image', 'inspect', '--format', '{{index .Config.Labels "fleet.db-build-test"}}', 'fleet-db-build/registry-test:local']), 'true')
+    } catch {
+      await run('node', ['../deploy/databases/build.mjs', 'registry-test:local'])
+    }
     const auth = await run('htpasswd', ['-Bni', user], `${password}\n`)
     assert.match(auth, /^fleet-integration:\$2/)
     await writeFile(join(dir, 'htpasswd'), `${auth}\n`, { mode: 0o600 })
@@ -64,11 +79,21 @@ test('private registry authenticates and the real agent pre-pulls verified diges
     await writeFile(join(dockerConfig, 'config.json'), JSON.stringify({ auths: { [host]: {} } }), { mode: 0o600 })
     const env = { ...hostEnv, DOCKER_HOST: `tcp://${api}`, DOCKER_CONTEXT: '', DOCKER_TLS_VERIFY: '', DOCKER_CERT_PATH: '', DOCKER_CONFIG: dockerConfig }
     await run('docker', ['login', host, '--username', user, '--password-stdin'], password, env)
+    process.env.DOCKER_HOST = env.DOCKER_HOST
+    for (const key of ['DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH']) delete process.env[key]
     for (const image of ['postgres:16', 'postgres:17', 'redis:7', 'pgbouncer:1']) {
-      await transferImage(`fleet-db-build/${image}`, env)
-      const tag = `${host}/fleet-databases/${image}`
-      await run('docker', ['tag', `fleet-db-build/${image}`, tag], undefined, env)
-      await run('docker', ['push', tag], undefined, env)
+      const digests: string[] = []
+      for (const architecture of ['arm64', 'amd64']) {
+        await transferImage(`fleet-db-build/${image}`, `linux/${architecture}`, env)
+        const tag = `${host}/fleet-databases/${image}-${architecture}`
+        await run('docker', ['tag', `fleet-db-build/${image}`, tag], undefined, env)
+        await run('docker', ['push', tag], undefined, env)
+        const [stored] = JSON.parse(await run('docker', ['image', 'inspect', tag], undefined, env))
+        const digest = stored.RepoDigests.find((ref: string) => ref.startsWith(`${host}/fleet-databases/`)).split('@')[1]
+        assert.match(digest, /^sha256:[a-f0-9]{64}$/); digests.push(digest)
+      }
+      const [engine, version] = image.split(':')
+      await mergeManifests(`${host}/fleet-databases/${engine}`, version!, digests, `${user}:${password}`)
     }
     // The isolated daemon shares the registry's loopback namespace; host ports stay private.
     process.env.DOCKER_HOST = env.DOCKER_HOST
@@ -78,15 +103,18 @@ test('private registry authenticates and the real agent pre-pulls verified diges
     const postgres = await resolveDatabaseImages(config, 'postgres', '17', `linux/${architecture}`)
     assert.match(postgres.primary, /\/fleet-databases\/postgres@sha256:[a-f0-9]{64}$/)
     assert.match(postgres.pooler!, /\/fleet-databases\/pgbouncer@sha256:[a-f0-9]{64}$/)
+    assert.equal((await resolveDatabaseImages(config, 'postgres', '17', 'linux/amd64')).primary, postgres.primary)
+    assert.equal((await resolveDatabaseImages(config, 'postgres', '17', 'linux/arm64')).primary, postgres.primary)
     const redis = await resolveDatabaseImages(config, 'redis', '7', `linux/${architecture}`)
     assert.match(redis.primary, /\/fleet-databases\/redis@sha256:/)
     await assert.rejects(resolveDatabaseImages({ ...config, REGISTRY_CREDENTIALS: `${user}:wrong` }, 'postgres', '17', `linux/${architecture}`), (error: unknown) => {
       assert.ok(!String(error).includes(password)); return (error as { code: string }).code === 'database_images_unavailable'
     })
-    await run('docker', ['image', 'rm', `${host}/fleet-databases/redis:7`], undefined, env)
+    await assert.rejects(run('docker', ['image', 'inspect', redis.primary], undefined, env))
     await run('docker', ['image', 'rm', redis.primary], undefined, env).catch(() => {})
+    const requiredBytes = Math.max(64 * 1048576, Number(await run('docker', ['image', 'inspect', '--platform', `linux/${architecture}`, '--format', '{{.Size}}', 'fleet-db-build/redis:7'])) * 2)
     const go = await run('go', ['-C', '../agent', 'test', './internal/docker', '-run', '^TestDatabaseImagePrepullRealRegistry$', '-count=1', '-v'], undefined, {
-      ...env, FLEET_DB_PREPULL_TEST: JSON.stringify({ reference: redis.primary, platform: `linux/${architecture}`, auth: JSON.stringify({ username: user, password, serveraddress: host }) }),
+      ...env, FLEET_DB_PREPULL_TEST: JSON.stringify({ reference: redis.primary, platform: `linux/${architecture}`, requiredBytes, auth: JSON.stringify({ username: user, password, serveraddress: host }) }),
     })
     assert.match(go, /--- PASS: TestDatabaseImagePrepullRealRegistry/)
   } finally {

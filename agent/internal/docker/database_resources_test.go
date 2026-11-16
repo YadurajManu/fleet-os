@@ -79,6 +79,9 @@ func TestDatabaseCreateIsPrivateOwnedAndIdempotent(t *testing.T) {
 			network = true
 			_, _ = w.Write([]byte(`{}`))
 		case p == "containers/create":
+			if r.URL.Query().Get("platform") != spec.Platform {
+				t.Error("configuration writer or database lost its execution platform")
+			}
 			var b struct {
 				Labels     map[string]string
 				HostConfig struct {

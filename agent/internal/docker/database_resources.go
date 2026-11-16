@@ -164,7 +164,7 @@ func (c *Client) installDatabaseFiles(ctx context.Context, spec DatabaseContaine
 		return databaseFailure("configuration writer inspection")
 	}
 	var created createResponse
-	if c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/create?name="+name, map[string]any{
+	if c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/create?name="+name+"&platform="+url.QueryEscape(spec.Platform), map[string]any{
 		"Image": spec.Container.Image, "User": "999:999", "Entrypoint": []string{"/bin/true"}, "Labels": databaseLabels(spec.Identity, "config-writer"),
 		"HostConfig": map[string]any{"NetworkMode": "none", "Mounts": []mount{{Type: "volume", Source: configVolume, Target: "/etc/fleet"}}},
 	}, &created) != nil {

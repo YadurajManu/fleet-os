@@ -16,9 +16,10 @@ func TestDatabaseImagePrepullRealRegistry(t *testing.T) {
 		t.Skip("run control-plane/tests/database-registry.docker.ts for the isolated authenticated registry fixture")
 	}
 	var spec struct {
-		Reference string `json:"reference"`
-		Platform  string `json:"platform"`
-		Auth      string `json:"auth"`
+		Reference     string `json:"reference"`
+		Platform      string `json:"platform"`
+		Auth          string `json:"auth"`
+		RequiredBytes int64  `json:"requiredBytes"`
 	}
 	if json.Unmarshal([]byte(input), &spec) != nil || spec.Reference == "" || spec.Auth == "" {
 		t.Fatal("invalid registry test setup")
@@ -30,7 +31,7 @@ func TestDatabaseImagePrepullRealRegistry(t *testing.T) {
 		t.Fatal("cannot measure real Docker disk headroom")
 	}
 	c := New("")
-	image := DatabaseImage{Reference: spec.Reference, Platform: spec.Platform, RequiredBytes: 1 << 30}
+	image := DatabaseImage{Reference: spec.Reference, Platform: spec.Platform, RequiredBytes: spec.RequiredBytes}
 	if err := c.PrepullDatabaseImages(ctx, []DatabaseImage{image}, spec.Auth, budget, nil); err != nil {
 		t.Fatal(err)
 	}
