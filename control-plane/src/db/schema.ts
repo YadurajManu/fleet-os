@@ -1,6 +1,8 @@
 import {
   bigint,
+  bigserial,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -14,6 +16,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
+import type { SealedSecret } from '../lib/crypto.js'
 export * from './status-schema.js'
 
 /* ── enums ─────────────────────────────────────────────────────────
@@ -233,6 +236,7 @@ export const nodes = pgTable(
     buildCpuMillis: boolean('build_cpu_millis').notNull().default(false),
     buildMemoryBytes: bigint('build_memory_bytes', { mode: 'number' }).notNull().default(2147483648),
     taskRun: boolean('task_run').notNull().default(false),
+    databaseCapabilities: text('database_capabilities').array().notNull().default([]),
     platforms: text('platforms').array().notNull().default([]),
     maxConcurrentBuilds: integer('max_concurrent_builds').notNull().default(1),
     buildDiskBytes: bigint('build_disk_bytes', { mode: 'number' }).notNull().default(21474836480),
@@ -831,3 +835,99 @@ export const buildJobs = pgTable('build_jobs', {
   reservedMemBytes: bigint('reserved_mem_bytes', { mode: 'number' }).notNull().default(2147483648),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [index('build_jobs_deployment_idx').on(t.deploymentId), index('build_jobs_lease_idx').on(t.status, t.leaseExpiresAt), index('build_jobs_cache_idx').on(t.serviceId, t.sourceRef, t.platform)])
+
+/* Tenant databases deliberately do not participate in app deployment failover. */
+export const databaseEngine = pgEnum('database_engine', ['postgres', 'redis'])
+export const databaseStatus = pgEnum('database_status', [
+  'provisioning', 'running', 'stopped', 'unreachable', 'degraded', 'restoring', 'failed', 'deleting',
+])
+export const databaseOperationState = pgEnum('database_operation_state', [
+  'queued', 'running', 'reconciling', 'succeeded', 'failed', 'cancelled',
+])
+export const databaseOperationKind = pgEnum('database_operation_kind', [
+  'create', 'start', 'stop', 'restart', 'delete', 'purge', 'backup', 'restore', 'recover',
+  'import', 'dump', 'migrate', 'exec', 'tune', 'extension', 'rotate', 'link', 'unlink',
+])
+
+export const tenantDatabases = pgTable('tenant_databases', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // Removing fleet metadata must never silently discard the identity of a live volume.
+  fleetId: uuid('fleet_id').notNull().references(() => fleets.id, { onDelete: 'restrict' }),
+  project: text('project').notNull(),
+  name: text('name').notNull(),
+  engine: databaseEngine('engine').notNull(),
+  version: text('version').notNull(),
+  mode: text('mode').$type<'standard' | 'cache' | 'durable'>().notNull().default('standard'),
+  status: databaseStatus('status').notNull().default('provisioning'),
+  desiredState: text('desired_state').$type<'running' | 'stopped'>().notNull().default('running'),
+  nodeId: uuid('node_id').references(() => nodes.id, { onDelete: 'restrict' }),
+  volumeName: text('volume_name').notNull(),
+  memoryMb: integer('memory_mb').notNull(),
+  cpu: real('cpu').notNull(),
+  diskMb: integer('disk_mb').notNull(),
+  profile: text('profile').$type<'dev' | 'standard' | 'performance'>().notNull().default('standard'),
+  config: jsonb('config').$type<Record<string, string | number>>().notNull().default({}),
+  generation: integer('generation').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  purgeAfter: timestamp('purge_after', { withTimezone: true }),
+}, t => [
+  uniqueIndex('tenant_databases_name_idx').on(t.fleetId, t.project, t.name),
+  uniqueIndex('tenant_databases_volume_idx').on(t.volumeName),
+  index('tenant_databases_node_idx').on(t.nodeId),
+  check('tenant_databases_name_check', sql`${t.name} ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'`),
+  check('tenant_databases_project_check', sql`length(${t.project}) between 1 and 128`),
+  check('tenant_databases_resources_check', sql`${t.memoryMb} >= 128 and ${t.cpu} > 0 and ${t.cpu} <= 1024 and ${t.diskMb} >= 1024 and ${t.generation} > 0`),
+  check('tenant_databases_mode_check', sql`(${t.engine} = 'postgres' and ${t.mode} = 'standard') or (${t.engine} = 'redis' and ${t.mode} in ('cache', 'durable'))`),
+  check('tenant_databases_desired_check', sql`${t.desiredState} in ('running', 'stopped')`),
+  check('tenant_databases_profile_check', sql`${t.profile} in ('dev', 'standard', 'performance')`),
+])
+
+export const databaseCredentials = pgTable('database_credentials', {
+  databaseId: uuid('database_id').notNull().references(() => tenantDatabases.id, { onDelete: 'cascade' }),
+  role: text('role').$type<'owner' | 'app' | 'readonly'>().notNull(),
+  encryptedValue: jsonb('encrypted_value').$type<SealedSecret>().notNull(),
+  generation: integer('generation').notNull().default(1),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  primaryKey({ columns: [t.databaseId, t.role] }),
+  check('database_credentials_role_check', sql`${t.role} in ('owner', 'app', 'readonly')`),
+])
+
+export const databaseOperations = pgTable('database_operations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  databaseId: uuid('database_id').notNull().references(() => tenantDatabases.id, { onDelete: 'cascade' }),
+  kind: databaseOperationKind('kind').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  inputHash: text('input_hash').notNull(),
+  encryptedInput: jsonb('encrypted_input').$type<SealedSecret>().notNull(),
+  state: databaseOperationState('state').notNull().default('queued'),
+  checkpoint: jsonb('checkpoint').$type<Record<string, string | number | boolean | null>>().notNull().default({}),
+  generation: integer('generation').notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  leaseToken: uuid('lease_token'),
+  leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+  progress: integer('progress').notNull().default(0),
+  errorCode: text('error_code'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, t => [
+  uniqueIndex('database_operations_idempotency_idx').on(t.databaseId, t.idempotencyKey),
+  uniqueIndex('database_operations_active_idx').on(t.databaseId).where(sql`${t.state} in ('queued', 'running', 'reconciling')`),
+  index('database_operations_claim_idx').on(t.state, t.leaseExpiresAt, t.createdAt),
+  check('database_operations_progress_check', sql`${t.progress} between 0 and 100 and ${t.attempts} >= 0 and ${t.generation} > 0`),
+  check('database_operations_key_check', sql`length(${t.idempotencyKey}) between 1 and 128`),
+])
+
+export const databaseOperationEvents = pgTable('database_operation_events', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  operationId: uuid('operation_id').notNull().references(() => databaseOperations.id, { onDelete: 'cascade' }),
+  code: text('code').notNull(),
+  progress: integer('progress').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  index('database_operation_events_cursor_idx').on(t.operationId, t.id),
+  check('database_operation_events_progress_check', sql`${t.progress} between 0 and 100`),
+])

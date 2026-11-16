@@ -13,6 +13,8 @@ import (
 
 // EngineReport describes the Linux container engine, never the agent host.
 type EngineReport struct {
+	// Advertise a database capability only after its runtime handler is installed.
+	DatabaseCapabilities  []string `json:"database_capabilities,omitempty"`
 	BuildCPUMillis        bool     `json:"build_cpu_millis"`
 	TaskRun               bool     `json:"task_run"`
 	BuildTargets          bool     `json:"build_targets"`

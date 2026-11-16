@@ -2,9 +2,24 @@ package capability
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func TestUnimplementedDatabaseCapabilitiesAreNotAdvertised(t *testing.T) {
+	r, _, err := FromDockerInfo([]byte(`{"OSType":"linux","Architecture":"aarch64","NCPU":4,"MemTotal":4294967296}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.DatabaseCapabilities) != 0 || strings.Contains(string(body), "database_capabilities") {
+		t.Fatal("database handlers must be installed before capabilities are advertised")
+	}
+}
 
 func TestBuilderReportsConfiguredMemoryCeiling(t *testing.T) {
 	for _, ceiling := range []int64{2 << 30, 8 << 30} {
