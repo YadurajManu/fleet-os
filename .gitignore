@@ -42,6 +42,8 @@ fleet-agent-*
 coverage/
 *.log
 .cache/
+control-plane/.db-build/
+deploy/databases/.build/
 
 # ── editors and OS ─────────────────────────────────────────────────
 .DS_Store

@@ -1,0 +1,4 @@
+ARG BUILDKIT_IMAGE=moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+FROM ${BUILDKIT_IMAGE}
+ARG BUILDKIT_IMAGE
+LABEL fleet.db-build-test="true" io.fleet.builder-base="${BUILDKIT_IMAGE}"

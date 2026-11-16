@@ -18,6 +18,8 @@ async function withRegistry<T>(
     await writeFile(
       join(dir, 'config.json'),
       JSON.stringify({
+        // Keep login credentials in this disposable config, never the host's default keychain helper.
+        auths: { [host]: {} },
         cliPluginsExtraDirs: [
           join(
             process.env.DOCKER_CONFIG ?? join(homedir(), '.docker'),

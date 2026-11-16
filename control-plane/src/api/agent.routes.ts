@@ -17,9 +17,11 @@ import { recordSamples } from '../heartbeat/samples.js'
 import { buildEnv } from '../secrets/store.js'
 import { invalidateRoutesForService } from '../ingress/routes.js'
 import { recordCanaryHealthy, evaluateCanaryHealth } from '../heartbeat/watchdog.js'
+import { databaseCapabilities } from '../databases/capabilities.js'
 
 /** The capability report an agent sends at registration (tech doc §7). */
 const engineCapability = {
+  database_capabilities: databaseCapabilities,
   task_run: z.boolean().default(false),
   build_targets: z.boolean().default(false),
   build_cpu_millis: z.boolean().default(false),
@@ -306,7 +308,9 @@ export async function agentRoutes(app: FastifyInstance) {
     } else if (/^v?0\.[012]\./.test(hb.agent_version ?? '')) {
       // A rolled-back agent may inherit a node that previously opted in.
       // Old agents cannot handle build messages or explicit execution platforms.
-      await db.update(nodes).set({buildCpuMillis:false,buildTargets:false,taskRun:false,canBuild:false,platform:null,platforms:[],engineKind:null,variant:null,effectiveCpu:null,effectiveMemBytes:null,buildCacheFreeBytes:0}).where(eq(nodes.id,nodeId))
+      await db.update(nodes).set({databaseCapabilities:[],buildCpuMillis:false,buildTargets:false,taskRun:false,canBuild:false,platform:null,platforms:[],engineKind:null,variant:null,effectiveCpu:null,effectiveMemBytes:null,buildCacheFreeBytes:0}).where(eq(nodes.id,nodeId))
+    } else {
+      await db.update(nodes).set({ databaseCapabilities: [] }).where(eq(nodes.id, nodeId))
     }
     const fleetId = req.agentFleetId!
     const logServiceIds = hb.logs.flatMap((entry) => entry.service_id ? [entry.service_id] : [])
@@ -831,6 +835,7 @@ export async function agentRoutes(app: FastifyInstance) {
 
 function engineValues(cap: z.infer<typeof capability>) {
   return {
+    databaseCapabilities: [...new Set(cap.database_capabilities)],
     platform: cap.platform, variant: cap.variant ?? null, engineKind: cap.engine_kind,
     taskRun: cap.task_run,
     buildTargets: cap.build_targets,

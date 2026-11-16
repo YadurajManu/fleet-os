@@ -1,0 +1,25 @@
+{
+  "postgres": {
+    "16": "postgres:16-bookworm@sha256:a49f7438ba03589f9b1ca062f2da82e899b48ea1dc50d2449fa09a70be83ebca",
+    "17": "postgres:17-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536"
+  },
+  "redis": "redis:7-bookworm@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90",
+  "debian": "debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc",
+  "dindTest": "docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce",
+  "registryTest": "registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",
+  "buildkit": "moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe",
+  "walG": {
+    "version": "v3.0.9",
+    "arm64": "072eb4a4a119f817e1fa888c64a776b01e3453b2e0d967a67d149adb18fde652",
+    "amd64": "d6795c663894d836ba20840bffe8970aed81bbe25d3151bd4951f6f9c362def9"
+  },
+  "pgvector": {
+    "version": "0.8.7",
+    "commit": "f37c13f68b57d2c3472b2214fbcff699d6d34876",
+    "sha256": "83d673c3b287cddbf3879f86215f043f2c2b56c69d37b2a77504910db1ed6e56"
+  },
+  "pgbouncer": {
+    "version": "1.26.1",
+    "sha256": "00886a2994b4844cd37110970df777772cfc42a74c400522c82fba509a3f42d9"
+  }
+}

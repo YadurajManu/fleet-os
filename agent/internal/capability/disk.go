@@ -47,7 +47,7 @@ func ProbeDisk(ctx context.Context, path string, reserve int64, builder string) 
 		args = []string{"exec", "buildx_buildkit_" + builder + "0", "df", "-Pk", "/var/lib/buildkit"}
 	} else {
 		// Runs a trusted read-only utility in the engine VM; never mounts the host or Docker socket.
-		args = []string{"run", "--rm", "--network=none", "--read-only", "--entrypoint", "df", "moby/buildkit:buildx-stable-1", "-Pk", "/"}
+		args = []string{"run", "--rm", "--label", "fleet-os.probe=true", "--network=none", "--read-only", "--entrypoint", "df", "moby/buildkit:buildx-stable-1", "-Pk", "/"}
 	}
 	out, err := DockerCommand(ctx, args...).Output()
 	if err != nil {
