@@ -34,7 +34,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import WebSocket, { WebSocketServer } from 'ws'
 import { TunnelRegistry } from '../src/tunnel/registry.js'
 import { DatabaseTunnel } from '../src/databases/tunnel.js'
-import { redisEngine } from '../src/databases/engines.js'
+import { postgresEngine, redisEngine } from '../src/databases/engines.js'
 import { sealSecret } from '../src/lib/crypto.js'
 import type { AppContext } from '../src/api/context.js'
 
@@ -70,7 +70,8 @@ test(
     const fleetId = randomUUID(),
       nodeId = randomUUID(),
       serviceNodeId = randomUUID(),
-      id = randomUUID()
+      id = randomUUID(),
+      postgresId = randomUUID()
     const token = randomBytes(32).toString('base64url')
     const registry = new TunnelRegistry({ builds: {} } as unknown as AppContext)
     const relay = new DatabaseTunnel(registry)
@@ -149,6 +150,40 @@ test(
       allocation: { memoryMb: 512, diskMb: 10240 },
       credentials,
       images: { primary: image },
+    })
+    const postgresIdentity = {
+      id: postgresId,
+      nodeId,
+      fleetId,
+      project: identity.project,
+      generation: 1,
+    }
+    const postgresCredentials = postgresEngine.credentials()
+    const postgresPlan = postgresEngine.plan({
+      id: postgresId,
+      fleetId,
+      project: identity.project,
+      name: 'tunnel-postgres',
+      version: '17',
+      mode: 'standard',
+      allocation: { memoryMb: 512, diskMb: 10240 },
+      credentials: postgresCredentials,
+      images: {
+        primary: docker([
+          'image',
+          'inspect',
+          '--format',
+          '{{.Id}}',
+          'fleet-db-build/postgres:17',
+        ]),
+        pooler: docker([
+          'image',
+          'inspect',
+          '--format',
+          '{{.Id}}',
+          'fleet-db-build/pgbouncer:1',
+        ]),
+      },
     })
     const proxy = createTCPServer((socket) => {
       const stream = relay.open(
@@ -237,6 +272,59 @@ test(
             workerContext.config.SECRETS_MASTER_KEY,
           ),
         })
+        await workerContext.db.insert(tenantDatabases).values({
+          id: postgresId,
+          fleetId,
+          project: identity.project,
+          name: 'tunnel-postgres',
+          engine: 'postgres',
+          version: '17',
+          mode: 'standard',
+          status: 'running',
+          desiredState: 'running',
+          nodeId,
+          volumeName: `fleet-db-${postgresId}-data`,
+          memoryMb: 512,
+          cpu: 0.5,
+          diskMb: 10240,
+          images: {
+            primary: postgresPlan.containers.find(
+              (container) => container.role === 'database',
+            )!.image,
+            pooler: postgresPlan.containers.find(
+              (container) => container.role === 'pooler',
+            )!.image,
+          },
+        })
+        await workerContext.db.insert(databaseCredentials).values({
+          databaseId: postgresId,
+          role: 'app',
+          generation: 1,
+          encryptedValue: sealSecret(
+            JSON.stringify(postgresCredentials.app),
+            workerContext.config.SECRETS_MASTER_KEY,
+          ),
+        })
+        await relay.runOperation(
+          {
+            id: randomUUID(),
+            action: 'provision',
+            identity: postgresIdentity,
+            bootstrap: postgresPlan.bootstrap,
+            readiness: postgresPlan.readiness,
+            containers: postgresPlan.containers.map((container) => ({
+              initialize: true,
+              identity: postgresIdentity,
+              network: postgresPlan.network,
+              volume: `fleet-db-${postgresId}-data`,
+              dataPath: postgresPlan.dataPath,
+              platform,
+              cpu: 0.5,
+              container,
+            })),
+          },
+          new AbortController().signal,
+        )
         const scope = { fleetId, project: identity.project, databaseId: id }
         const runtimeIntent = {
           identity,
@@ -409,6 +497,50 @@ test(
         assert.match(Buffer.concat(execOutput).toString(), /PONG/)
         t.diagnostic(
           'authenticated CLI db exec completed Redis PING over the tunnel',
+        )
+        const postgresOutput: Buffer[] = []
+        const postgresErrors: Buffer[] = []
+        const postgresExec = spawn(
+          'node',
+          [
+            '--import',
+            'tsx',
+            'src/index.ts',
+            'db',
+            'exec',
+            'tunnel-postgres',
+            '--project',
+            identity.project,
+            '-c',
+            'SELECT 1',
+          ],
+          {
+            cwd: '../cli',
+            env: {
+              ...process.env,
+              FLEET_API: apiUrl,
+              FLEET_TOKEN: account.accessToken,
+              FLEET_ID: fleetId,
+              FLEET_CONFIG: `/tmp/fleet-db-psql-exec-${id}.json`,
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          },
+        )
+        postgresExec.stdout?.on('data', (chunk) =>
+          postgresOutput.push(Buffer.from(chunk)),
+        )
+        postgresExec.stderr?.on('data', (chunk) =>
+          postgresErrors.push(Buffer.from(chunk)),
+        )
+        const postgresExit = await once(postgresExec, 'exit')
+        assert.equal(
+          postgresExit[0],
+          0,
+          Buffer.concat(postgresErrors).toString(),
+        )
+        assert.match(Buffer.concat(postgresOutput).toString(), /1/)
+        t.diagnostic(
+          'authenticated CLI db exec completed Postgres SELECT 1 over the tunnel',
         )
         const disconnected = once(localClient, 'close')
         await revokeSessions(workerContext.redis, account.user.id)
@@ -613,28 +745,30 @@ test(
       for (const socket of wss.clients) socket.terminate()
       wss.close()
       server.close()
-      const containers = docker([
-        'ps',
-        '-aq',
-        '--filter',
-        `label=io.fleet.database=${id}`,
-      ])
-      if (containers) docker(['rm', '-f', ...containers.split(/\s+/)])
-      const volumes = docker([
-        'volume',
-        'ls',
-        '-q',
-        '--filter',
-        `label=io.fleet.database=${id}`,
-      ])
-      if (volumes) docker(['volume', 'rm', ...volumes.split(/\s+/)])
+      for (const databaseId of [id, postgresId]) {
+        const containers = docker([
+          'ps',
+          '-aq',
+          '--filter',
+          `label=io.fleet.database=${databaseId}`,
+        ])
+        if (containers) docker(['rm', '-f', ...containers.split(/\s+/)])
+        const volumes = docker([
+          'volume',
+          'ls',
+          '-q',
+          '--filter',
+          `label=io.fleet.database=${databaseId}`,
+        ])
+        if (volumes) docker(['volume', 'rm', ...volumes.split(/\s+/)])
+      }
       try {
         docker(['network', 'rm', plan.network])
       } catch {}
       if (workerContext) {
         await workerContext.db
           .delete(tenantDatabases)
-          .where(eq(tenantDatabases.id, id))
+          .where(sql`${tenantDatabases.id} in (${id}, ${postgresId})`)
         await workerContext.db.delete(orgs).where(eq(orgs.id, orgId))
         if (connectAccount) {
           await workerContext.db
