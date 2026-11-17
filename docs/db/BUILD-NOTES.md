@@ -154,4 +154,4 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 ## 2026-11-17 — Short database link CLI
 
 - Added `fleet db` as a short alias and documented `db list`, `db link <database> <service>` and `db unlink <database> <service>`. Link/unlink resolve exact database or service names and IDs; paginated database lookup reports duplicate names and accepts `--project` to disambiguate.
-- CLI typecheck and **225/225 tests** passed, including alias and ambiguous database-name selection coverage. This is a CLI usability slice; full database-link end-to-end acceptance remains open.
+- CLI typecheck and **226/226 tests** passed, including alias, ambiguous database-name selection and role/env-prefix help coverage. This is a CLI usability slice; full database-link end-to-end acceptance remains open.
