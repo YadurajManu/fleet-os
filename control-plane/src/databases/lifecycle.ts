@@ -5,6 +5,7 @@ import type { AppContext } from '../api/context.js'
 import { ApiError } from '../api/errors.js'
 import {
   databaseCredentials,
+  databaseBackupTargets,
   databaseOperations,
   nodes,
   tenantDatabases,
@@ -13,7 +14,11 @@ import { openSecret, sealSecret } from '../lib/crypto.js'
 import { recordAudit } from '../lib/audit.js'
 import { fleetSnapshot } from '../scheduler/snapshot.js'
 import { nodePlatform } from '../build/platforms.js'
-import { databaseEnginePlugin, type EngineCredentials } from './engines.js'
+import {
+  databaseEnginePlugin,
+  type EngineCredentials,
+  type EngineOptions,
+} from './engines.js'
 import { resolveDatabaseImages } from './images.js'
 import { placeDatabase } from './placement.js'
 import { enqueueDatabaseOperation } from './operations.js'
@@ -200,6 +205,53 @@ export async function runtimeIntent(
     nodeId: node.id,
     generation: database.generation,
   }
+  let backupTarget: EngineOptions['backupTarget']
+  if (database.backupTargetId && database.engine === 'postgres') {
+    const [target] = await ctx.db
+      .select()
+      .from(databaseBackupTargets)
+      .where(
+        and(
+          eq(databaseBackupTargets.id, database.backupTargetId),
+          eq(databaseBackupTargets.fleetId, database.fleetId),
+          eq(databaseBackupTargets.project, database.project),
+        ),
+      )
+      .limit(1)
+    if (!target)
+      throw ApiError.conflict(
+        'backup_target_missing',
+        'The configured backup target no longer exists. Assign another target before restarting this database.',
+      )
+    const backup = z
+      .object({
+        accessKeyId: z.string().min(1),
+        secretAccessKey: z.string().min(1),
+        sessionToken: z.string().optional(),
+        encryptionKey: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .safeParse(
+        JSON.parse(
+          openSecret(
+            target.encryptedCredentials,
+            ctx.config.SECRETS_MASTER_KEY,
+          ),
+        ),
+      )
+    if (!backup.success)
+      throw ApiError.conflict(
+        'backup_target_key_unavailable',
+        'The backup target has no recoverable encryption key. Recreate the target before restarting this database.',
+      )
+    backupTarget = {
+      endpoint: target.endpoint,
+      bucket: target.bucket,
+      prefix: target.prefix,
+      region: target.region,
+      credentials: backup.data,
+      encryptionKey: backup.data.encryptionKey,
+    }
+  }
   const plugin = databaseEnginePlugin(database.engine)
   const plan = plugin.plan({
     id: database.id,
@@ -220,6 +272,7 @@ export async function runtimeIntent(
     },
     credentials,
     images,
+    backupTarget,
     overrides: database.config,
   })
   return {

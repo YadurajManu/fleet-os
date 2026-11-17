@@ -39,6 +39,18 @@ export type EngineOptions = {
   allocation: DatabaseAllocation
   credentials: EngineCredentials
   images: { primary: string; pooler?: string }
+  backupTarget?: {
+    endpoint: string
+    bucket: string
+    prefix: string
+    region: string
+    credentials: {
+      accessKeyId: string
+      secretAccessKey: string
+      sessionToken?: string
+    }
+    encryptionKey: string
+  }
   overrides?: unknown
 }
 export type EnginePlan = {
@@ -267,6 +279,33 @@ export const postgresEngine: DatabaseEnginePlugin = {
       readonly = sqlIdentifier(options.credentials.readonly.username)
     const bootstrap = `SET log_statement = 'none'; SET log_min_error_statement = 'panic'; SET pg_stat_statements.track_utility = off;\n${roles}\nREVOKE CONNECT ON DATABASE ${sqlIdentifier(database)} FROM PUBLIC;\nGRANT CONNECT ON DATABASE ${sqlIdentifier(database)} TO ${app}, ${readonly};\nREVOKE CREATE ON SCHEMA public FROM PUBLIC;\nGRANT USAGE ON SCHEMA public TO ${app}, ${readonly};\nGRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${app};\nGRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${app};\nGRANT SELECT ON ALL TABLES IN SCHEMA public TO ${readonly};\nALTER DEFAULT PRIVILEGES FOR ROLE ${sqlIdentifier(owner.username)} IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${app};\nALTER DEFAULT PRIVILEGES FOR ROLE ${sqlIdentifier(owner.username)} IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${app};\nALTER DEFAULT PRIVILEGES FOR ROLE ${sqlIdentifier(owner.username)} IN SCHEMA public GRANT SELECT ON TABLES TO ${readonly};\nCREATE EXTENSION IF NOT EXISTS pg_stat_statements;\n`
     const poolConfig = `[databases]\n${database} = host=${directHost(options)} port=5432 dbname=${database}\n[pgbouncer]\nlisten_addr = 0.0.0.0\nlisten_port = 6432\nunix_socket_dir = /tmp\npidfile = /tmp/pgbouncer.pid\nauth_type = scram-sha-256\nauth_file = /etc/fleet/users.txt\npool_mode = transaction\ndefault_pool_size = ${tuned.pool.default_pool_size}\nmax_db_connections = ${tuned.pool.max_db_connections}\nreserve_pool_size = 0\nmax_client_conn = 200\nignore_startup_parameters = extra_float_digits\nlog_connections = 0\nlog_disconnections = 0\nlog_pooler_errors = 0\n`
+    const backup = options.backupTarget
+    const backupConfig = backup
+      ? `\narchive_mode = on\narchive_timeout = '60s'\narchive_command = 'wal-g wal-push %p'\nrestore_command = 'wal-g wal-fetch %f %p'\n`
+      : ''
+    const walGEnv: Record<string, string> = backup
+      ? {
+          WALG_S3_PREFIX: `s3://${backup.bucket}/${backup.prefix}`.replace(
+            /\/$/,
+            '',
+          ),
+          WALG_LIBSODIUM_KEY_PATH: '/etc/fleet/walg-key',
+          AWS_SHARED_CREDENTIALS_FILE: '/etc/fleet/aws-credentials',
+          AWS_REGION: backup.region,
+          AWS_ENDPOINT: backup.endpoint,
+          AWS_S3_FORCE_PATH_STYLE: 'true',
+        }
+      : {}
+    const walGFiles = backup
+      ? [
+          file(
+            '/etc/fleet/aws-credentials',
+            `[default]\naws_access_key_id=${backup.credentials.accessKeyId}\naws_secret_access_key=${backup.credentials.secretAccessKey}\n${backup.credentials.sessionToken ? `aws_session_token=${backup.credentials.sessionToken}\n` : ''}`,
+            true,
+          ),
+          file('/etc/fleet/walg-key', backup.encryptionKey, true),
+        ]
+      : []
     return {
       network: projectDatabaseNetwork(options.fleetId, options.project),
       dataPath: '/var/lib/postgresql/data',
@@ -300,13 +339,15 @@ export const postgresEngine: DatabaseEnginePlugin = {
             POSTGRES_INITDB_ARGS:
               '--auth-host=scram-sha-256 --auth-local=scram-sha-256',
             PGDATA: '/var/lib/postgresql/data/pgdata',
+            ...walGEnv,
           },
           files: [
             file(
               '/etc/fleet/postgresql.conf',
-              `listen_addresses = '*'\n${tuned.config}`,
+              `listen_addresses = '*'\n${backupConfig}${tuned.config}`,
             ),
             file('/etc/fleet/owner-password', owner.password, true),
+            ...walGFiles,
           ],
           aliases: [directHost(options)],
           memoryMb: tuned.serverMemoryMb,

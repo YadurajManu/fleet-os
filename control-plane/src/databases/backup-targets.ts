@@ -1,5 +1,5 @@
 import { and, asc, eq } from 'drizzle-orm'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import {
   DeleteObjectCommand,
@@ -115,7 +115,10 @@ export async function createBackupTarget(
         prefix: input.prefix,
         region: input.region,
         encryptedCredentials: sealSecret(
-          JSON.stringify(input.credentials),
+          JSON.stringify({
+            ...input.credentials,
+            encryptionKey: randomBytes(32).toString('hex'),
+          }),
           ctx.config.SECRETS_MASTER_KEY,
         ),
         isDefault: input.isDefault,
