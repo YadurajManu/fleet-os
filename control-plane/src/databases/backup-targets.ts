@@ -9,7 +9,7 @@ import {
 } from '@aws-sdk/client-s3'
 import type { AppContext } from '../api/context.js'
 import { ApiError } from '../api/errors.js'
-import { databaseBackupTargets } from '../db/schema.js'
+import { databaseBackupTargets, tenantDatabases } from '../db/schema.js'
 import { recordAudit } from '../lib/audit.js'
 import { openSecret, sealSecret } from '../lib/crypto.js'
 
@@ -265,4 +265,69 @@ export async function testBackupTarget(
     })
   })
   return { ok: true as const, testedAt }
+}
+
+export async function setDatabaseBackupTarget(
+  ctx: AppContext,
+  fleetId: string,
+  project: string,
+  databaseId: string,
+  targetId: string | null,
+  actor: { orgId: string; userId: string },
+) {
+  return ctx.db.transaction(async (tx) => {
+    const [database] = await tx
+      .select({ id: tenantDatabases.id, deletedAt: tenantDatabases.deletedAt })
+      .from(tenantDatabases)
+      .where(
+        and(
+          eq(tenantDatabases.id, databaseId),
+          eq(tenantDatabases.fleetId, fleetId),
+          eq(tenantDatabases.project, project),
+        ),
+      )
+      .limit(1)
+    if (!database) throw ApiError.notFound('Database')
+    if (database.deletedAt)
+      throw ApiError.conflict(
+        'database_deleted',
+        'A deleted database cannot change backup targets.',
+      )
+
+    let targetName: string | null = null
+    if (targetId) {
+      const [target] = await tx
+        .select({
+          id: databaseBackupTargets.id,
+          name: databaseBackupTargets.name,
+        })
+        .from(databaseBackupTargets)
+        .where(
+          and(
+            eq(databaseBackupTargets.id, targetId),
+            eq(databaseBackupTargets.fleetId, fleetId),
+            eq(databaseBackupTargets.project, project),
+          ),
+        )
+        .limit(1)
+      if (!target) throw ApiError.notFound('Backup target')
+      targetName = target.name
+    }
+
+    await tx
+      .update(tenantDatabases)
+      .set({ backupTargetId: targetId, updatedAt: new Date() })
+      .where(eq(tenantDatabases.id, databaseId))
+    await recordAudit(tx, {
+      orgId: actor.orgId,
+      actorUserId: actor.userId,
+      action: targetId
+        ? 'database.backup_target.attached'
+        : 'database.backup_target.detached',
+      targetType: 'tenant_database',
+      targetId: databaseId,
+      metadata: { project, backupTarget: targetName },
+    })
+    return { backupTargetId: targetId, backupTargetName: targetName }
+  })
 }

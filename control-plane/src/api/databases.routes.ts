@@ -27,6 +27,7 @@ import {
   createBackupTarget,
   deleteBackupTarget,
   listBackupTargets,
+  setDatabaseBackupTarget,
   testBackupTarget,
 } from '../databases/backup-targets.js'
 
@@ -162,6 +163,28 @@ export async function databaseRoutes(app: FastifyInstance) {
         orgId: request.orgId!,
         userId: request.userId!,
       })
+    },
+  )
+  app.put(
+    base + '/:databaseId/backup-target',
+    { preHandler: requireFleetPermission('database.target') },
+    async (request) => {
+      const { fleetId, project, databaseId } = parseRequest(
+        detail,
+        request.params,
+      )
+      const { targetId } = parseRequest(
+        z.object({ targetId: z.string().uuid().nullable() }).strict(),
+        request.body,
+      )
+      return setDatabaseBackupTarget(
+        ctx,
+        fleetId,
+        project,
+        databaseId,
+        targetId,
+        { orgId: request.orgId!, userId: request.userId! },
+      )
     },
   )
   app.get(

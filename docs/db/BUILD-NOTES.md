@@ -188,6 +188,12 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 
 ## 2026-11-17 — Backup target CLI and dashboard
 
-- Added `fleet db targets <project>` and `fleet db target add|test|remove`. Target lookup accepts names or unique ID prefixes and rejects ambiguous prefixes. Target removal confirms interactively unless `--yes` is supplied. S3 credentials use hidden terminal input or `FLEET_S3_ACCESS_KEY_ID` / `FLEET_S3_SECRET_ACCESS_KEY`; they are never accepted as command arguments or printed.
+- Added `fleet db targets <project>` and `fleet db target add|assign|test|remove`. Target lookup accepts names or unique ID prefixes and rejects ambiguous prefixes. Target removal confirms interactively unless `--yes` is supplied. S3 credentials use hidden terminal input or `FLEET_S3_ACCESS_KEY_ID` / `FLEET_S3_SECRET_ACCESS_KEY`; they are never accepted as command arguments or printed.
 - Added a project-scoped dashboard panel for listing targets, adding a target, selecting it as the project default, running the S3 connectivity test, and removing it after typing its name. Secret key entry is password-masked and cleared after successful save.
-- CLI typecheck and **229/229** tests passed; dashboard typecheck, **32/32** tests and production build passed. Vite emitted its existing large-chunk warning. Target selection per database, backup streams and backup/restore/recovery operations remain next. Nothing was published or merged, and no production or Raunak data was used.
+- CLI typecheck and **230/230** tests passed; dashboard typecheck, **32/32** tests and production build passed. Vite emitted its existing large-chunk warning. Backup streams and backup/restore/recovery operations remain next. Nothing was published or merged, and no production or Raunak data was used.
+
+## 2026-11-17 — Per-database backup target assignment
+
+- Added `PUT .../databases/:databaseId/backup-target`, scoped by database fleet/project and validated against the selected target's same scope. `null` explicitly detaches. Deleted databases are refused. The operation records a sanitized audit event; database views now derive the configured-backup warning from the persisted target reference.
+- Added the database detail target picker and `fleet db target assign <project> <database> <target|none>`. `node control-plane/scripts/test-databases.mjs --unit-only` passed the **724/724** control-plane suite, Prettier/Oxlint, TypeScript typecheck/build and `go test ./...`. CLI typecheck/**230 tests** and dashboard typecheck/**32 tests**/build passed.
+- The route only configures where backups should go. It does not yet produce a backup or guarantee recovery; backup operations, WAL/PITR, restore/recover and import/export remain outstanding. No production or Raunak data was used; nothing was published or merged.

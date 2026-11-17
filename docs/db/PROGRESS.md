@@ -25,7 +25,7 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 2 | Agent stateful runtime, TCP/exec/PTY, disk, images | in progress | Image/runtime implementation underway. No complete runtime verification yet. |
 | 3 | Postgres lifecycle, placement, networking, links, pooler | in progress | Create/catalog/placement/list/detail/start/stop/restart and link/unlink API, CLI and dashboard are wired. Link tests verify encrypted role URLs and cleanup; real Docker verifies an agent-created service can query Postgres through a same-node private project network. Still missing a complete lifecycle API-to-app rollout proof, cross-node application TCP connector, delete/recover, connect/shell/exec and browser acceptance. |
 | 4 | Redis engine | in progress | `node --test --import tsx tests/database-engines.docker.ts` proves configuration behavior only; lifecycle/link API+CLI+UI are absent. |
-| 5 | Targets, backups, restore, recover, import/export | in progress | Migration 0045, project-scoped target API, real Docker MinIO probe, CLI target commands and dashboard target management exist. Unit coverage verifies encryption, redaction, isolation and detach behavior. Backup streaming/operations, target-to-database selection, restore and import/export remain. No engine-consistent recovery E2E proof yet. |
+| 5 | Targets, backups, restore, recover, import/export | in progress | Migration 0045, scoped target API and real Docker MinIO probe exist. CLI and dashboard manage targets and assign/unassign them per database; assignment checks same-project scope and drives `backupConfigured`. Backup streaming/operations, restore and import/export remain. No engine-consistent recovery E2E proof yet. |
 | 6 | Release migrations, config, exec/shell/migrate | not started | No release-gate E2E proof yet. |
 | 7 | Monitoring, alerts, tuning | in progress | `node --test --import tsx tests/database-tuning.test.ts` passes; no metrics/alert product flow yet. |
 | 8 | Complete CLI | in progress | Lifecycle list/create/actions, link/unlink, loopback `db connect`, and Redis/Postgres `db exec` are wired. Interactive database shell, backup/recovery and declarative release commands remain. |
@@ -66,9 +66,15 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 
 ## 2026-11-17 — Backup target CLI and dashboard
 
-- Added `fleet db targets <project>` and `fleet db target add|test|remove`. Creation accepts access keys through hidden interactive prompts or `FLEET_S3_ACCESS_KEY_ID` and `FLEET_S3_SECRET_ACCESS_KEY`; secrets do not go in arguments or CLI output. Target removal asks before detaching target configuration unless `--yes` is given.
+- Added `fleet db targets <project>` and `fleet db target add|assign|test|remove`. Creation accepts access keys through hidden interactive prompts or `FLEET_S3_ACCESS_KEY_ID` and `FLEET_S3_SECRET_ACCESS_KEY`; secrets do not go in arguments or CLI output. Target removal asks before detaching target configuration unless `--yes` is given.
 - Added project-scoped target listing and creation to the dashboard with password-masked secret entry, default-target selection, connection testing, and typed-name confirmation before removal. Credential inputs clear after successful creation and API responses contain only public target fields.
-- CLI typecheck and **229/229** tests passed. Dashboard typecheck, **32/32** tests and production build passed. The build reports its existing large JavaScript chunk warning. No backup data operation or target assignment to an individual database is implemented yet; no backup acceptance scenario is complete.
+- CLI typecheck and **230/230** tests passed. Dashboard typecheck, **32/32** tests and production build passed. The build reports its existing large JavaScript chunk warning. No backup data operation is implemented yet; no backup acceptance scenario is complete.
+
+## 2026-11-17 — Per-database backup target assignment
+
+- Added an authenticated project-scoped assignment route that accepts a target ID or `null`; target IDs must belong to the same fleet and project. Deleted databases cannot change targets. Assignment and detachment are audited, and the database view now reports `backupConfigured` and `backupTargetId` from persisted state. Removing a target continues to detach references through the FK.
+- Added dashboard selection on database detail and `fleet db target assign <project> <database> <target|none>`. The control-plane suite passed **724/724** with formatter/Oxlint, typecheck/build and `go test ./...`; CLI typecheck and **230/230** tests passed; dashboard typecheck, **32/32** tests and build passed.
+- This only records target selection; no backup bytes are created or streamed yet. Restore/PITR/recover and import/export remain unimplemented, so backup acceptance remains open.
 
 ## V2 work and acceptance gate
 

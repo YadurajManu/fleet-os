@@ -140,13 +140,45 @@ export const databasesCommand = {
       return
     }
     if (action === 'target') {
-      const [operation, targetProject, targetName] = args.slice(1)
+      const [operation, targetProject, targetName, assignedTargetName] =
+        args.slice(1)
       if (!targetProject || !operation)
         throw new CliError(
-          'usage: fleet db target add|test|remove <project> [target] ...',
+          'usage: fleet db target add|assign|test|remove <project> ...',
           EXIT.usage,
         )
       const path = targetPath(fleet, targetProject)
+      if (operation === 'assign') {
+        if (!targetName || !assignedTargetName)
+          throw new CliError(
+            'usage: fleet db target assign <project> <database> <target|none>',
+            EXIT.usage,
+          )
+        const database = await findDatabase(fleet, targetName, {
+          ...flags,
+          project: targetProject,
+        })
+        const selected =
+          assignedTargetName === 'none'
+            ? null
+            : selectBackupTarget(
+                (await request<{ targets: BackupTarget[] }>('GET', path)).body
+                  .targets,
+                assignedTargetName,
+              )
+        const { body } = await request<{ backupTargetId: string | null }>(
+          'PUT',
+          `${base(fleet, database.project)}/${database.id}/backup-target`,
+          { body: { targetId: selected?.id ?? null } },
+        )
+        if (flags.json) return console.log(JSON.stringify(body, null, 2))
+        console.log(
+          selected
+            ? `${c.green('assigned')} ${selected.name} to ${database.name}`
+            : `${c.green('removed')} backup target from ${database.name}`,
+        )
+        return
+      }
       if (operation === 'add') {
         if (
           !targetName ||
@@ -218,7 +250,7 @@ export const databasesCommand = {
         return
       }
       throw new CliError(
-        'usage: fleet db target add|test|remove <project> [target] ...',
+        'usage: fleet db target add|assign|test|remove <project> ...',
         EXIT.usage,
       )
     }
