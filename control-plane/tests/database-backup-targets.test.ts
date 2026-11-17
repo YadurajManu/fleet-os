@@ -109,15 +109,17 @@ test('backup targets are project scoped, encrypted, audited and safely removable
     JSON.stringify(stored[0]!.encryptedCredentials).includes(secretAccessKey),
     false,
   )
+  const storedCredentials = JSON.parse(
+    openSecret(stored[0]!.encryptedCredentials, ctx.config.SECRETS_MASTER_KEY),
+  )
   assert.deepEqual(
-    JSON.parse(
-      openSecret(
-        stored[0]!.encryptedCredentials,
-        ctx.config.SECRETS_MASTER_KEY,
-      ),
-    ),
+    {
+      accessKeyId: storedCredentials.accessKeyId,
+      secretAccessKey: storedCredentials.secretAccessKey,
+    },
     credentials,
   )
+  assert.match(storedCredentials.encryptionKey, /^[a-f0-9]{64}$/)
   const failedProbe = await app.inject({
     method: 'POST',
     url: `${url}/${firstTarget.id}/test`,
