@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
   databaseEnginePlugin,
+  databaseBackupPrefix,
   postgresEngine,
   redisEngine,
   type EngineOptions,
@@ -158,6 +159,21 @@ test('Postgres WAL archive plan keeps object credentials and encryption key in s
       (entry) => entry.path === '/etc/fleet/postgresql.conf',
     )!.content,
     /archive_mode = on/,
+  )
+})
+
+test('WAL-G storage prefixes isolate fleets, databases and runtime generations', () => {
+  assert.equal(
+    databaseBackupPrefix('tenant-backups', 'fleet-a', 'db-one', 1),
+    'tenant-backups/databases/fleet-a/db-one/generation-1',
+  )
+  assert.notEqual(
+    databaseBackupPrefix('', 'fleet-a', 'db-one', 1),
+    databaseBackupPrefix('', 'fleet-a', 'db-two', 1),
+  )
+  assert.notEqual(
+    databaseBackupPrefix('', 'fleet-a', 'db-one', 1),
+    databaseBackupPrefix('', 'fleet-a', 'db-one', 2),
   )
 })
 
