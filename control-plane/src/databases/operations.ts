@@ -90,6 +90,7 @@ export async function enqueueDatabaseOperation(
   kind: OperationKind,
   key: string,
   input: unknown,
+  status?: 'restoring',
 ): Promise<Operation> {
   if (!idempotencyKey.safeParse(key).success)
     throw ApiError.badRequest(
@@ -115,6 +116,11 @@ export async function enqueueDatabaseOperation(
       .where(scopedDatabase(scope))
       .for('update')
     if (!database) throw ApiError.notFound('Database')
+    if (status && database.status !== 'running')
+      throw ApiError.conflict(
+        'database_unavailable',
+        'Start the target database and wait until it is running before restoring.',
+      )
     const [existing] = await tx
       .select()
       .from(operations)
@@ -160,6 +166,11 @@ export async function enqueueDatabaseOperation(
     await tx
       .insert(events)
       .values({ operationId: operation!.id, code: 'queued', progress: 0 })
+    if (status)
+      await tx
+        .update(tenantDatabases)
+        .set({ status, updatedAt: sql`clock_timestamp()` })
+        .where(eq(tenantDatabases.id, database.id))
     return operation!
   })
 }
@@ -223,6 +234,15 @@ export async function claimDatabaseOperation(
         code: errorCode,
         progress: operation.progress,
       })
+      if (operation.kind === 'restore')
+        await tx
+          .update(tenantDatabases)
+          .set({
+            status: 'running',
+            desiredState: 'running',
+            updatedAt: sql`clock_timestamp()`,
+          })
+          .where(eq(tenantDatabases.id, operation.databaseId))
       return null
     }
     const token = randomUUID()
@@ -361,13 +381,26 @@ export async function finishDatabaseOperation(
         leaseExpiresAt: null,
       })
       .where(ownedLease(id, token))
-      .returning({ progress: operations.progress })
+      .returning({
+        progress: operations.progress,
+        kind: operations.kind,
+        databaseId: operations.databaseId,
+      })
     assertOwned(row)
     await tx.insert(events).values({
       operationId: id,
       code: errorCode ? 'failed' : 'succeeded',
       progress: row.progress,
     })
+    if (errorCode && row.kind === 'restore')
+      await tx
+        .update(tenantDatabases)
+        .set({
+          status: 'running',
+          desiredState: 'running',
+          updatedAt: sql`clock_timestamp()`,
+        })
+        .where(eq(tenantDatabases.id, row.databaseId))
   })
 }
 
