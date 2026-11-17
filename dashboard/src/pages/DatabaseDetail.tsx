@@ -30,6 +30,15 @@ type DatabaseLink = {
   envKeys: Record<string, string>
   restartRequired: boolean
 }
+type DatabaseBackup = {
+  id: string
+  kind: string
+  state: string
+  sizeBytes: number | null
+  errorCode: string | null
+  createdAt: string
+  verifiedAt: string | null
+}
 
 export default function DatabaseDetail() {
   const { fleet } = useAuth()
@@ -68,9 +77,15 @@ function DatabaseDetailContent({
 }) {
   const path = databasePath(fleetId, project, databaseId)
   const linksPath = `${path}/links`
+  const backupsPath = `${path}/backups`
   const linksResult = usePoll(
     () => api<{ links: DatabaseLink[]; services: ProjectService[] }>(linksPath),
     linksPath,
+    5000,
+  )
+  const backupsResult = usePoll(
+    () => api<{ backups: DatabaseBackup[] }>(backupsPath),
+    backupsPath,
     5000,
   )
   const result = usePoll(
@@ -81,6 +96,7 @@ function DatabaseDetailContent({
   )
   const [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false)
+  const [backupBusy, setBackupBusy] = useState(false)
   const [confirm, setConfirm] = useState<'stop' | 'restart' | null>(null)
   const [submitted, setSubmitted] = useState<string | null>(null)
   const [serviceId, setServiceId] = useState('')
@@ -166,6 +182,24 @@ function DatabaseDetailContent({
       setError(err)
     } finally {
       setLinkBusy(false)
+    }
+  }
+  async function createBackup() {
+    if (backupBusy || active || !database?.backupTargetId) return
+    setBackupBusy(true)
+    setError(null)
+    try {
+      const accepted = await api<{ operationId: string }>(backupsPath, {
+        method: 'POST',
+        idempotencyKey: databaseRequestKey(),
+      })
+      setSubmitted(accepted.operationId)
+      result.refetch()
+      backupsResult.refetch()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBackupBusy(false)
     }
   }
   async function removeLink(targetServiceId: string) {
@@ -277,6 +311,66 @@ function DatabaseDetailContent({
         canManage={canManageAccess}
         onUpdated={result.refetch}
       />
+      <Panel title="Database backups">
+        <div className="space-y-4 p-5">
+          <ErrorNote error={backupsResult.error} />
+          {!database.backupTargetId && (
+            <p className="text-sm text-[var(--color-fg-muted)]">
+              Assign an off-node target before creating a backup.
+            </p>
+          )}
+          {canManageAccess && (
+            <Button
+              variant="primary"
+              disabled={
+                backupBusy || active || !available || !database.backupTargetId
+              }
+              onClick={() => void createBackup()}
+            >
+              {backupBusy ? 'Starting…' : 'Create backup'}
+            </Button>
+          )}
+          {!backupsResult.data?.backups.length ? (
+            <p className="text-sm text-[var(--color-fg-muted)]">
+              No database backups recorded.
+            </p>
+          ) : (
+            <div className="divide-y divide-[var(--color-line)]">
+              {backupsResult.data.backups.map((backup) => (
+                <div
+                  key={backup.id}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
+                >
+                  <div>
+                    <p className="font-mono text-sm">
+                      {backup.kind} · {backup.id.slice(0, 8)}
+                    </p>
+                    <p className="mt-1 font-mono text-xs text-[var(--color-fg-muted)]">
+                      {backup.sizeBytes === null
+                        ? 'size pending'
+                        : `${backup.sizeBytes.toLocaleString()} bytes`}
+                      {' · '}
+                      {since(backup.createdAt)}
+                    </p>
+                    {backup.errorCode && (
+                      <p className="mt-1 text-xs text-[var(--color-down)]">
+                        {backup.errorCode.replace(/_/g, ' ')}
+                      </p>
+                    )}
+                  </div>
+                  <StatusPill
+                    status={backup.verifiedAt ? 'verified' : backup.state}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-[var(--color-fg-dim)]">
+            These are verified logical backups. Point-in-time recovery and
+            restore are not available yet.
+          </p>
+        </div>
+      </Panel>
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel title="Data location">
           <div className="space-y-4 p-5">

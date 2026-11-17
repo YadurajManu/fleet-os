@@ -88,6 +88,11 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
       ['db connect <database>', 'Forward a local TCP port to a running private database'],
       ['db exec <database>', 'Run a Redis command or Postgres SQL through the private tunnel'],
       ['db targets <project>', 'List project backup targets without revealing credentials'],
+      ['db backup <database>', 'Create an encrypted off-node database backup'],
+      [
+        'db backups <database>',
+        'List database backup manifests and verification state',
+      ],
       ['db target add <project> <name>', 'Configure an encrypted S3-compatible backup target'],
       ['db target assign|test|remove <project> …', 'Assign, verify, or remove a project backup target'],
       ['databases start|stop|restart <project> <database-id>', 'Operate a managed database and follow its durable operation'],
