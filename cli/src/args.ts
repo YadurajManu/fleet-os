@@ -116,6 +116,7 @@ export const KNOWN_FLAGS = new Set([
   'color',
   'ascii',
   'into',
+  'in-place',
   'backup',
   'confirm',
   'engine',

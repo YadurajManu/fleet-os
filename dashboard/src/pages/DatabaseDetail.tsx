@@ -110,7 +110,11 @@ function DatabaseDetailContent({
   const [deleteBackupId, setDeleteBackupId] = useState('')
   const [deleteConfirmBackupId, setDeleteConfirmBackupId] = useState('')
   const [restoreTargetId, setRestoreTargetId] = useState('')
-  const [confirm, setConfirm] = useState<'stop' | 'restart' | 'delete' | null>(null)
+  const [restoreConfirmName, setRestoreConfirmName] = useState('')
+  const [pitrTarget, setPitrTarget] = useState('')
+  const [confirm, setConfirm] = useState<'stop' | 'restart' | 'delete' | null>(
+    null,
+  )
   const [submitted, setSubmitted] = useState<string | null>(null)
   const [serviceId, setServiceId] = useState('')
   const [linkRole, setLinkRole] = useState<'app' | 'readonly'>('app')
@@ -256,6 +260,50 @@ function DatabaseDetailContent({
       setRestoreBusy(false)
     }
   }
+  async function restoreBaseBackup(backup: DatabaseBackup) {
+    if (
+      restoreBusy ||
+      active ||
+      !database ||
+      restoreConfirmName !== database.name
+    )
+      return
+    const recoveryTarget = pitrTarget
+      ? pitrTarget.startsWith('name:')
+        ? /^[A-Za-z0-9_-]{1,63}$/.test(pitrTarget.slice(5))
+          ? { type: 'name' as const, value: pitrTarget.slice(5) }
+          : null
+        : Number.isNaN(Date.parse(pitrTarget))
+          ? null
+          : { type: 'time' as const, value: new Date(pitrTarget).toISOString() }
+      : undefined
+    if (recoveryTarget === null) {
+      setError(new Error('Use an ISO timestamp or name:RESTORE_POINT.'))
+      return
+    }
+    setRestoreBusy(true)
+    setError(null)
+    try {
+      const accepted = await api<{ operationId: string }>(
+        `${backupsPath}/${backup.id}/restore`,
+        {
+          method: 'POST',
+          body: {
+            targetDatabaseId: database.id,
+            confirmation: database.name,
+            ...(recoveryTarget ? { recoveryTarget } : {}),
+          },
+          idempotencyKey: databaseRequestKey(),
+        },
+      )
+      setSubmitted(accepted.operationId)
+      result.refetch()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setRestoreBusy(false)
+    }
+  }
   async function deleteDatabase() {
     if (deleteBusy || active || !deleteConfirmBackupId || !database) return
     setDeleteBusy(true)
@@ -265,7 +313,10 @@ function DatabaseDetailContent({
         `${path}/delete`,
         {
           method: 'POST',
-          body: { confirmation: database.name, backupId: deleteConfirmBackupId },
+          body: {
+            confirmation: database.name,
+            backupId: deleteConfirmBackupId,
+          },
           idempotencyKey: databaseRequestKey(),
         },
       )
@@ -383,7 +434,10 @@ function DatabaseDetailContent({
           <div className="flex flex-wrap items-center justify-between gap-4 p-5">
             <p className="max-w-2xl text-sm text-[var(--color-fg-muted)]">
               The runtime is removed and the data volume is retained until{' '}
-              {database.purgeAfter ? new Date(database.purgeAfter).toLocaleString() : 'the recovery deadline'}.
+              {database.purgeAfter
+                ? new Date(database.purgeAfter).toLocaleString()
+                : 'the recovery deadline'}
+              .
             </p>
             {canManageAccess && (
               <Button
@@ -471,6 +525,59 @@ function DatabaseDetailContent({
                       : `Restore ${backup.id.slice(0, 8)}`}
                   </Button>
                 ))}
+              <div className="grid gap-3 border-t border-[var(--color-line)] pt-4 sm:col-span-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                  Confirm in-place restore by typing {database.name}
+                  <input
+                    aria-label="Confirm in-place restore database name"
+                    value={restoreConfirmName}
+                    onChange={(event) =>
+                      setRestoreConfirmName(event.target.value)
+                    }
+                    autoComplete="off"
+                    className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                  Recovery target (optional)
+                  <input
+                    aria-label="PostgreSQL recovery target"
+                    value={pitrTarget}
+                    onChange={(event) => setPitrTarget(event.target.value)}
+                    placeholder="ISO timestamp or name:restore_point"
+                    autoComplete="off"
+                    className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                  />
+                </label>
+                {backupsResult.data?.backups
+                  .filter(
+                    (backup) =>
+                      backup.kind === 'base' &&
+                      backup.state === 'complete' &&
+                      backup.verifiedAt,
+                  )
+                  .map((backup) => (
+                    <Button
+                      key={backup.id}
+                      variant="danger"
+                      disabled={
+                        restoreBusy ||
+                        active ||
+                        restoreConfirmName !== database.name
+                      }
+                      onClick={() => void restoreBaseBackup(backup)}
+                    >
+                      {restoreBusy
+                        ? 'Restoring…'
+                        : `Restore in place ${backup.id.slice(0, 8)}`}
+                    </Button>
+                  ))}
+                <p className="text-[var(--color-fg-dim)] sm:col-span-3">
+                  This replaces this database from the base backup and archived
+                  WAL. Without a target, recovery replays the latest available
+                  WAL; use name:POINT or an ISO timestamp for PITR.
+                </p>
+              </div>
             </div>
           )}
           {canManageAccess && (
@@ -484,39 +591,49 @@ function DatabaseDetailContent({
               {backupBusy ? 'Starting…' : 'Create backup'}
             </Button>
           )}
-          {canManageAccess && !database.deletedAt && ['running', 'stopped'].includes(database.status) && (
-            <div className="grid gap-3 border-t border-[var(--color-line)] pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
-              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
-                Recent verified final backup
-                <select
-                  aria-label="Final backup for deletion"
-                  value={deleteBackupId}
-                  onChange={(event) => setDeleteBackupId(event.target.value)}
-                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
-                >
-                  <option value="">Choose a backup created in the last 15 minutes</option>
-                  {finalBackups.map((backup) => (
-                    <option key={backup.id} value={backup.id}>
-                      {backup.kind} · {backup.id.slice(0, 8)}
+          {canManageAccess &&
+            !database.deletedAt &&
+            ['running', 'stopped'].includes(database.status) && (
+              <div className="grid gap-3 border-t border-[var(--color-line)] pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
+                <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                  Recent verified final backup
+                  <select
+                    aria-label="Final backup for deletion"
+                    value={deleteBackupId}
+                    onChange={(event) => setDeleteBackupId(event.target.value)}
+                    className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                  >
+                    <option value="">
+                      Choose a backup created in the last 15 minutes
                     </option>
-                  ))}
-                </select>
-                <span className="text-[var(--color-fg-dim)]">
-                  Deletion removes the runtime but retains its data volume for seven days.
-                </span>
-              </label>
-              <Button
-                variant="danger"
-                disabled={deleteBusy || active || !available || !finalBackups.some((backup) => backup.id === deleteBackupId)}
-                onClick={() => {
-                  setDeleteConfirmBackupId(deleteBackupId)
-                  setConfirm('delete')
-                }}
-              >
-                Delete database
-              </Button>
-            </div>
-          )}
+                    {finalBackups.map((backup) => (
+                      <option key={backup.id} value={backup.id}>
+                        {backup.kind} · {backup.id.slice(0, 8)}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[var(--color-fg-dim)]">
+                    Deletion removes the runtime but retains its data volume for
+                    seven days.
+                  </span>
+                </label>
+                <Button
+                  variant="danger"
+                  disabled={
+                    deleteBusy ||
+                    active ||
+                    !available ||
+                    !finalBackups.some((backup) => backup.id === deleteBackupId)
+                  }
+                  onClick={() => {
+                    setDeleteConfirmBackupId(deleteBackupId)
+                    setConfirm('delete')
+                  }}
+                >
+                  Delete database
+                </Button>
+              </div>
+            )}
           {!backupsResult.data?.backups.length ? (
             <p className="text-sm text-[var(--color-fg-muted)]">
               No database backups recorded.
@@ -613,115 +730,118 @@ function DatabaseDetailContent({
           </ul>
         </Panel>
       )}
-      {!database.deletedAt && <Panel title="Linked services">
-        <div className="space-y-4 p-5">
-          {linkNotice && (
-            <p role="status" className="text-sm text-[var(--color-warn)]">
-              {linkNotice}
-            </p>
-          )}
-          <ErrorNote error={linksResult.error} />
-          {!linksResult.data?.links.length ? (
-            <p className="text-sm text-[var(--color-fg-muted)]">
-              No services are linked to this database.
-            </p>
-          ) : (
-            <div className="divide-y divide-[var(--color-line)]">
-              {linksResult.data.links.map((link) => (
-                <div
-                  key={link.serviceId}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
-                >
-                  <div>
-                    <p className="font-medium">{link.serviceName}</p>
-                    <p className="mt-1 font-mono text-xs text-[var(--color-fg-muted)]">
-                      {link.role} · {Object.keys(link.envKeys).join(', ')}
-                    </p>
-                    {link.restartRequired && (
-                      <p
-                        role="status"
-                        className="mt-2 text-xs text-[var(--color-warn)]"
-                      >
-                        Redeploy this service to apply the database connection.
+      {!database.deletedAt && (
+        <Panel title="Linked services">
+          <div className="space-y-4 p-5">
+            {linkNotice && (
+              <p role="status" className="text-sm text-[var(--color-warn)]">
+                {linkNotice}
+              </p>
+            )}
+            <ErrorNote error={linksResult.error} />
+            {!linksResult.data?.links.length ? (
+              <p className="text-sm text-[var(--color-fg-muted)]">
+                No services are linked to this database.
+              </p>
+            ) : (
+              <div className="divide-y divide-[var(--color-line)]">
+                {linksResult.data.links.map((link) => (
+                  <div
+                    key={link.serviceId}
+                    className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
+                  >
+                    <div>
+                      <p className="font-medium">{link.serviceName}</p>
+                      <p className="mt-1 font-mono text-xs text-[var(--color-fg-muted)]">
+                        {link.role} · {Object.keys(link.envKeys).join(', ')}
                       </p>
+                      {link.restartRequired && (
+                        <p
+                          role="status"
+                          className="mt-2 text-xs text-[var(--color-warn)]"
+                        >
+                          Redeploy this service to apply the database
+                          connection.
+                        </p>
+                      )}
+                    </div>
+                    {canManageAccess && (
+                      <Button
+                        disabled={linkBusy}
+                        onClick={() => void removeLink(link.serviceId)}
+                      >
+                        Unlink
+                      </Button>
                     )}
                   </div>
-                  {canManageAccess && (
-                    <Button
-                      disabled={linkBusy}
-                      onClick={() => void removeLink(link.serviceId)}
-                    >
-                      Unlink
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {canManageAccess && (
-            <form
-              onSubmit={(event) => void createLink(event)}
-              className="grid gap-3 border-t border-[var(--color-line)] pt-4 sm:grid-cols-2"
-            >
-              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
-                Service
-                <select
-                  aria-label="Service to link"
-                  value={serviceId}
-                  onChange={(event) => setServiceId(event.target.value)}
-                  required
-                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
-                >
-                  <option value="">Choose a project service</option>
-                  {(linksResult.data?.services ?? [])
-                    .filter(
-                      (service) =>
-                        !linksResult.data?.links.some(
-                          (link) => link.serviceId === service.id,
-                        ),
-                    )
-                    .map((service) => (
-                      <option key={service.id} value={service.id}>
-                        {service.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
-                Database role
-                <select
-                  aria-label="Database role"
-                  value={linkRole}
-                  onChange={(event) =>
-                    setLinkRole(event.target.value as 'app' | 'readonly')
-                  }
-                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
-                >
-                  <option value="app">Application read and write</option>
-                  <option value="readonly">Read only</option>
-                </select>
-              </label>
-              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)] sm:col-span-2">
-                Optional environment prefix
-                <input
-                  aria-label="Environment prefix"
-                  value={envPrefix}
-                  onChange={(event) =>
-                    setEnvPrefix(event.target.value.toUpperCase())
-                  }
-                  placeholder="Uses DATABASE_URL by default"
-                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
-                />
-              </label>
-              <div className="sm:col-span-2">
-                <Button variant="primary" disabled={linkBusy || !serviceId}>
-                  {linkBusy ? 'Saving…' : 'Link service'}
-                </Button>
+                ))}
               </div>
-            </form>
-          )}
-        </div>
-      </Panel>}
+            )}
+            {canManageAccess && (
+              <form
+                onSubmit={(event) => void createLink(event)}
+                className="grid gap-3 border-t border-[var(--color-line)] pt-4 sm:grid-cols-2"
+              >
+                <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                  Service
+                  <select
+                    aria-label="Service to link"
+                    value={serviceId}
+                    onChange={(event) => setServiceId(event.target.value)}
+                    required
+                    className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                  >
+                    <option value="">Choose a project service</option>
+                    {(linksResult.data?.services ?? [])
+                      .filter(
+                        (service) =>
+                          !linksResult.data?.links.some(
+                            (link) => link.serviceId === service.id,
+                          ),
+                      )
+                      .map((service) => (
+                        <option key={service.id} value={service.id}>
+                          {service.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                  Database role
+                  <select
+                    aria-label="Database role"
+                    value={linkRole}
+                    onChange={(event) =>
+                      setLinkRole(event.target.value as 'app' | 'readonly')
+                    }
+                    className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                  >
+                    <option value="app">Application read and write</option>
+                    <option value="readonly">Read only</option>
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs text-[var(--color-fg-muted)] sm:col-span-2">
+                  Optional environment prefix
+                  <input
+                    aria-label="Environment prefix"
+                    value={envPrefix}
+                    onChange={(event) =>
+                      setEnvPrefix(event.target.value.toUpperCase())
+                    }
+                    placeholder="Uses DATABASE_URL by default"
+                    className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                  />
+                </label>
+                <div className="sm:col-span-2">
+                  <Button variant="primary" disabled={linkBusy || !serviceId}>
+                    {linkBusy ? 'Saving…' : 'Link service'}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
+        </Panel>
+      )}
       <Panel
         title="Operations"
         right={
@@ -791,8 +911,8 @@ function DatabaseDetailContent({
           confirm === 'delete'
             ? `Delete ${database.name}?`
             : confirm === 'stop'
-            ? `Stop ${database.name}?`
-            : `Restart ${database.name}?`
+              ? `Stop ${database.name}?`
+              : `Restart ${database.name}?`
         }
         body={
           <div className="space-y-3">
@@ -800,15 +920,28 @@ function DatabaseDetailContent({
               {confirm === 'delete'
                 ? 'The database runtime will be removed after the final backup is verified. You can recover the retained data volume for seven days.'
                 : confirm === 'stop'
-                ? 'Connections will close and linked applications may fail until this database starts again.'
-                : 'Connections will close briefly while the database restarts cleanly on its pinned node.'}
+                  ? 'Connections will close and linked applications may fail until this database starts again.'
+                  : 'Connections will close briefly while the database restarts cleanly on its pinned node.'}
             </p>
             <ErrorNote error={error} />
           </div>
         }
-        consequences={confirm === 'delete' ? ['Runtime and config are removed; data volume remains for seven days.', 'Restore returns the database stopped; start it to resume service.'] : ['The data volume stays on the same node.']}
+        consequences={
+          confirm === 'delete'
+            ? [
+                'Runtime and config are removed; data volume remains for seven days.',
+                'Restore returns the database stopped; start it to resume service.',
+              ]
+            : ['The data volume stays on the same node.']
+        }
         confirmPhrase={confirm === 'delete' ? database.name : undefined}
-        confirmLabel={confirm === 'delete' ? 'Delete database' : confirm === 'stop' ? 'Stop database' : 'Restart database'}
+        confirmLabel={
+          confirm === 'delete'
+            ? 'Delete database'
+            : confirm === 'stop'
+              ? 'Stop database'
+              : 'Restart database'
+        }
         busy={busy || deleteBusy}
         onCancel={() => setConfirm(null)}
         onConfirm={() => {

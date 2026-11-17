@@ -100,3 +100,51 @@ func TestDatabaseRuntimeReceiptProtectsInputsAndPendingWork(t *testing.T) {
 		t.Fatal("corrupt receipt treated as new database")
 	}
 }
+
+func TestDatabaseRestoreRejectsUnsafeTargetsBeforeStoppingDatabase(t *testing.T) {
+	tests := []struct {
+		name    string
+		restore DatabaseRestore
+	}{
+		{name: "backup name injection", restore: DatabaseRestore{BackupName: "base_good;touch /tmp/pwned"}},
+		{name: "timestamp injection", restore: DatabaseRestore{BackupName: "base_good", TargetTime: "2026-01-01T00:00:00Z'; touch /tmp/pwned; '"}},
+		{name: "conflicting targets", restore: DatabaseRestore{BackupName: "base_good", TargetTime: "2026-01-01T00:00:00Z", TargetName: "before_migration"}},
+		{name: "environment injection", restore: DatabaseRestore{BackupName: "base_good", Env: map[string]string{"bad-key": "value"}}},
+		{name: "config traversal", restore: DatabaseRestore{BackupName: "base_good", Files: []DatabaseFile{{Path: "/etc/fleet/../../escape", Content: "x", Secret: true, Mode: 0600}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime, operation := runtimeFixture(t)
+			operation.Action = "restore"
+			spec := databaseTestSpec()
+			spec.DataPath = "/var/lib/postgresql/data"
+			operation.Containers = []DatabaseContainerSpec{spec}
+			operation.Readiness = &DatabaseCommand{Command: []string{"pg_isready"}}
+			operation.Restore = &tt.restore
+			if _, err := runtime.Apply(t.Context(), operation); err == nil {
+				t.Fatal("unsafe restore plan accepted")
+			}
+			if receipt, err := runtime.read(operation.Identity.ID); err != nil || receipt != nil {
+				t.Fatal("invalid restore stopped or persisted the database", err)
+			}
+		})
+	}
+	spec := databaseTestSpec()
+	spec.DataPath = "/var/lib/postgresql/data"
+	operation := DatabaseOperation{
+		ID:         "dddddddd-1111-4444-8888-dddddddddddd",
+		Action:     "restore",
+		Identity:   spec.Identity,
+		Containers: []DatabaseContainerSpec{spec},
+		Readiness:  &DatabaseCommand{Command: []string{"psql"}},
+		Restore: &DatabaseRestore{
+			BackupName: "base_000000010000000000000002",
+			TargetName: "before_migration",
+			Env:        map[string]string{"AWS_ENDPOINT": "https://s3.example.test"},
+			Files:      []DatabaseFile{{Path: "/etc/fleet/walg-key", Content: "encrypted-key", Secret: true, Mode: 0600}},
+		},
+	}
+	if _, err := validateDatabaseRestore(operation); err != nil {
+		t.Fatal("valid point-in-time restore plan rejected", err)
+	}
+}

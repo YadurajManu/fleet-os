@@ -42,6 +42,12 @@ const identity = z.object({
 const intent = z
   .object({
     backupId: z.string().uuid().optional(),
+    recoveryTarget: z
+      .object({
+        type: z.enum(['time', 'name']),
+        value: z.string().min(1).max(80),
+      })
+      .optional(),
     finalBackupId: z.string().uuid().optional(),
     sourceDatabaseId: z.string().uuid().optional(),
     actorOrgId: z.string().uuid().optional(),
@@ -356,6 +362,7 @@ export class DatabaseWorker {
           parsed.data.backupId,
           database,
           parsed.data.identity,
+          parsed.data.recoveryTarget,
           {
             orgId: parsed.data.actorOrgId,
             userId: parsed.data.actorUserId,
@@ -466,12 +473,8 @@ export class DatabaseWorker {
         token,
         status,
       )
-    } catch (error) {
-      if (
-        operation.kind === 'restore' &&
-        error instanceof Error &&
-        error.message === 'restore_target_not_empty'
-      )
+    } catch {
+      if (operation.kind === 'restore')
         await finishDatabaseOperation(
           this.ctx,
           operation.id,

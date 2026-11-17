@@ -404,7 +404,7 @@ export async function finishDatabaseOperation(
       await tx
         .update(tenantDatabases)
         .set({
-          status: 'running',
+          status: row.progress >= 30 ? 'failed' : 'running',
           desiredState: 'running',
           updatedAt: sql`clock_timestamp()`,
         })

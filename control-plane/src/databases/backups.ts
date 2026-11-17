@@ -32,6 +32,7 @@ import {
 } from '../db/schema.js'
 import { recordAudit } from '../lib/audit.js'
 import { openSecret, sealSecret } from '../lib/crypto.js'
+import { runtimeIntent } from './lifecycle.js'
 import { enqueueDatabaseOperation } from './operations.js'
 import type { EngineCommand } from './engines.js'
 import type { DatabaseIdentity, DatabaseTunnel } from './tunnel.js'
@@ -311,6 +312,8 @@ export async function createDatabaseRestore(
   backupId: string,
   key: string,
   actor: { orgId: string; userId: string },
+  recoveryTarget?: { type: 'time' | 'name'; value: string },
+  confirmation?: string,
 ) {
   const [source] = await ctx.db
     .select()
@@ -323,11 +326,6 @@ export async function createDatabaseRestore(
       ),
     )
   if (!source) throw ApiError.notFound('Database')
-  if (source.id === targetDatabaseId)
-    throw ApiError.badRequest(
-      'restore_target_must_be_new',
-      'Restore into a different database. In-place restore is not available through this operation.',
-    )
   const [backup] = await ctx.db
     .select()
     .from(databaseBackups)
@@ -340,13 +338,13 @@ export async function createDatabaseRestore(
   if (
     !backup ||
     backup.engine !== 'postgres' ||
-    backup.kind !== 'logical' ||
+    backup.generation !== source.generation ||
     backup.state !== 'complete' ||
     !backup.verifiedAt
   )
     throw ApiError.conflict(
       'database_backup_unverified',
-      'Choose a verified logical PostgreSQL backup to restore.',
+      'Choose a completed, verified PostgreSQL backup.',
     )
   const [target] = await ctx.db
     .select()
@@ -364,6 +362,59 @@ export async function createDatabaseRestore(
       'restore_engine_mismatch',
       'Restore the PostgreSQL backup into a PostgreSQL database.',
     )
+  if (backup.kind === 'base') {
+    const recoveryPoint = z
+      .object({
+        format: z.literal('wal-g-v1'),
+        backupName: z.string().regex(/^base_[A-Za-z0-9_-]{1,180}$/),
+      })
+      .passthrough()
+      .safeParse(backup.recoveryPoint)
+    if (
+      !recoveryPoint.success ||
+      !backup.targetId ||
+      source.backupTargetId !== backup.targetId
+    )
+      throw ApiError.conflict(
+        'database_backup_unavailable',
+        'The base backup target or recovery metadata is no longer available. Reconnect its original backup target before restoring.',
+      )
+    if (target.version !== source.version)
+      throw ApiError.badRequest(
+        'restore_version_mismatch',
+        'Restore a PostgreSQL base backup into a database with the same major version.',
+      )
+    if (target.id !== source.id || confirmation !== source.name)
+      throw ApiError.badRequest(
+        'restore_confirmation_required',
+        'A base backup currently restores in place. Send the exact database name as confirmation.',
+      )
+    if (
+      recoveryTarget?.type === 'time' &&
+      !z.iso.datetime({ offset: true }).safeParse(recoveryTarget.value).success
+    )
+      throw ApiError.badRequest(
+        'restore_target_invalid',
+        'Use an ISO timestamp with a timezone.',
+      )
+    if (
+      recoveryTarget?.type === 'name' &&
+      !/^[A-Za-z0-9_-]{1,63}$/.test(recoveryTarget.value)
+    )
+      throw ApiError.badRequest(
+        'restore_target_invalid',
+        'Use a valid named PostgreSQL restore point.',
+      )
+  } else if (
+    backup.kind !== 'logical' ||
+    recoveryTarget ||
+    targetDatabaseId === source.id
+  ) {
+    throw ApiError.badRequest(
+      'database_backup_kind_invalid',
+      'Choose a logical backup for a dump restore, or a base backup for point-in-time recovery.',
+    )
+  }
   if (target.status !== 'running' || !target.nodeId)
     throw ApiError.conflict(
       'database_unavailable',
@@ -377,6 +428,7 @@ export async function createDatabaseRestore(
     {
       sourceDatabaseId: source.id,
       backupId,
+      ...(recoveryTarget ? { recoveryTarget } : {}),
       actorOrgId: actor.orgId,
       actorUserId: actor.userId,
       identity: {
@@ -560,6 +612,7 @@ export async function runDatabaseRestore(
   backupId: string,
   target: typeof tenantDatabases.$inferSelect,
   identity: DatabaseIdentity,
+  recoveryTarget: { type: 'time' | 'name'; value: string } | undefined,
   actor: { orgId: string; userId: string },
   signal: AbortSignal,
   progress: (step: string, value: number) => Promise<void>,
@@ -587,11 +640,11 @@ export async function runDatabaseRestore(
     !source ||
     source.engine !== 'postgres' ||
     target.engine !== 'postgres' ||
-    source.id === target.id ||
+    (source.id === target.id && backup?.kind !== 'base') ||
     target.status !== 'restoring' ||
     !backup ||
     backup.engine !== 'postgres' ||
-    backup.kind !== 'logical' ||
+    !['logical', 'base'].includes(backup.kind) ||
     backup.state !== 'complete' ||
     !backup.verifiedAt
   )
@@ -644,8 +697,114 @@ export async function runDatabaseRestore(
   emptyCheck.once('exit', (code: number) => (checkExit = code))
   const checkOutput: Buffer[] = []
   for await (const chunk of emptyCheck) checkOutput.push(Buffer.from(chunk))
-  if (checkExit !== 0 || Buffer.concat(checkOutput).toString().trim() !== '0')
+  if (
+    !(backup.kind === 'base' && source.id === target.id) &&
+    (checkExit !== 0 || Buffer.concat(checkOutput).toString().trim() !== '0')
+  )
     throw new Error('restore_target_not_empty')
+
+  if (backup.kind === 'base') {
+    if (
+      source.id !== target.id ||
+      !backup.targetId ||
+      source.backupTargetId !== backup.targetId
+    )
+      throw new Error('restore_backup_target_changed')
+    const recoveryPoint = z
+      .object({
+        format: z.literal('wal-g-v1'),
+        backupName: z.string().regex(/^base_[A-Za-z0-9_-]{1,180}$/),
+      })
+      .passthrough()
+      .parse(backup.recoveryPoint)
+    const runtime = async (
+      database: typeof tenantDatabases.$inferSelect,
+      connected: boolean,
+    ) => {
+      const rows = await ctx.db
+        .select()
+        .from(databaseCredentials)
+        .where(
+          and(
+            eq(databaseCredentials.databaseId, database.id),
+            eq(databaseCredentials.generation, database.generation),
+          ),
+        )
+      const credentials = Object.fromEntries(
+        rows.map((item) => [
+          item.role,
+          JSON.parse(
+            openSecret(item.encryptedValue, ctx.config.SECRETS_MASTER_KEY),
+          ),
+        ]),
+      ) as {
+        owner: { username: string; password: string }
+        app: { username: string; password: string }
+        readonly: { username: string; password: string }
+      }
+      const images = database.images
+      if (!images.primary || !images.pooler)
+        throw new Error('restore_images_missing')
+      return runtimeIntent(
+        ctx,
+        database,
+        { primary: images.primary, pooler: images.pooler },
+        credentials,
+        false,
+        true,
+        connected,
+      )
+    }
+    const [sourceRuntime, targetRuntime] = await Promise.all([
+      runtime(source, false),
+      runtime(target, true),
+    ])
+    const sourceContainer = sourceRuntime.containers?.find(
+      (item) => item.container.role === 'database',
+    )
+    if (!sourceContainer) throw new Error('restore_source_plan_missing')
+    await progress('execute', 30)
+    await tunnel.runOperation(
+      {
+        ...targetRuntime,
+        id: randomUUID(),
+        action: 'restore',
+        readiness: {
+          command: [
+            'psql',
+            '-X',
+            '-v',
+            'ON_ERROR_STOP=1',
+            '-U',
+            credentials.username,
+            '-d',
+            databaseName,
+            '-c',
+            "DO $$ BEGIN IF pg_is_in_recovery() THEN RAISE EXCEPTION 'recovery not complete'; END IF; END $$",
+          ],
+          env: {
+            PGUSER: credentials.username,
+            PGPASSWORD: credentials.password,
+          },
+        },
+        restore: {
+          backupName: recoveryPoint.backupName,
+          ...(recoveryTarget?.type === 'time'
+            ? { targetTime: recoveryTarget.value }
+            : {}),
+          ...(recoveryTarget?.type === 'name'
+            ? { targetName: recoveryTarget.value }
+            : {}),
+          env: sourceContainer.container.env,
+          files: sourceContainer.container.files,
+        },
+      },
+      signal,
+    )
+    await progress('verify', 95)
+    return
+  }
+  if (recoveryTarget) throw new Error('restore_target_invalid')
 
   await progress('execute', 30)
   const { stream } = await downloadDatabaseBackup(

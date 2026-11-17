@@ -256,7 +256,24 @@ export async function databaseRoutes(app: FastifyInstance) {
         request.params,
       )
       const body = parseRequest(
-        z.object({ targetDatabaseId: z.string().uuid() }).strict(),
+        z
+          .object({
+            targetDatabaseId: z.string().uuid(),
+            confirmation: z.string().max(128).optional(),
+            recoveryTarget: z
+              .discriminatedUnion('type', [
+                z.object({
+                  type: z.literal('time'),
+                  value: z.iso.datetime({ offset: true }),
+                }),
+                z.object({
+                  type: z.literal('name'),
+                  value: z.string().regex(/^[A-Za-z0-9_-]{1,63}$/),
+                }),
+              ])
+              .optional(),
+          })
+          .strict(),
         request.body,
       )
       const operation = await createDatabaseRestore(
@@ -266,6 +283,8 @@ export async function databaseRoutes(app: FastifyInstance) {
         backupId,
         key(request),
         { orgId: request.orgId!, userId: request.userId! },
+        body.recoveryTarget,
+        body.confirmation,
       )
       return reply.code(202).send({
         operationId: operation.id,

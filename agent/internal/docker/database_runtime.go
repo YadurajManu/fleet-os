@@ -27,12 +27,21 @@ type DatabaseOperation struct {
 	Images       []DatabaseImage         `json:"images,omitempty"`
 	RegistryAuth string                  `json:"registryAuth,omitempty"`
 	ReserveBytes int64                   `json:"reserveBytes,omitempty"`
+	Restore      *DatabaseRestore        `json:"restore,omitempty"`
 	ID           string                  `json:"id"`
 	Action       string                  `json:"action"`
 	Identity     DatabaseIdentity        `json:"identity"`
 	Containers   []DatabaseContainerSpec `json:"containers,omitempty"`
 	Bootstrap    *DatabaseCommand        `json:"bootstrap,omitempty"`
 	Readiness    *DatabaseCommand        `json:"readiness,omitempty"`
+}
+
+type DatabaseRestore struct {
+	BackupName string            `json:"backupName"`
+	TargetTime string            `json:"targetTime,omitempty"`
+	TargetName string            `json:"targetName,omitempty"`
+	Env        map[string]string `json:"env"`
+	Files      []DatabaseFile    `json:"files"`
 }
 
 type DatabaseReceipt struct {
@@ -95,7 +104,7 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 	if r.Docker == nil || r.Dir == "" || !identity.valid() || identity.NodeID != r.NodeID || identity.FleetID != r.FleetID || !databaseUUID.MatchString(operation.ID) {
 		return nil, databaseFailure("operation scope validation")
 	}
-	if operation.Action != "provision" && operation.Action != "start" && operation.Action != "stop" && operation.Action != "restart" && operation.Action != "delete" {
+	if operation.Action != "provision" && operation.Action != "start" && operation.Action != "stop" && operation.Action != "restart" && operation.Action != "delete" && operation.Action != "restore" {
 		return nil, databaseFailure("operation action validation")
 	}
 	if len(operation.Containers) > 2 {
@@ -110,6 +119,14 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 	}
 	if operation.Action == "provision" && (!roles["database"] || operation.Readiness == nil) {
 		return nil, databaseFailure("provision plan validation")
+	}
+	if operation.Action == "restore" && (!roles["database"] || operation.Readiness == nil || operation.Restore == nil) {
+		return nil, databaseFailure("restore plan validation")
+	}
+	if operation.Action == "restore" {
+		if _, err := validateDatabaseRestore(operation); err != nil {
+			return nil, err
+		}
 	}
 	data, _ := json.Marshal(operation)
 	hash := sha256.Sum256(data)
@@ -152,7 +169,7 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 	if err := r.save(receipt); err != nil {
 		return nil, err
 	}
-	if operation.Action == "stop" || operation.Action == "restart" {
+	if operation.Action == "stop" || operation.Action == "restart" || operation.Action == "restore" {
 		if receipt.Phase == "prepare" {
 			for i := len(receipt.Roles) - 1; i >= 0; i-- {
 				if err := r.Docker.StopDatabaseContainer(ctx, identity, receipt.Roles[i]); err != nil {
@@ -167,6 +184,15 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 		if operation.Action == "stop" {
 			receipt.Complete = true
 			return receipt, r.save(receipt)
+		}
+	}
+	if operation.Action == "restore" && receipt.Phase == "stopped" {
+		if err := r.Docker.RestoreDatabaseVolume(ctx, operation); err != nil {
+			return nil, err
+		}
+		receipt.Phase = "restored"
+		if err := r.save(receipt); err != nil {
+			return nil, err
 		}
 	}
 	if operation.Action == "delete" {

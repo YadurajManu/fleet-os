@@ -478,25 +478,33 @@ export const databasesCommand = {
       return
     }
     if (action === 'restore') {
-      if (!project || !nameOrId || typeof flags.into !== 'string')
+      const inPlace = flags['in-place'] === true
+      if (!project || !nameOrId || (!inPlace && typeof flags.into !== 'string'))
         throw new CliError(
-          'usage: fleet db restore <source-database> <backup-id> --into <empty-target> [--project PROJECT]',
+          'usage: fleet db restore <database> <backup-id> --into <empty-target> | --in-place --confirm <database-name> [--to TIME|name:POINT] [--project PROJECT]',
           EXIT.usage,
         )
       const source = await findDatabase(fleet, project, flags)
       if (source.engine !== 'postgres')
         throw new CliError('Database restore currently requires PostgreSQL.')
-      const target = await findDatabase(fleet, flags.into, {
-        ...flags,
-        project: source.project,
-      })
+      if (inPlace && flags.confirm !== source.name)
+        throw new CliError(
+          `Confirm the destructive restore with --confirm ${source.name}.`,
+          EXIT.usage,
+        )
+      const target = inPlace
+        ? source
+        : await findDatabase(fleet, flags.into as string, {
+            ...flags,
+            project: source.project,
+          })
       if (
-        target.id === source.id ||
+        (!inPlace && target.id === source.id) ||
         target.engine !== 'postgres' ||
         target.version !== source.version
       )
         throw new CliError(
-          'Choose a different PostgreSQL database with the same major version.',
+          'Choose a different same-version PostgreSQL target, or use --in-place with exact confirmation.',
         )
       if (target.status !== 'running' || !target.nodeId)
         throw new CliError(
@@ -509,7 +517,7 @@ export const databasesCommand = {
       const matches = body.backups.filter(
         (backup) =>
           (backup.id === nameOrId || backup.id.startsWith(nameOrId)) &&
-          backup.kind === 'logical' &&
+          backup.kind === (inPlace ? 'base' : 'logical') &&
           backup.state === 'complete' &&
           backup.verifiedAt,
       )
@@ -517,7 +525,23 @@ export const databasesCommand = {
         throw new CliError(
           matches.length
             ? `Backup id prefix "${nameOrId}" is ambiguous.`
-            : `No verified logical PostgreSQL backup starts with "${nameOrId}".`,
+            : `No verified ${inPlace ? 'base' : 'logical'} PostgreSQL backup starts with "${nameOrId}".`,
+          EXIT.usage,
+        )
+      const recoveryTarget =
+        inPlace && typeof flags.to === 'string'
+          ? flags.to.startsWith('name:')
+            ? { type: 'name' as const, value: flags.to.slice(5) }
+            : Number.isNaN(Date.parse(flags.to))
+              ? null
+              : {
+                  type: 'time' as const,
+                  value: new Date(flags.to).toISOString(),
+                }
+          : undefined
+      if (recoveryTarget === null)
+        throw new CliError(
+          'Use --to with an ISO timestamp or name:RESTORE_POINT.',
           EXIT.usage,
         )
       const { body: operation } = await request<{
@@ -527,7 +551,11 @@ export const databasesCommand = {
         'POST',
         `${base(fleet, source.project)}/${source.id}/backups/${matches[0]!.id}/restore`,
         {
-          body: { targetDatabaseId: target.id },
+          body: {
+            targetDatabaseId: target.id,
+            ...(inPlace ? { confirmation: source.name } : {}),
+            ...(recoveryTarget ? { recoveryTarget } : {}),
+          },
           idempotencyKey: randomUUID(),
         },
       )

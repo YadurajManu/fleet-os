@@ -185,6 +185,7 @@ export async function runtimeIntent(
   credentials: EngineCredentials,
   provision: boolean,
   configure = provision,
+  requireConnected = true,
 ) {
   const [node] = await ctx.db
     .select()
@@ -196,7 +197,7 @@ export async function runtimeIntent(
   requireDatabaseCapabilities(node.databaseCapabilities, [
     'database.runtime.v1',
   ])
-  if (!ctx.tunnels.has(node.id))
+  if (requireConnected && !ctx.tunnels.has(node.id))
     throw ApiError.conflict(
       'database_node_unreachable',
       'The database node is disconnected. Data remains pinned there; reconnect the node or recover explicitly.',

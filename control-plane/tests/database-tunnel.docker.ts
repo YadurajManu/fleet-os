@@ -115,7 +115,9 @@ test(
       postgresId = randomUUID(),
       restoreTargetId = randomUUID()
     const token = randomBytes(32).toString('base64url')
-    const registry = new TunnelRegistry({ builds: {} } as unknown as AppContext)
+    const registry = new TunnelRegistry({
+      builds: {},
+    } as unknown as AppContext)
     const relay = new DatabaseTunnel(registry)
     const server = createServer(),
       wss = new WebSocketServer({ server })
@@ -579,6 +581,125 @@ test(
             continuationToken = objects.NextContinuationToken
           } while (continuationToken)
           assert.ok(backupObjectKeys.some((key) => key.startsWith(walPrefix)))
+          const previousWal = docker([
+            'exec',
+            '-e',
+            `PGPASSWORD=${postgresCredentials.owner.password}`,
+            `fleet-db-${postgresId}-database`,
+            'psql',
+            '-X',
+            '-A',
+            '-t',
+            '-U',
+            postgresCredentials.owner.username,
+            '-d',
+            'tunnel_postgres',
+            '-c',
+            "SELECT COALESCE(last_archived_wal, '') FROM pg_stat_archiver",
+          ])
+          docker([
+            'exec',
+            '-e',
+            `PGPASSWORD=${postgresCredentials.owner.password}`,
+            `fleet-db-${postgresId}-database`,
+            'psql',
+            '-X',
+            '-v',
+            'ON_ERROR_STOP=1',
+            '-U',
+            postgresCredentials.owner.username,
+            '-d',
+            'tunnel_postgres',
+            '-c',
+            "SELECT pg_create_restore_point('fleet_before_pitr_marker'); CREATE TABLE pitr_marker (value text); INSERT INTO pitr_marker VALUES ('must-be-rewound'); SELECT pg_switch_wal();",
+          ])
+          const archiveDeadline = Date.now() + 60000
+          while (true) {
+            const archivedWal = docker([
+              'exec',
+              '-e',
+              `PGPASSWORD=${postgresCredentials.owner.password}`,
+              `fleet-db-${postgresId}-database`,
+              'psql',
+              '-X',
+              '-A',
+              '-t',
+              '-U',
+              postgresCredentials.owner.username,
+              '-d',
+              'tunnel_postgres',
+              '-c',
+              "SELECT COALESCE(last_archived_wal, '') FROM pg_stat_archiver",
+            ])
+            if (archivedWal && archivedWal !== previousWal) break
+            if (Date.now() > archiveDeadline)
+              throw new Error('WAL segment did not reach the MinIO archive')
+            await delay(500)
+          }
+          const pitrQueued = await api.inject({
+            method: 'POST',
+            url: `${backupUrl}/${baseBackupId}/restore`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+            payload: {
+              targetDatabaseId: postgresId,
+              confirmation: 'tunnel-postgres',
+              recoveryTarget: {
+                type: 'name',
+                value: 'fleet_before_pitr_marker',
+              },
+            },
+          })
+          assert.equal(pitrQueued.statusCode, 202, pitrQueued.body)
+          let pitrAgentError = ''
+          const pitrTunnel = (worker as unknown as { tunnel: DatabaseTunnel })
+            .tunnel
+          const runPitrOperation = pitrTunnel.runOperation.bind(pitrTunnel)
+          pitrTunnel.runOperation = (operation, signal) =>
+            runPitrOperation(operation, signal).catch((error: unknown) => {
+              pitrAgentError =
+                error instanceof Error ? error.message : 'unknown'
+              throw error
+            })
+          assert.equal(await worker.tick(), true)
+          const [pitrOperation] = await workerContext.db
+            .select({
+              state: databaseOperations.state,
+              errorCode: databaseOperations.errorCode,
+              progress: databaseOperations.progress,
+              checkpoint: databaseOperations.checkpoint,
+            })
+            .from(databaseOperations)
+            .where(eq(databaseOperations.id, pitrQueued.json().operationId))
+          assert.equal(
+            pitrOperation!.state,
+            'succeeded',
+            `PITR operation failed at ${JSON.stringify(pitrOperation!.checkpoint)} (${pitrOperation!.progress}%) with ${pitrOperation!.errorCode ?? 'unknown error'}; agent: ${pitrAgentError}`,
+          )
+          assert.equal(
+            docker([
+              'exec',
+              '-e',
+              `PGPASSWORD=${postgresCredentials.owner.password}`,
+              `fleet-db-${postgresId}-database`,
+              'psql',
+              '-X',
+              '-A',
+              '-t',
+              '-U',
+              postgresCredentials.owner.username,
+              '-d',
+              'tunnel_postgres',
+              '-c',
+              "SELECT count(*) FROM pg_class WHERE relname = 'pitr_marker'",
+            ]),
+            '0',
+          )
+          t.diagnostic(
+            'verified Fleet-managed WAL-G point-in-time restore in the owned PostgreSQL volume',
+          )
           await workerContext.db
             .update(databaseBackupSchedules)
             .set({ nextRunAt: new Date(Date.now() - 1000) })
