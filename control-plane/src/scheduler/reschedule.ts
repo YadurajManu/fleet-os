@@ -1,5 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm'
-import { deployments, services, placementEvents, fleets } from '../db/schema.js'
+import { deployments, services, placementEvents, fleets, tenantDatabases } from '../db/schema.js'
 import { recordAudit } from '../lib/audit.js'
 import { place, rejectionCounts } from './placement.js'
 import { allocateHostPort, invalidateRoutesForService } from '../ingress/routes.js'
@@ -28,6 +28,12 @@ export async function rescheduleFromNode(
 ): Promise<RescheduleOutcome[]> {
   const [fleet] = await ctx.db.select().from(fleets).where(eq(fleets.id, fleetId)).limit(1)
   if (!fleet) return []
+
+  // Tenant data remains pinned, including when no app deployment shares the node.
+  await ctx.db.update(tenantDatabases).set({ status: 'unreachable', updatedAt: new Date() }).where(and(
+    eq(tenantDatabases.fleetId, fleetId), eq(tenantDatabases.nodeId, downNodeId),
+    inArray(tenantDatabases.status, ['running', 'degraded', 'provisioning', 'restoring']),
+  ))
 
   // Everything that was actively running on the node that just went dark.
   const affected = await ctx.db

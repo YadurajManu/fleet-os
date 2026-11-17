@@ -36,10 +36,10 @@ if (process.argv[2] === '--clean') {
   }
   process.exit(0)
 }
-if (!builder) {
-  let builderBase
+let builderBase
   try { builderBase = execFileSync('docker', ['image', 'inspect', '--format', '{{index .Config.Labels "io.fleet.builder-base"}}', 'fleet-db-build/buildkit:local'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch {}
   if (builderBase !== lock.buildkit) await run(['image', 'build', '-f', join(dir, 'Builder.Dockerfile'), '--build-arg', `BUILDKIT_IMAGE=${lock.buildkit}`, '-t', 'fleet-db-build/buildkit:local', dir])
+if (!builder) {
   builder = `fleet-db-images-${randomUUID().slice(0, 8)}`
   const state = `buildx_buildkit_${builder}0_state`
   await run(['volume', 'create', '--label', 'fleet.db-build-test=true', '--label', `io.fleet.builder-root=${owner}`, state])
@@ -60,6 +60,15 @@ const images = [
 ]
 const requested = process.argv.slice(2)
 assert.ok(requested.every(name => images.some(image => image.name === name)), 'Choose a maintained image or registry-test:local')
+if (!requested.length || requested.some(name => name !== 'registry-test:local')) {
+  for (const architecture of new Set(platforms.split(',').map(platform => platform.split('/')[1]))) {
+    const target = join(output, 'proxy', architecture)
+    await mkdir(target, { recursive: true })
+    execFileSync('go', ['build', '-trimpath', '-ldflags=-s -w', '-o', join(target, 'fleet-db-proxy'), './cmd/database-proxy'], {
+      cwd: join(dir, '../../agent'), env: { ...process.env, GOOS: 'linux', GOARCH: architecture, CGO_ENABLED: '0' }, stdio: 'inherit',
+    })
+  }
+}
 for (const image of images.filter(image => requested.length ? requested.includes(image.name) : !image.test)) {
     const tag = `fleet-db-build/${image.name}`
     const artifact = platforms.includes(',') ? ['--output', `type=oci,dest=${join(output, image.name.replace(':', '-') + '.tar')}`] : ['--load']

@@ -338,6 +338,7 @@ export async function sweepOnce(ctx: AppContext, opts: SweepOptions = {}): Promi
         for (const node of transitioned) {
           // Marker read by the heartbeat route so recovery is immediate.
           await ctx.redis.set(`node:${node.id}:down`, '1', 'EX', 24 * 60 * 60)
+          await ctx.heartbeats.recordOutage(node.id)
           markedDown.push({ ...node, fleetId: fleet.id })
           opts.log?.info({ nodeId: node.id, name: node.name }, 'node marked down')
           await opts.onEvent?.({

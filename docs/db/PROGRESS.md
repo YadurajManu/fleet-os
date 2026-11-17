@@ -1,16 +1,18 @@
 # Fleet Databases progress
 
-Resume here. Scope: REQUEST.md plus CONTINUATION.md; neither V1 nor V2 is complete. Branch: feat/db-v1. Status vocabulary: not started / in progress / verified. An acceptance scenario is verified only after its complete end-to-end flow runs; component tests below are explicitly partial evidence.
+Resume here. Scope: REQUEST.md plus CONTINUATION.md; neither V1 nor V2 is complete. Branch: feat/db-v1-runtime, advanced to main merge `55420b4` after user-authorized foundations PR #35. Status vocabulary: not started / in progress / verified. An acceptance scenario is verified only after its complete end-to-end flow runs; component tests below are explicitly partial evidence.
+
+Foundations PR #35 is merged on explicit user instruction. This does not mark V1 complete; the eventual V1/V2 product PR gates remain unchanged.
 
 ## Current work
 
-Continuation milestone 1 is verified: engine contract, maintained images, private registry resolution and agent image pre-pull. Milestone 2 is in progress: durable stateful runtime, exec/PTY and TCP tunnel handlers. Capabilities remain unadvertised until their real handlers pass.
+Continuation milestone 1 is verified: engine contract, maintained images, private registry resolution and agent image pre-pull. Milestone 2 is in progress: durable stateful runtime, exec/PTY and TCP tunnel handlers. Runtime/TCP/exec tunnel handlers are verified and enabled on Linux arm64/amd64 engines; backup/metrics capabilities remain disabled.
 
 Milestone 1 gate: `node control-plane/scripts/test-databases.mjs` completed with **703/703 control-plane tests**, typecheck, build, `go test ./...`, and **8/8 real Docker checks** passing. The Docker checks cover official engine tuning (4), maintained engine/Go resource lifecycle/roles/pooler/extensions/metrics/export (3), and authenticated dual-architecture registry resolution plus real Go pre-pull/cache/disk guards (1). Disposable test dependencies and registry resources were removed.
 
 Cross-platform evidence: `FLEET_DB_PLATFORMS=linux/arm64,linux/amd64 node deploy/databases/build.mjs` built all four OCI indexes. `python3 deploy/databases/verify-oci.py` verified every referenced blob/checksum and both platform configurations before local Docker import. Checked scratch archives were then removed to recover host disk space; ignored verification metadata remains. `FLEET_DB_TEST_PLATFORM=linux/amd64 node --test --test-concurrency=1 --import tsx tests/database-plugins.docker.ts` passed **3/3** under Docker Desktop emulation. Agent `CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> go build ./cmd/agent` compiled Linux arm64/amd64, Windows amd64 and Darwin arm64. Native hardware is arm64 only; no native amd64 or Windows runtime coverage is claimed.
 
-Runtime helper work has begun but is not part of milestone 1 completion: private, credential-free receipts and a binary stdio/TCP helper have focused unit coverage. WSS integration, runtime Docker E2E, immediate cancellation, storage/stability reporting and capability advertisement remain pending. No product acceptance scenario is verified.
+Runtime helper work has begun but is not part of milestone 1 completion: private, credential-free receipts and a binary stdio/TCP helper have focused unit coverage. WSS/runtime Docker E2E, cancellation and runtime/TCP/exec advertisement now pass the gates recorded below. Storage/stability reporting and the database worker remain ahead. No product acceptance scenario is verified.
 
 ## Original V1 milestones
 
@@ -85,3 +87,49 @@ V2 starts only after the V1 gate is verified and its unmerged PR is open; branch
 ## Regression evidence from previous increment
 
 2026-11-16: full control-plane suite 697/697 passed; control-plane typecheck/build and `go test ./...` passed; explicit Docker engine suite 4/4 passed. See BUILD-NOTES.md. These results do not establish any untested product scenario. At every completed milestone rerun full API tests/typecheck/build, Go tests and the milestone's real Docker/E2E suite, then record exact results here.
+
+## 2026-11-17 — Protocol commit 1 of 4
+
+Control-plane relay now negotiates a 16-frame window and retains a one-frame fallback. Credits are returned as the readable buffer drains; sending stops when the window is exhausted. Unit tests cover credit bounds, old peers, slow readers, invalid acknowledgements, out-of-order/oversize frames and excessive credit use. At simulated 100 ms RTT, a 2 MiB transfer measured 6.47 seconds with one frame and 0.41 seconds with 16 (15.7x faster). This is a protocol test, not the pending two-node Docker proof. Capability flags remain disabled. Commands: `node --test --import tsx tests/database-tunnel.test.ts`; `npx prettier --check --single-quote --no-semi src/databases/tunnel.ts tests/database-tunnel.test.ts`; `npx --yes oxlint@1.57.0 src/databases/tunnel.ts tests/database-tunnel.test.ts`; `npx tsc --noEmit`.
+
+Verification for protocol commit: full control-plane suite **711/711 passed**, typecheck/build passed, `go test ./...` passed. The repeatable disposable-dependency command is `node control-plane/scripts/test-databases.mjs --unit-only` (excludes maintained-image/registry integration, which remains a separate gate). Focused protocol tests **8/8 passed**; Oxlint 1.57.0 reports zero warnings/errors.
+
+## 2026-11-17 — Agent commit 2 of 4
+
+Matching Go stream negotiation selects 16 frames only when requested, otherwise one. Input queues and unconsumed-frame counts are bounded; output waits when credit is exhausted and drains acknowledgements before closing. Go tests cover both windows, invalid frames, exhausted credit and cancellation. `go test ./...`, `go vet ./...` and `go test -race ./internal/database ./internal/dbproxy ./internal/docker` passed. Stateful runtime receipts, client process cancellation and the private container TCP helper are included as handler prerequisites; capabilities remain disabled.
+
+A fresh Docker Desktop session has no maintained runtime images. Re-running the Docker runtime tests failed during image lookup, before runtime creation; rebuilding the pinned local images is in progress. Build utility now restores its pinned BuildKit wrapper image even when the saved builder metadata survives an empty image store. No new Docker/two-node verification is claimed by this commit. Previous runtime-only Docker evidence is recorded above.
+
+## 2026-11-17 — Real tunnel test, commit 3 of 4
+
+`node --test --test-concurrency=1 --import tsx tests/database-tunnel.docker.ts tests/database-runtime.docker.ts` passed **4/4**. Two actual Go tunnel agents with separate node identities share the local Docker host; the database is a private Redis container and the other agent runs a real service task reading through the tunnel. The task's returned SHA-256 matches the stored 2 MiB payload. Both WebSocket directions have 50 ms delivery delay (100 ms RTT). Upload/download took **2.97 s** versus the 12.8 s stop-and-wait lower bound; the protocol-only comparison measured 6.47 s versus 0.41 s. Mid-transfer tunnel closure interrupts the 8 MiB write, reconnects the actual agent and permits a fresh complete transfer. Interrupted writes are never automatically replayed.
+
+Maintained Postgres 16/17 and Redis runtime lifecycle/receipt/private TCP checks also passed. Fixture containers/volumes are identified by their database UUID; service tasks carry node/task ownership labels and are cleaned by the existing task runner. Database ports stay unpublished; the disposable test client uses a loopback-only forwarding listener. This is local logical-node coverage, not two physical machines or Windows coverage.
+
+Added reproducible `npm run db:format:check` and `npm run db:lint` commands pinned to Prettier 3.10.1 and Oxlint 1.57.0. Applied readable formatting to newly introduced database TypeScript files. Capability flags stay disabled until the final gate/commit.
+
+## 2026-11-17 — Capability gate, commit 4 of 4
+
+Enabled only `database.runtime.v1`, `database.tcp.v1` and `database.exec.v1` for supported Linux arm64/amd64 container engines. ARMv7 receives no database flags; backup/metrics flags remain off. Repeated Docker gate: **7/7 passed** (maintained engines, durable runtime, actual two-agent service/tunnel/drop/reconnect). Repeated 2 MiB upload/download at 100 ms RTT: **2.89 s** against 12.8 s stop-and-wait lower bound. Cross-compilation passed Linux arm64/amd64, Windows amd64 and Darwin arm64. See tunnel.md for the wire contract and buffer bounds.
+
+Next milestone: lease-based database worker, restart reconciliation, retries and persisted progress. No product acceptance scenario is promoted to verified by this component gate.
+
+Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Capability gate full control-plane regression: **711/711 passed**, zero failures/skips. Pinned formatting/lint checks passed.
+
+## 2026-11-17 — Database worker milestone
+
+- Installed the worker in the control-plane startup/shutdown lifecycle. It claims only implemented create/start/stop/restart jobs, renews exclusive leases, validates encrypted server-generated intents against the pinned database identity, and resends the original operation ID after uncertain replies. Raw exceptions and runtime inputs never enter operation events. Retry exhaustion and stale-generation fencing reuse the durable lease framework.
+- Physical lifecycle confirmation and database status/desired-state updates now commit atomically with operation success. An expired worker cannot update either. Shutdown cancels outstanding RPCs and preserves uncertain leases for reconciliation.
+- Added a durable cursor-based progress generator for the lifecycle SSE adapter; it reads only the existing sanitized event projection and supports abort/resume. The HTTP SSE route lands with matching lifecycle API/CLI/UI, not as an unfinished standalone endpoint.
+- Real Docker/Postgres test: enqueue create through the worker; physically restart with an unfinished lease; reconstruct the worker; expire the old lease; reconcile without changing the container start time. Also queues a stop while disconnected, reconstructs the worker, reconnects, confirms stopped status/desired state, starts again and verifies service traffic. Progress reaches 100, resumes from a cursor and excludes credentials.
+- `node control-plane/scripts/test-databases.mjs --worker`: **712/712 control-plane tests**, formatter/lint, typecheck/build, Go tests and **1/1 real two-agent Docker worker test passed**. Focused lease-boundary test covers competing claims, sanitized invalid input and refusal of expired atomic completion. `--worker-only` runs the disposable migration/Go/worker-Docker fixture for diagnosis. The harness uses generated test-only JWT/encryption secrets and disposable database/Redis endpoints.
+- Next: stateful scheduler accounting, stable placement recommendations, soft database co-location and offline preservation. Product acceptance scenarios remain unverified until complete API/CLI/UI end-to-end flows run.
+
+## 2026-11-17 — Stateful scheduling component gate
+
+- Fleet snapshots reserve tenant database RAM/CPU/disk even when stopped or unreachable, including the soft-delete grace period. App builds and one-off task reservations already consume this shared snapshot, so they now see database commitments. Disk accounting is conservative: full declared database budgets are subtracted from measured free space until per-volume metrics can account for used bytes precisely.
+- Stateful placement preserves existing volume/node pins. Node-down handling marks tenant databases unreachable without moving their node, volume or generation, including fleets with no app deployments. Existing app hard affinity is unchanged; optional soft node preferences add rank and show a cross-node latency warning when unmet. Link-derived preferences are wired when the link model lands.
+- Database recommendations require verified runtime capability, a supported image architecture, measured disk headroom, spare CPU and memory safety margin. Ranking includes measured host uptime and bounded 30-day observed node-down transitions. The outage history survives control-plane process restarts in Redis; a control-plane restart itself does not add a flap. Warnings cover limited stability and operator-labeled SD storage; an unmeasured storage type is stated explicitly rather than guessed from CPU architecture.
+- Non-builder agents now run the existing safe disk probe too, so database eligibility does not require opting into builds. The real two-agent fixture verifies non-builder disk reporting while leaving build capability disabled.
+- `node control-plane/scripts/test-databases.mjs --worker`: **717/717 control-plane tests**, formatter/lint, typecheck/build, Go tests and the real two-agent worker/tunnel test passed. Pure scheduler and legacy scheduler checks passed **33/33**. Real Postgres/Redis fixture proves stopped reservations, uptime/outage observations and offline pin preservation. Product offline/recovery acceptance remains pending full lifecycle, alerts and backup recovery.
+- Next: lifecycle API, CLI and dashboard wizard using these recommendations and leased jobs. No production resources or Raunak data were used.

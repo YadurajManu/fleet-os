@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,7 +30,7 @@ func (c *Client) ExecDatabase(ctx context.Context, identity DatabaseIdentity, ro
 	if !identity.valid() || (role != "database" && role != "pooler") || len(command.Command) == 0 || len(command.Command) > 128 || len(command.Env) > 128 || timeout < time.Second || timeout > time.Hour {
 		return -1, databaseFailure("exec validation")
 	}
-	allowed := map[string]bool{"psql": true, "pg_dump": true, "pg_restore": true, "wal-g": true, "redis-cli": true, "du": true, "df": true}
+	allowed := map[string]bool{"psql": true, "pg_dump": true, "pg_restore": true, "wal-g": true, "redis-cli": true, "du": true, "df": true, "fleet-db-proxy": true}
 	if !allowed[command.Command[0]] {
 		return -1, databaseFailure("exec command validation")
 	}
@@ -80,7 +82,12 @@ func (c *Client) ExecDatabase(ctx context.Context, identity DatabaseIdentity, ro
 	} else if clientRole == "fleet_app" {
 		user = "10001:10001"
 	}
-	args := append([]string{"timeout", "--signal=TERM", "--kill-after=5s", strconv.FormatFloat(timeout.Seconds(), 'f', 3, 64) + "s"}, command.Command...)
+	sessionBytes := make([]byte, 16)
+	if _, err := rand.Read(sessionBytes); err != nil {
+		return -1, databaseFailure("exec session identity")
+	}
+	sessionID := hex.EncodeToString(sessionBytes)
+	args := append([]string{"fleet-db-proxy", "exec", sessionID, strconv.Itoa(int(timeout.Seconds()))}, command.Command...)
 	if c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/"+state.ID+"/exec", map[string]any{"Cmd": args, "Env": env, "User": user, "AttachStdin": stdin != nil, "AttachStdout": true, "AttachStderr": true, "Tty": tty}, &created) != nil {
 		return -1, databaseFailure("exec creation")
 	}
@@ -93,7 +100,10 @@ func (c *Client) ExecDatabase(ctx context.Context, identity DatabaseIdentity, ro
 		return -1, databaseFailure("exec transport")
 	}
 	defer conn.Close()
-	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	stopClose := context.AfterFunc(ctx, func() {
+		_ = conn.Close()
+		c.cancelDatabaseExec(state.ID, user, sessionID)
+	})
 	defer stopClose()
 	body, _ := json.Marshal(map[string]bool{"Detach": false, "Tty": tty})
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://docker/"+c.api(ctx)+"/exec/"+created.ID+"/start", bytes.NewReader(body))
@@ -169,6 +179,34 @@ func (c *Client) ExecDatabase(ctx context.Context, identity DatabaseIdentity, ro
 		return -1, databaseFailure("exec completion check; inspect the operation before retrying")
 	}
 	return result.ExitCode, nil
+}
+
+func (c *Client) cancelDatabaseExec(containerID, user, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for ctx.Err() == nil {
+		var execution struct {
+			ID string `json:"Id"`
+		}
+		if c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/"+containerID+"/exec", map[string]any{"Cmd": []string{"fleet-db-proxy", "cancel", sessionID}, "User": user}, &execution) != nil {
+			return
+		}
+		if c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/exec/"+execution.ID+"/start", map[string]bool{"Detach": false, "Tty": false}, nil) != nil {
+			return
+		}
+		var result struct {
+			Running  bool `json:"Running"`
+			ExitCode int  `json:"ExitCode"`
+		}
+		if c.do(ctx, http.MethodGet, "/"+c.api(ctx)+"/exec/"+execution.ID+"/json", nil, &result) == nil && !result.Running && result.ExitCode == 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func (c *Client) ResizeDatabaseExec(ctx context.Context, identity DatabaseIdentity, role, execID string, columns, rows int) error {

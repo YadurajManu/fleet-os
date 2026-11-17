@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, inArray } from 'drizzle-orm'
-import { nodes, services, deployments, buildJobs, taskReservations } from '../db/schema.js'
+import { nodes, services, deployments, buildJobs, taskReservations, tenantDatabases } from '../db/schema.js'
 import type { AppContext } from '../api/context.js'
 import type { AntiAffinityIndex, Arch, NodeSnapshot, Placements, ServiceSpec } from './types.js'
 
@@ -53,6 +53,15 @@ export async function fleetSnapshot(
     committed.set(job.nodeId, (committed.get(job.nodeId) ?? 0) + job.ram / 1048576)
     committedCpu.set(job.nodeId, (committedCpu.get(job.nodeId) ?? 0) + job.cpu)
   }
+  const stateful = await ctx.db.select().from(tenantDatabases).where(eq(tenantDatabases.fleetId, fleetId))
+  const diskReservations = new Map<string, number>()
+  for (const database of stateful) {
+    if (!database.nodeId) continue
+    committed.set(database.nodeId, (committed.get(database.nodeId) ?? 0) + database.memoryMb)
+    committedCpu.set(database.nodeId, (committedCpu.get(database.nodeId) ?? 0) + database.cpu)
+    // shortcut: reserve full disk budgets conservatively; account for measured volume usage when database metrics land.
+    diskReservations.set(database.nodeId, (diskReservations.get(database.nodeId) ?? 0) + database.diskMb)
+  }
   const placements: Placements = {}
   const antiAffinityBy: AntiAffinityIndex = {}
   for (const row of active) {
@@ -65,7 +74,7 @@ export async function fleetSnapshot(
 
   const snapshots = await Promise.all(
     nodeRows.map(async (n): Promise<NodeSnapshot> => {
-      const hb = await ctx.heartbeats.last(n.id)
+      const [hb, outages] = await Promise.all([ctx.heartbeats.last(n.id), ctx.heartbeats.outageCount(n.id)])
       return {
         id: n.id,
         name: n.name,
@@ -76,6 +85,11 @@ export async function fleetSnapshot(
         effectiveMemBytes: n.effectiveMemBytes,
         reliabilityScore: n.reliabilityScore,
         committedCpu: committedCpu.get(n.id) ?? 0,
+        committedDiskMb: diskReservations.get(n.id) ?? 0,
+        freeDiskMb: n.buildCacheFreeBytes > 0 ? Math.max(0, n.buildCacheFreeBytes - n.buildDiskReserveBytes) / 1048576 : undefined,
+        databaseCapabilities: n.databaseCapabilities,
+        uptimeSec: hb?.uptimeSec,
+        outagesLast30Days: outages,
         status: n.status,
         ramMb: n.ramMb,
         cpuCores: n.cpuCores,
@@ -96,7 +110,8 @@ export async function fleetSnapshot(
 /** Translate a stored service row into the scheduler's input shape. */
 export function toServiceSpec(
   row: typeof services.$inferSelect,
-  volumeNodeId?: string | null
+  volumeNodeId?: string | null,
+  preferredNodeIds: string[] = []
 ): ServiceSpec {
   return {
     id: row.id,
@@ -113,6 +128,7 @@ export function toServiceSpec(
     placementArch: row.placementArch,
     allowEmulation: row.allowEmulation,
     affinity: row.affinity,
+    preferredNodeIds,
     antiAffinity: row.antiAffinity,
     persistentVolume: row.persistentVolume,
     volumeNodeId: volumeNodeId ?? null,

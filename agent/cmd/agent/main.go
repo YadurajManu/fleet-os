@@ -24,6 +24,7 @@ import (
 	"github.com/fleet-os/fleet-os/agent/internal/build"
 	"github.com/fleet-os/fleet-os/agent/internal/capability"
 	"github.com/fleet-os/fleet-os/agent/internal/client"
+	"github.com/fleet-os/fleet-os/agent/internal/database"
 	"github.com/fleet-os/fleet-os/agent/internal/diagnostics"
 	"github.com/fleet-os/fleet-os/agent/internal/docker"
 	"github.com/fleet-os/fleet-os/agent/internal/health"
@@ -248,6 +249,7 @@ func run() error {
 	tunnelClient.NodeID = saved.NodeID
 	builder := build.New(filepath.Join(filepath.Dir(*statePath), "builds"), builderConfig, tunnelClient.SendBuild)
 	tunnelClient.Builder = builder
+	tunnelClient.Databases = &database.Handler{Runtime: &docker.DatabaseRuntime{Docker: dockerClient, NodeID: saved.NodeID, FleetID: saved.FleetID, Dir: filepath.Join(filepath.Dir(*statePath), "databases")}, Send: tunnelClient.SendDatabase}
 	go tunnelClient.Run(ctx)
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)

@@ -8,7 +8,13 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 
 export interface TunnelRequest {
-  type: 'http_request' | 'terminal_start' | 'terminal_data' | 'terminal_resize' | 'terminal_close' | 'terminal_ping'
+  type:
+    | 'http_request'
+    | 'terminal_start'
+    | 'terminal_data'
+    | 'terminal_resize'
+    | 'terminal_close'
+    | 'terminal_ping'
   id: string
   port: number
   method: string
@@ -25,7 +31,12 @@ export interface TunnelRequest {
 
 export interface TunnelResponse {
   result?: TaskResult
-  type: 'http_response' | 'task_result' | 'terminal_data' | 'terminal_close' | 'terminal_pong'
+  type:
+    | 'http_response'
+    | 'task_result'
+    | 'terminal_data'
+    | 'terminal_close'
+    | 'terminal_pong'
   id: string
   status: number
   headers: Record<string, string>
@@ -36,11 +47,28 @@ export interface TunnelResponse {
 }
 
 export type TaskSpec = {
-  service: string; image: string; platform: string; command: string[];
-  env: Record<string, string>; registry_auth: string | null; memory_bytes: number; cpu_millis?: number; timeout_ms: number
+  service: string
+  image: string
+  platform: string
+  command: string[]
+  env: Record<string, string>
+  registry_auth: string | null
+  memory_bytes: number
+  cpu_millis?: number
+  timeout_ms: number
 }
-export type TaskResult = { exitCode: number; output: string; error?: string; cleanupComplete?: boolean }
-const taskResult = z.object({ exitCode: z.number().int().min(-1).max(255), output: z.string().max(262144), error: z.string().max(2000).optional(), cleanupComplete: z.boolean().optional() })
+export type TaskResult = {
+  exitCode: number
+  output: string
+  error?: string
+  cleanupComplete?: boolean
+}
+const taskResult = z.object({
+  exitCode: z.number().int().min(-1).max(255),
+  output: z.string().max(262144),
+  error: z.string().max(2000).optional(),
+  cleanupComplete: z.boolean().optional(),
+})
 
 type PendingRequest = {
   /** Which node this request is waiting on, so a closing tunnel can fail only its own. */
@@ -70,11 +98,39 @@ export class TunnelRegistry {
   private pending = new Map<string, PendingRequest>()
   /** Maps terminal sessionId → the browser WebSocket that owns it. */
   private terminalSessions = new Map<string, WebSocket>()
-  private tasks = new Map<string, { nodeId: string; finish: (result?: TaskResult, error?: Error) => void }>()
+  private tasks = new Map<
+    string,
+    { nodeId: string; finish: (result?: TaskResult, error?: Error) => void }
+  >()
+  private databaseListeners = new Set<
+    (nodeId: string, message: unknown) => void
+  >()
 
-  public runTask(nodeId: string, task: TaskSpec, signal: AbortSignal): Promise<TaskResult> {
-    if (!this.has(nodeId)) return Promise.reject(new Error('The task node is disconnected.'))
-    if ([...this.tasks.values()].filter(t => t.nodeId === nodeId).length >= 2) return Promise.reject(new Error('This node already has two one-off tasks running.'))
+  public onDatabaseMessage(
+    listener: (nodeId: string, message: unknown) => void,
+  ): () => void {
+    this.databaseListeners.add(listener)
+    return () => {
+      this.databaseListeners.delete(listener)
+    }
+  }
+
+  private databaseDisconnected(nodeId: string): void {
+    for (const listener of this.databaseListeners)
+      listener(nodeId, { type: 'db.disconnected', version: 1 })
+  }
+
+  public runTask(
+    nodeId: string,
+    task: TaskSpec,
+    signal: AbortSignal,
+  ): Promise<TaskResult> {
+    if (!this.has(nodeId))
+      return Promise.reject(new Error('The task node is disconnected.'))
+    if ([...this.tasks.values()].filter((t) => t.nodeId === nodeId).length >= 2)
+      return Promise.reject(
+        new Error('This node already has two one-off tasks running.'),
+      )
     const id = randomUUID()
     return new Promise((resolve, reject) => {
       const cancel = () => {
@@ -91,17 +147,24 @@ export class TunnelRegistry {
       }
       this.tasks.set(id, { nodeId, finish })
       signal.addEventListener('abort', cancel, { once: true })
-      if (signal.aborted) { cancel(); return }
-      if (!this.sendBuild(nodeId, { type: 'task_start', id, task })) finish(undefined, new Error('The task node disconnected.'))
+      if (signal.aborted) {
+        cancel()
+        return
+      }
+      if (!this.sendBuild(nodeId, { type: 'task_start', id, task }))
+        finish(undefined, new Error('The task node disconnected.'))
     })
   }
 
   private failTasks(nodeId: string): void {
     for (const task of this.tasks.values()) {
-      if (task.nodeId === nodeId) task.finish(undefined, new Error('The task node disconnected; task was not retried.'))
+      if (task.nodeId === nodeId)
+        task.finish(
+          undefined,
+          new Error('The task node disconnected; task was not retried.'),
+        )
     }
   }
-
 
   constructor(private ctx: AppContext) {}
 
@@ -118,7 +181,12 @@ export class TunnelRegistry {
   public sendBuild(nodeId: string, message: unknown): boolean {
     const ws = this.sockets.get(nodeId)
     if (!ws || ws.readyState !== WebSocket.OPEN) return false
-    try { ws.send(JSON.stringify(message)); return true } catch { return false }
+    try {
+      ws.send(JSON.stringify(message))
+      return true
+    } catch {
+      return false
+    }
   }
   public has(nodeId: string): boolean {
     const ws = this.sockets.get(nodeId)
@@ -131,7 +199,11 @@ export class TunnelRegistry {
    * Returns a stop function; the caller must call it on close, or the interval
    * outlives the socket it was watching.
    */
-  private startKeepalive(nodeId: string, ws: WebSocket, log?: TunnelLogger): () => void {
+  private startKeepalive(
+    nodeId: string,
+    ws: WebSocket,
+    log?: TunnelLogger,
+  ): () => void {
     let awaitingPong = false
 
     const timer = setInterval(() => {
@@ -144,7 +216,10 @@ export class TunnelRegistry {
         // is fine, which is precisely the failure readyState cannot see, so take
         // it down hard — `close()` waits for a peer that is not listening.
         clearInterval(timer)
-        log?.warn({ nodeId }, 'reverse tunnel stopped answering pings, terminating')
+        log?.warn(
+          { nodeId },
+          'reverse tunnel stopped answering pings, terminating',
+        )
         ws.terminate()
         return
       }
@@ -180,6 +255,7 @@ export class TunnelRegistry {
     const ws = this.sockets.get(nodeId)
     this.sockets.delete(nodeId)
     this.failTasks(nodeId)
+    this.databaseDisconnected(nodeId)
     if (!ws) return false
 
     // Anything still waiting on this node will never be answered. Fail those
@@ -204,6 +280,7 @@ export class TunnelRegistry {
     // Close existing socket if any
     const existing = this.sockets.get(nodeId)
     if (existing && existing !== ws) {
+      this.databaseDisconnected(nodeId)
       existing.close()
     }
     this.sockets.set(nodeId, ws)
@@ -213,12 +290,29 @@ export class TunnelRegistry {
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString()) as TunnelResponse
-        if (typeof msg.type === 'string' && msg.type.startsWith('build.') && this.sockets.get(nodeId) === ws) {
-          void this.ctx.builds.handleMessage?.(nodeId, msg).catch(() => log?.warn({ nodeId }, 'build message rejected'))
-        } else if (msg.type === 'task_result' && msg.id && this.sockets.get(nodeId) === ws) {
+        if (
+          typeof msg.type === 'string' &&
+          msg.type.startsWith('db.') &&
+          this.sockets.get(nodeId) === ws
+        ) {
+          for (const listener of this.databaseListeners) listener(nodeId, msg)
+        } else if (
+          typeof msg.type === 'string' &&
+          msg.type.startsWith('build.') &&
+          this.sockets.get(nodeId) === ws
+        ) {
+          void this.ctx.builds
+            .handleMessage?.(nodeId, msg)
+            .catch(() => log?.warn({ nodeId }, 'build message rejected'))
+        } else if (
+          msg.type === 'task_result' &&
+          msg.id &&
+          this.sockets.get(nodeId) === ws
+        ) {
           const pending = this.tasks.get(msg.id)
           const parsed = taskResult.safeParse(msg.result)
-          if (pending?.nodeId === nodeId && parsed.success) pending.finish(parsed.data)
+          if (pending?.nodeId === nodeId && parsed.success)
+            pending.finish(parsed.data)
         } else if (msg.type === 'http_response' && msg.id) {
           const handler = this.pending.get(msg.id)
           if (handler) {
@@ -226,7 +320,12 @@ export class TunnelRegistry {
             this.pending.delete(msg.id)
             handler.resolve(msg)
           }
-        } else if ((msg.type === 'terminal_data' || msg.type === 'terminal_close' || msg.type === 'terminal_pong') && msg.id) {
+        } else if (
+          (msg.type === 'terminal_data' ||
+            msg.type === 'terminal_close' ||
+            msg.type === 'terminal_pong') &&
+          msg.id
+        ) {
           // Route terminal output / pong from agent back to the browser WS that started this session.
           const browserWs = this.terminalSessions.get(msg.id)
           if (browserWs && browserWs.readyState === WebSocket.OPEN) {
@@ -246,6 +345,7 @@ export class TunnelRegistry {
       if (this.sockets.get(nodeId) === ws) {
         this.sockets.delete(nodeId)
         this.failTasks(nodeId)
+        this.databaseDisconnected(nodeId)
       }
     })
 
@@ -254,6 +354,7 @@ export class TunnelRegistry {
       if (this.sockets.get(nodeId) === ws) {
         this.sockets.delete(nodeId)
         this.failTasks(nodeId)
+        this.databaseDisconnected(nodeId)
       }
     })
   }
@@ -274,7 +375,7 @@ export class TunnelRegistry {
       url?: string
       headers: Record<string, string | string[] | undefined>
     },
-    bodyBuf?: Buffer
+    bodyBuf?: Buffer,
   ): Promise<TunnelResponse> {
     const ws = this.sockets.get(nodeId)
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -294,7 +395,8 @@ export class TunnelRegistry {
       method: req.method || 'GET',
       path: req.url || '/',
       headers,
-      body: bodyBuf && bodyBuf.length > 0 ? bodyBuf.toString('base64') : undefined,
+      body:
+        bodyBuf && bodyBuf.length > 0 ? bodyBuf.toString('base64') : undefined,
     }
 
     return new Promise<TunnelResponse>((resolve, reject) => {
@@ -326,7 +428,7 @@ export class TunnelRegistry {
     browserWs: WebSocket,
     cols: number,
     rows: number,
-    shell?: string
+    shell?: string,
   ): boolean {
     const agentWs = this.sockets.get(nodeId)
     if (!agentWs || agentWs.readyState !== WebSocket.OPEN) return false
@@ -349,29 +451,42 @@ export class TunnelRegistry {
   }
 
   /** Forward terminal stdin from browser to agent. */
-  public sendTerminalData(nodeId: string, sessionId: string, data: string): boolean {
+  public sendTerminalData(
+    nodeId: string,
+    sessionId: string,
+    data: string,
+  ): boolean {
     const agentWs = this.sockets.get(nodeId)
     if (!agentWs || agentWs.readyState !== WebSocket.OPEN) return false
 
-    agentWs.send(JSON.stringify({
-      type: 'terminal_data',
-      id: sessionId,
-      data,
-    }))
+    agentWs.send(
+      JSON.stringify({
+        type: 'terminal_data',
+        id: sessionId,
+        data,
+      }),
+    )
     return true
   }
 
   /** Forward terminal resize from browser to agent. */
-  public resizeTerminal(nodeId: string, sessionId: string, cols: number, rows: number): boolean {
+  public resizeTerminal(
+    nodeId: string,
+    sessionId: string,
+    cols: number,
+    rows: number,
+  ): boolean {
     const agentWs = this.sockets.get(nodeId)
     if (!agentWs || agentWs.readyState !== WebSocket.OPEN) return false
 
-    agentWs.send(JSON.stringify({
-      type: 'terminal_resize',
-      id: sessionId,
-      cols,
-      rows,
-    }))
+    agentWs.send(
+      JSON.stringify({
+        type: 'terminal_resize',
+        id: sessionId,
+        cols,
+        rows,
+      }),
+    )
     return true
   }
 
@@ -380,11 +495,13 @@ export class TunnelRegistry {
     const agentWs = this.sockets.get(nodeId)
     if (!agentWs || agentWs.readyState !== WebSocket.OPEN) return false
 
-    agentWs.send(JSON.stringify({
-      type: 'terminal_ping',
-      id: sessionId,
-      t,
-    }))
+    agentWs.send(
+      JSON.stringify({
+        type: 'terminal_ping',
+        id: sessionId,
+        t,
+      }),
+    )
     return true
   }
 
@@ -394,14 +511,16 @@ export class TunnelRegistry {
 
     const agentWs = this.sockets.get(nodeId)
     if (agentWs && agentWs.readyState === WebSocket.OPEN) {
-      agentWs.send(JSON.stringify({
-        type: 'terminal_close',
-        id: sessionId,
-        port: 0,
-        method: '',
-        path: '',
-        headers: {},
-      }))
+      agentWs.send(
+        JSON.stringify({
+          type: 'terminal_close',
+          id: sessionId,
+          port: 0,
+          method: '',
+          path: '',
+          headers: {},
+        }),
+      )
     }
   }
 
@@ -418,7 +537,11 @@ export class TunnelRegistry {
 /**
  * Attaches the WebSocket reverse-tunnel server to Fastify's raw http server.
  */
-export function setupTunnelServer(app: FastifyInstance, ctx: AppContext, registry: TunnelRegistry) {
+export function setupTunnelServer(
+  app: FastifyInstance,
+  ctx: AppContext,
+  registry: TunnelRegistry,
+) {
   const wss = new WebSocketServer({ noServer: true })
 
   app.server.on('upgrade', async (req, socket, head) => {
@@ -428,7 +551,9 @@ export function setupTunnelServer(app: FastifyInstance, ctx: AppContext, registr
     }
 
     const auth = req.headers.authorization || ''
-    const token = auth.startsWith('Bearer ') ? auth.slice(7) : url.searchParams.get('token')
+    const token = auth.startsWith('Bearer ')
+      ? auth.slice(7)
+      : url.searchParams.get('token')
     if (!token || !isAgentToken(token)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
       socket.destroy()

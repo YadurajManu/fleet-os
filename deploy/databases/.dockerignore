@@ -1,0 +1,4 @@
+*.log
+.build/*
+!.build/proxy/
+!.build/proxy/**

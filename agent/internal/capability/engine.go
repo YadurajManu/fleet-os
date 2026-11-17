@@ -97,7 +97,11 @@ func FromDockerInfo(body []byte) (EngineReport, string, error) {
 	if strings.Contains(strings.ToLower(info.OperatingSystem), "docker desktop") {
 		kind = "docker-desktop"
 	}
-	return EngineReport{BuildCPUMillis: true, TaskRun: true, BuildTargets: true, BuildDiskBytes: 20 << 30, Platform: p, Variant: variant, EngineKind: kind, EffectiveCPU: info.NCPU, EffectiveMemBytes: info.MemTotal, Platforms: []string{p}, MaxConcurrentBuilds: 1}, arch, nil
+	databaseCapabilities := []string(nil)
+	if p == "linux/arm64" || p == "linux/amd64" {
+		databaseCapabilities = []string{"database.runtime.v1", "database.tcp.v1", "database.exec.v1"}
+	}
+	return EngineReport{DatabaseCapabilities: databaseCapabilities, BuildCPUMillis: true, TaskRun: true, BuildTargets: true, BuildDiskBytes: 20 << 30, Platform: p, Variant: variant, EngineKind: kind, EffectiveCPU: info.NCPU, EffectiveMemBytes: info.MemTotal, Platforms: []string{p}, MaxConcurrentBuilds: 1}, arch, nil
 }
 
 func DockerCommand(ctx context.Context, args ...string) *exec.Cmd {
@@ -140,7 +144,7 @@ func ApplyBuilder(ctx context.Context, report *Report, dir string, config Builde
 	report.BuildDiskBytes = config.DiskBytes
 	report.BuildMemoryBytes = config.MemoryBytes
 	report.CanBuild = false
-	if !config.Builder {
+	if !config.Builder && len(report.DatabaseCapabilities) == 0 {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -151,6 +155,9 @@ func ApplyBuilder(ctx context.Context, report *Report, dir string, config Builde
 	}
 	report.BuildCacheFreeBytes = space.Free
 	report.BuildDiskReserveBytes = space.Reserve
+	if !config.Builder {
+		return nil
+	}
 	if err = space.Preflight(config.DiskBytes); err != nil {
 		return err
 	}

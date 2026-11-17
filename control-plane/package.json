@@ -15,7 +15,9 @@
     "smoke": "tsx scripts/smoke.ts",
     "e2e": "tsx scripts/e2e-deploy.ts",
     "pretest": "dotenv -e .env.test -- tsx src/db/migrate.ts",
-    "ai:check": "tsx scripts/check-ai.ts"
+    "ai:check": "tsx scripts/check-ai.ts",
+    "db:format:check": "npx --yes prettier@3.10.1 --check --single-quote --no-semi 'src/databases/*.ts' 'tests/database-*.ts' scripts/test-databases.mjs",
+    "db:lint": "npx --yes oxlint@1.57.0 --deny-warnings src/databases/ tests/database-*.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

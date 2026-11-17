@@ -30,6 +30,7 @@ export type HeartbeatPayload = {
   meshConnected: boolean
   agentVersion?: string
   tunnelRttMs?: number
+  uptimeSec?: number
   runtime?: {
     dockerAvailable: boolean
     dockerVersion?: string
@@ -104,6 +105,18 @@ export class HeartbeatTracker {
     return raw ? JSON.parse(raw) : null
   }
 
+  /** Only observed transitions count as flaps; a control-plane restart is not an outage sample. */
+  async recordOutage(nodeId: string, at = Date.now()): Promise<void> {
+    const key = `node:${nodeId}:outages`
+    await this.redis.multi().zadd(key, at, String(at))
+      .zremrangebyscore(key, '-inf', at - 30 * 86400000)
+      .zremrangebyrank(key, 0, -1001).expire(key, 31 * 86400).exec()
+  }
+
+  async outageCount(nodeId: string, now = Date.now()): Promise<number> {
+    return this.redis.zcount(`node:${nodeId}:outages`, now - 30 * 86400000, '+inf')
+  }
+
   /** Node ids in this fleet that have not been heard from recently enough. */
   async staleNodes(
     fleetId: string,
@@ -126,6 +139,6 @@ export class HeartbeatTracker {
 
   /** Called when a node is deliberately removed, so it stops being swept. */
   async forget(fleetId: string, nodeId: string): Promise<void> {
-    await this.redis.multi().del(`node:${nodeId}:hb`).zrem(`fleet:${fleetId}:hb`, nodeId).exec()
+    await this.redis.multi().del(`node:${nodeId}:hb`, `node:${nodeId}:outages`).zrem(`fleet:${fleetId}:hb`, nodeId).exec()
   }
 }

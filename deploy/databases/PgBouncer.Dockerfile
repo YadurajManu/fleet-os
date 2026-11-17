@@ -10,10 +10,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && mkdir /tmp/pgbouncer && tar -xzf /tmp/pgbouncer.tar.gz -C /tmp/pgbouncer --strip-components=1 \
     && cd /tmp/pgbouncer && ./configure --prefix=/usr/local --with-openssl && make -j2 pgbouncer
 FROM ${DEBIAN_IMAGE}
+ARG TARGETARCH
 LABEL io.fleet.database-image="true"
 RUN apt-get update && apt-get install -y --no-install-recommends libevent-2.1-7 libssl3 ca-certificates \
     && useradd --uid 999 --system --no-create-home fleet-pooler && rm -rf /var/lib/apt/lists/*
 COPY --from=build /tmp/pgbouncer/pgbouncer /usr/local/bin/pgbouncer
+COPY --chmod=0755 .build/proxy/${TARGETARCH}/fleet-db-proxy /usr/local/bin/fleet-db-proxy
 USER 999:999
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["pgbouncer"]

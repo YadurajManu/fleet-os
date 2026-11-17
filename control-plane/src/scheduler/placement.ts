@@ -68,7 +68,7 @@ export function filterNodes(
     }
 
     // A volume cannot follow the workload across machines (PRD 7.7).
-    if (service.persistentVolume && service.volumeNodeId && service.volumeNodeId !== node.id) {
+    if ((service.persistentVolume || service.workloadClass === 'stateful') && service.volumeNodeId && service.volumeNodeId !== node.id) {
       reject(node, 'volume_elsewhere', `volume lives on another node and cannot move automatically`)
       continue
     }
@@ -173,7 +173,8 @@ export function rankNodes(service: ServiceSpec, eligible: NodeSnapshot[]): Candi
       const reliability = Math.max(0, Math.min(1, node.reliabilityScore ?? TIER_RANK[node.reliabilityTier] / TIER_RANK.high))
       const load = 1 - Math.min(1, Math.max(0, node.loadFactor ?? 0.5))
 
-      const score =
+      const affinityBonus = service.preferredNodeIds?.includes(node.id) ? 0.15 : 0
+      const score = affinityBonus +
         WEIGHTS.headroom * headroom + WEIGHTS.reliability * reliability + WEIGHTS.load * load
 
       return {
@@ -240,6 +241,10 @@ export function place(
 
   const candidates = rankNodes(service, eligible)
   const winner = candidates[0]!
+  if (service.preferredNodeIds?.length && !service.preferredNodeIds.includes(winner.nodeId)) {
+    warnings.push('Linked database is on another node; database traffic crosses the tunnel and adds network latency.')
+  }
+
 
   return {
     outcome: 'placed',

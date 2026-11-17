@@ -28,12 +28,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && wal-g --version
 
 FROM ${POSTGRES_IMAGE}
+ARG TARGETARCH
 LABEL io.fleet.database-image="true"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates liblzo2-2 libbrotli1 liblz4-1 libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=walg /usr/local/bin/wal-g /usr/local/bin/wal-g
 COPY --from=extensions /opt/vector/ /
 COPY --chmod=0755 postgres-entrypoint.sh /usr/local/bin/fleet-postgres-entrypoint.sh
+COPY --chmod=0755 .build/proxy/${TARGETARCH}/fleet-db-proxy /usr/local/bin/fleet-db-proxy
 ENTRYPOINT ["fleet-postgres-entrypoint.sh"]
 # The runtime provides config/credentials separately; no tenant secrets enter image layers.
 STOPSIGNAL SIGINT

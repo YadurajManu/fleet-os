@@ -3,11 +3,12 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-func TestUnimplementedDatabaseCapabilitiesAreNotAdvertised(t *testing.T) {
+func TestVerifiedDatabaseCapabilitiesAreAdvertised(t *testing.T) {
 	r, _, err := FromDockerInfo([]byte(`{"OSType":"linux","Architecture":"aarch64","NCPU":4,"MemTotal":4294967296}`))
 	if err != nil {
 		t.Fatal(err)
@@ -16,8 +17,8 @@ func TestUnimplementedDatabaseCapabilitiesAreNotAdvertised(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.DatabaseCapabilities) != 0 || strings.Contains(string(body), "database_capabilities") {
-		t.Fatal("database handlers must be installed before capabilities are advertised")
+	if !reflect.DeepEqual(r.DatabaseCapabilities, []string{"database.runtime.v1", "database.tcp.v1", "database.exec.v1"}) || !strings.Contains(string(body), "database_capabilities") {
+		t.Fatal("verified runtime/exec/TCP capabilities missing or unimplemented capabilities advertised")
 	}
 }
 
@@ -54,5 +55,15 @@ func TestDockerDesktopUsesEngineCapacity(t *testing.T) {
 	r, arch, err := FromDockerInfo([]byte(`{"OSType":"linux","Architecture":"aarch64","OperatingSystem":"Docker Desktop","NCPU":4,"MemTotal":4294967296}`))
 	if err != nil || r.Platform != "linux/arm64" || arch != "arm64" || r.EngineKind != "docker-desktop" || r.EffectiveCPU != 4 || r.EffectiveMemBytes != 4294967296 || r.CanBuild {
 		t.Fatalf("bad report: %+v %v", r, err)
+	}
+}
+
+func TestDatabaseCapabilitiesRequireMaintainedImageArchitecture(t *testing.T) {
+	report, _, err := FromDockerInfo([]byte(`{"OSType":"linux","Architecture":"armv7l","NCPU":4,"MemTotal":4294967296}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.DatabaseCapabilities) != 0 {
+		t.Fatal("advertised database images on unsupported ARMv7")
 	}
 }
