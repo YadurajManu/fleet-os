@@ -396,6 +396,70 @@ export const databasesCommand = {
       )
       return
     }
+    if (action === 'restore') {
+      if (!project || !nameOrId || typeof flags.into !== 'string')
+        throw new CliError(
+          'usage: fleet db restore <source-database> <backup-id> --into <empty-target> [--project PROJECT]',
+          EXIT.usage,
+        )
+      const source = await findDatabase(fleet, project, flags)
+      if (source.engine !== 'postgres')
+        throw new CliError('Database restore currently requires PostgreSQL.')
+      const target = await findDatabase(fleet, flags.into, {
+        ...flags,
+        project: source.project,
+      })
+      if (
+        target.id === source.id ||
+        target.engine !== 'postgres' ||
+        target.version !== source.version
+      )
+        throw new CliError(
+          'Choose a different PostgreSQL database with the same major version.',
+        )
+      if (target.status !== 'running' || !target.nodeId)
+        throw new CliError(
+          `Restore target ${target.name} must be running before restore.`,
+        )
+      const { body } = await request<{ backups: DatabaseBackup[] }>(
+        'GET',
+        `${base(fleet, source.project)}/${source.id}/backups`,
+      )
+      const matches = body.backups.filter(
+        (backup) =>
+          (backup.id === nameOrId || backup.id.startsWith(nameOrId)) &&
+          backup.kind === 'logical' &&
+          backup.state === 'complete' &&
+          backup.verifiedAt,
+      )
+      if (matches.length !== 1)
+        throw new CliError(
+          matches.length
+            ? `Backup id prefix "${nameOrId}" is ambiguous.`
+            : `No verified logical PostgreSQL backup starts with "${nameOrId}".`,
+          EXIT.usage,
+        )
+      const { body: operation } = await request<{
+        operationId: string
+        databaseId: string
+      }>(
+        'POST',
+        `${base(fleet, source.project)}/${source.id}/backups/${matches[0]!.id}/restore`,
+        {
+          body: { targetDatabaseId: target.id },
+          idempotencyKey: randomUUID(),
+        },
+      )
+      if (flags.json) return console.log(JSON.stringify(operation, null, 2))
+      await waitForOperation(
+        fleet,
+        source.project,
+        target,
+        operation.operationId,
+        flags,
+      )
+      return
+    }
     if (action === 'link') {
       if (!project || !nameOrId)
         throw new CliError(
@@ -540,7 +604,7 @@ export const databasesCommand = {
       return
     }
     throw new CliError(
-      'usage: fleet db list|create|start|stop|restart|link|unlink|connect|exec|targets|target|backup|backups|dump …',
+      'usage: fleet db list|create|start|stop|restart|link|unlink|connect|exec|targets|target|backup|backups|restore|dump …',
       EXIT.usage,
     )
   },

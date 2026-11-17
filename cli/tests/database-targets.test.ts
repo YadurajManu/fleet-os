@@ -183,6 +183,85 @@ test('database backup download writes verified bytes with private permissions', 
   }
 })
 
+test('database restore targets a separate running Postgres database', async () => {
+  const originalFetch = globalThis.fetch
+  const originalApi = process.env.FLEET_API
+  const originalToken = process.env.FLEET_TOKEN
+  let restorePath = ''
+  let restoreBody: unknown
+  process.env.FLEET_API = 'https://control.example.test'
+  process.env.FLEET_TOKEN = 'access-token'
+  globalThis.fetch = async (input, options) => {
+    const path = String(input)
+    if (path.includes('/databases?'))
+      return new Response(
+        JSON.stringify({
+          databases: [
+            {
+              id: 'source-id',
+              project: 'production',
+              name: 'source',
+              nodeId: 'node-id',
+              engine: 'postgres',
+              version: '17',
+              status: 'running',
+            },
+            {
+              id: 'target-id',
+              project: 'production',
+              name: 'target',
+              nodeId: 'node-id',
+              engine: 'postgres',
+              version: '17',
+              status: 'running',
+            },
+          ],
+          nextCursor: null,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    if (path.endsWith('/backups'))
+      return new Response(
+        JSON.stringify({
+          backups: [
+            {
+              id: 'backup-id',
+              kind: 'logical',
+              state: 'complete',
+              verifiedAt: '2026-11-17T00:00:00Z',
+            },
+          ],
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    restorePath = path
+    restoreBody = JSON.parse(String(options?.body))
+    return new Response(
+      JSON.stringify({
+        operationId: 'restore-operation',
+        databaseId: 'target-id',
+      }),
+      { headers: { 'content-type': 'application/json' } },
+    )
+  }
+  try {
+    await databasesCommand.run(['restore', 'source', 'backup-id'], {
+      fleet: 'fleet-id',
+      project: 'production',
+      into: 'target',
+      'no-wait': true,
+    })
+    assert.ok(restorePath.endsWith('/source-id/backups/backup-id/restore'))
+    assert.deepEqual(restoreBody, { targetDatabaseId: 'target-id' })
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalApi === undefined) delete process.env.FLEET_API
+    else process.env.FLEET_API = originalApi
+    if (originalToken === undefined) delete process.env.FLEET_TOKEN
+    else process.env.FLEET_TOKEN = originalToken
+  }
+})
+
 test('target creation sends credentials only in the authenticated request body', async () => {
   const originalFetch = globalThis.fetch
   const originalEnv = {
