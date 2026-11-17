@@ -231,3 +231,9 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 - Added `fleet db restore <source-database> <backup-id> --into <empty-target>`. It accepts a full or unique backup ID prefix, requires a verified logical PostgreSQL backup and a separate running PostgreSQL target of the same major version, submits an idempotent restore operation and follows durable progress by default. `--no-wait` and `--json` return the queued operation. The existing safe target check rejects a populated database without replacing its contents.
 - CLI `npm run typecheck && npm test` passed **233/233**. The Fleet-managed restore API/worker integration remains covered by the full control-plane + real Docker/MinIO run recorded above.
 - The CLI currently requires the user to create an empty target first with `fleet db create`; it does not infer or create a second database. Dashboard restore controls, Redis RDB, WAL-G PITR worker flow, in-place safety copies, recover, import and overall V1 acceptance remain open.
+
+## 2026-11-17 — Dashboard logical restore controls
+
+- Database detail now lists running, online PostgreSQL targets in the same project and at the source's major version. Verified logical Postgres backups can be queued into the selected target; the UI navigates to that target so its persisted operation state and SSE progress are visible. Copy states that populated targets are refused and their data is preserved.
+- Added a mounted dashboard test for target selection, restore API payload, and navigation to the target operation. Dashboard typecheck, **33/33 tests**, Prettier, and production build passed. Vite retains its existing large-chunk warning.
+- The dashboard requires the user to create the empty target separately. Browser/Playwright acceptance, Redis restore, Fleet-managed WAL-G PITR, in-place restore, recovery, import, and full V1 acceptance remain open.
