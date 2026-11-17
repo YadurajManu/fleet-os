@@ -8,10 +8,11 @@ import {
   type AppContext,
 } from '../src/api/context.js'
 import { loadConfig } from '../src/config.js'
+import { buildServer } from '../src/server.js'
+import type { FastifyInstance } from 'fastify'
 import {
   databaseCredentials,
   databaseLinks,
-  fleets,
   orgs,
   secrets,
   services,
@@ -24,24 +25,35 @@ import { buildEnv } from '../src/secrets/store.js'
 import { sealSecret } from '../src/lib/crypto.js'
 
 let ctx: AppContext
-const orgId = randomUUID()
-const fleetId = randomUUID()
-const userId = randomUUID()
+let app: FastifyInstance
+let orgId = ''
+let fleetId = ''
+let userId = ''
+let accessToken = ''
 const databaseId = randomUUID()
 const secondDatabaseId = randomUUID()
 const serviceId = randomUUID()
-const owner = { orgId, userId }
+let owner: { orgId: string; userId: string }
 const password = randomBytes(32).toString('base64url')
 
 before(async () => {
   ctx = createContext(loadConfig())
-  await ctx.db
-    .insert(users)
-    .values({ id: userId, email: `database-links-${userId}@example.test` })
-  await ctx.db
-    .insert(orgs)
-    .values({ id: orgId, name: `database-links-${orgId}` })
-  await ctx.db.insert(fleets).values({ id: fleetId, orgId, name: 'links-test' })
+  app = await buildServer(ctx)
+  const signup = await app.inject({
+    method: 'POST',
+    url: '/auth/signup',
+    payload: {
+      email: `database-links-${randomUUID()}@example.test`,
+      password: 'database-links-test-password',
+    },
+  })
+  assert.equal(signup.statusCode, 201, signup.body)
+  const account = signup.json()
+  orgId = account.org.id
+  fleetId = account.fleet.id
+  userId = account.user.id
+  accessToken = account.accessToken
+  owner = { orgId, userId }
   await ctx.db.insert(tenantDatabases).values({
     id: databaseId,
     fleetId,
@@ -121,6 +133,7 @@ before(async () => {
 })
 
 after(async () => {
+  await app.close()
   await ctx.db
     .delete(tenantDatabases)
     .where(eq(tenantDatabases.fleetId, fleetId))
@@ -283,4 +296,39 @@ test('concurrent links to one service keep both sets of env keys', async () => {
     .from(services)
     .where(eq(services.id, serviceId))
   assert.deepEqual(afterUnlink!.env, {})
+})
+
+test('project link routes enforce authentication and hide connection values', async () => {
+  const base = `/fleets/${fleetId}/projects/links-test/databases/${databaseId}/links`
+  const unauthorized = await app.inject({ method: 'GET', url: base })
+  assert.equal(unauthorized.statusCode, 401)
+
+  const linked = await app.inject({
+    method: 'POST',
+    url: base,
+    headers: { authorization: `Bearer ${accessToken}` },
+    payload: { serviceId, role: 'readonly' },
+  })
+  assert.equal(linked.statusCode, 200, linked.body)
+  assert.equal(linked.json().link.role, 'readonly')
+  assert.equal(linked.body.includes(password), false)
+
+  const listed = await app.inject({
+    url: base,
+    headers: { authorization: `Bearer ${accessToken}` },
+  })
+  assert.equal(listed.statusCode, 200, listed.body)
+  assert.deepEqual(listed.json().links[0].envKeys, {
+    DATABASE_URL: 'DATABASE_URL',
+    DIRECT_URL: 'DIRECT_URL',
+  })
+  assert.deepEqual(listed.json().services, [{ id: serviceId, name: 'web' }])
+  assert.equal(listed.body.includes(password), false)
+
+  const removed = await app.inject({
+    method: 'DELETE',
+    url: `${base}/${serviceId}`,
+    headers: { authorization: `Bearer ${accessToken}` },
+  })
+  assert.equal(removed.statusCode, 200, removed.body)
 })
