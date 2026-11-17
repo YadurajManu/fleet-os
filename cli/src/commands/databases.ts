@@ -6,6 +6,7 @@ import WebSocket from 'ws'
 import { CliError, EXIT, request, requireFleet } from '../api.js'
 import { loadProfile } from '../config.js'
 import { c, table, statusBadge } from '../render.js'
+import { askSecret, canPrompt, confirm } from '../prompt.js'
 import type { Flags } from '../args.js'
 
 type Database = {
@@ -27,6 +28,16 @@ type Operation = {
   errorCode: string | null
 }
 type DatabaseLink = { serviceId: string; serviceName: string }
+type BackupTarget = {
+  id: string
+  name: string
+  endpoint: string
+  bucket: string
+  prefix: string
+  region: string
+  isDefault: boolean
+  lastTestedAt: string | null
+}
 const base = (fleet: string, project: string) =>
   `/fleets/${encodeURIComponent(fleet)}/projects/${encodeURIComponent(project)}/databases`
 
@@ -97,6 +108,119 @@ export const databasesCommand = {
         ),
       )
       return
+    }
+    if (action === 'targets') {
+      if (!project)
+        throw new CliError('usage: fleet db targets <project>', EXIT.usage)
+      const { body } = await request<{ targets: BackupTarget[] }>(
+        'GET',
+        targetPath(fleet, project),
+      )
+      if (flags.json) return console.log(JSON.stringify(body.targets, null, 2))
+      if (!body.targets.length) {
+        console.log(`No backup targets in ${project}.`)
+        console.log(
+          c.dim(`  add one with \`fleet db target add ${project} NAME\``),
+        )
+        return
+      }
+      console.log(
+        table(
+          ['name', 'bucket', 'endpoint', 'default', 'last tested', 'id'],
+          body.targets.map((target) => [
+            target.name,
+            target.bucket,
+            target.endpoint,
+            target.isDefault ? 'yes' : 'no',
+            target.lastTestedAt ?? 'never',
+            c.dim(target.id.slice(0, 8)),
+          ]),
+        ),
+      )
+      return
+    }
+    if (action === 'target') {
+      const [operation, targetProject, targetName] = args.slice(1)
+      if (!targetProject || !operation)
+        throw new CliError(
+          'usage: fleet db target add|test|remove <project> [target] ...',
+          EXIT.usage,
+        )
+      const path = targetPath(fleet, targetProject)
+      if (operation === 'add') {
+        if (
+          !targetName ||
+          typeof flags.endpoint !== 'string' ||
+          typeof flags.bucket !== 'string' ||
+          typeof flags.region !== 'string'
+        )
+          throw new CliError(
+            'usage: fleet db target add <project> <name> --endpoint URL --bucket NAME --region REGION [--prefix PATH] [--default]',
+            EXIT.usage,
+          )
+        const accessKeyId =
+          process.env.FLEET_S3_ACCESS_KEY_ID ||
+          (canPrompt() ? await askSecret('S3 access key') : '')
+        const secretAccessKey =
+          process.env.FLEET_S3_SECRET_ACCESS_KEY ||
+          (canPrompt() ? await askSecret('S3 secret key') : '')
+        if (!accessKeyId || !secretAccessKey)
+          throw new CliError(
+            'Set FLEET_S3_ACCESS_KEY_ID and FLEET_S3_SECRET_ACCESS_KEY, or run interactively to enter them securely.',
+            EXIT.usage,
+          )
+        const { body } = await request<BackupTarget>('POST', path, {
+          body: {
+            name: targetName,
+            endpoint: flags.endpoint,
+            bucket: flags.bucket,
+            region: flags.region,
+            ...(typeof flags.prefix === 'string'
+              ? { prefix: flags.prefix }
+              : {}),
+            credentials: { accessKeyId, secretAccessKey },
+            ...(flags.default ? { isDefault: true } : {}),
+          },
+        })
+        if (flags.json) return console.log(JSON.stringify(body, null, 2))
+        console.log(
+          `${c.green('added')} backup target ${c.bold(body.name)} (${body.id.slice(0, 8)})`,
+        )
+        return
+      }
+      if (operation === 'test' || operation === 'remove') {
+        if (!targetName)
+          throw new CliError(
+            `usage: fleet db target ${operation} <project> <target>`,
+            EXIT.usage,
+          )
+        const { body: listed } = await request<{ targets: BackupTarget[] }>(
+          'GET',
+          path,
+        )
+        const target = selectBackupTarget(listed.targets, targetName)
+        if (
+          operation === 'remove' &&
+          !flags.yes &&
+          !(await confirm(`Remove backup target ${target.name}?`))
+        )
+          return
+        const result = await request(
+          operation === 'test' ? 'POST' : 'DELETE',
+          `${path}/${target.id}${operation === 'test' ? '/test' : ''}`,
+        )
+        if (flags.json) return console.log(JSON.stringify(result.body, null, 2))
+        console.log(
+          operation === 'test'
+            ? `${c.green('verified')} ${target.name}`
+            : `${c.green('removed')} ${target.name}`,
+        )
+        return
+      }
+      throw new CliError(
+        'usage: fleet db target add|test|remove <project> [target] ...',
+        EXIT.usage,
+      )
     }
     if (action === 'create') {
       if (!project || !nameOrId)
@@ -262,10 +386,30 @@ export const databasesCommand = {
       return
     }
     throw new CliError(
-      'usage: fleet db list|create|start|stop|restart|link|unlink|connect|exec …',
+      'usage: fleet db list|create|start|stop|restart|link|unlink|connect|exec|targets|target …',
       EXIT.usage,
     )
   },
+}
+
+const targetPath = (fleet: string, project: string) =>
+  `/fleets/${encodeURIComponent(fleet)}/projects/${encodeURIComponent(project)}/backup-targets`
+
+export function selectBackupTarget(targets: BackupTarget[], nameOrId: string) {
+  const matches = targets.filter(
+    (target) =>
+      target.id === nameOrId ||
+      target.id.startsWith(nameOrId) ||
+      target.name === nameOrId,
+  )
+  if (matches.length !== 1)
+    throw new CliError(
+      matches.length
+        ? `Backup target "${nameOrId}" is ambiguous.`
+        : `No backup target "${nameOrId}" was found.`,
+      EXIT.usage,
+    )
+  return matches[0]!
 }
 
 async function execDatabase(

@@ -13,6 +13,7 @@ import {
   StatusPill,
 } from '../components/ui'
 import DatabaseCreate from '../components/DatabaseCreate'
+import DatabaseTargets from '../components/DatabaseTargets'
 
 export default function Databases() {
   const { fleet } = useAuth()
@@ -189,6 +190,13 @@ function DatabaseList({
           </div>
         )}
       </Panel>
+      {project && (
+        <DatabaseTargets
+          fleetId={fleetId}
+          project={project}
+          canManage={canCreate}
+        />
+      )}
       {creating && (
         <DatabaseCreate
           fleetId={fleetId}
