@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
 import {
   databasePath,
   databaseRequestKey,
+  databaseRoute,
   operationActive,
   useDatabaseEvents,
   type DatabaseOperation,
@@ -76,8 +77,10 @@ function DatabaseDetailContent({
   canManageAccess: boolean
 }) {
   const path = databasePath(fleetId, project, databaseId)
+  const navigate = useNavigate()
   const linksPath = `${path}/links`
   const backupsPath = `${path}/backups`
+  const restoreTargetsPath = `/fleets/${encodeURIComponent(fleetId)}/databases?project=${encodeURIComponent(project)}&limit=100`
   const linksResult = usePoll(
     () => api<{ links: DatabaseLink[]; services: ProjectService[] }>(linksPath),
     linksPath,
@@ -86,6 +89,11 @@ function DatabaseDetailContent({
   const backupsResult = usePoll(
     () => api<{ backups: DatabaseBackup[] }>(backupsPath),
     backupsPath,
+    5000,
+  )
+  const restoreTargetsResult = usePoll(
+    () => api<{ databases: DatabaseView[] }>(restoreTargetsPath),
+    restoreTargetsPath,
     5000,
   )
   const result = usePoll(
@@ -97,6 +105,8 @@ function DatabaseDetailContent({
   const [error, setError] = useState<unknown>(null),
     [busy, setBusy] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
+  const [restoreBusy, setRestoreBusy] = useState(false)
+  const [restoreTargetId, setRestoreTargetId] = useState('')
   const [confirm, setConfirm] = useState<'stop' | 'restart' | null>(null)
   const [submitted, setSubmitted] = useState<string | null>(null)
   const [serviceId, setServiceId] = useState('')
@@ -130,6 +140,16 @@ function DatabaseDetailContent({
       )
     )
   const available = database?.nodeStatus === 'online' && !database.deletedAt
+  const restoreTargets = (restoreTargetsResult.data?.databases ?? []).filter(
+    (candidate) =>
+      candidate.id !== databaseId &&
+      candidate.project === project &&
+      candidate.engine === 'postgres' &&
+      candidate.version === database?.version &&
+      candidate.status === 'running' &&
+      candidate.nodeStatus === 'online' &&
+      !candidate.deletedAt,
+  )
   async function action(name: 'start' | 'stop' | 'restart') {
     if (busy || active) return
     if (attempt.current?.action !== name)
@@ -200,6 +220,29 @@ function DatabaseDetailContent({
       setError(err)
     } finally {
       setBackupBusy(false)
+    }
+  }
+  async function restoreBackup(backup: DatabaseBackup) {
+    if (restoreBusy || active || !restoreTargetId) return
+    setRestoreBusy(true)
+    setError(null)
+    try {
+      const accepted = await api<{ operationId: string; databaseId: string }>(
+        `${backupsPath}/${backup.id}/restore`,
+        {
+          method: 'POST',
+          body: { targetDatabaseId: restoreTargetId },
+          idempotencyKey: databaseRequestKey(),
+        },
+      )
+      const target = restoreTargets.find(
+        (candidate) => candidate.id === accepted.databaseId,
+      )
+      if (target) navigate(databaseRoute(target))
+    } catch (err) {
+      setError(err)
+    } finally {
+      setRestoreBusy(false)
     }
   }
   async function removeLink(targetServiceId: string) {
@@ -314,10 +357,54 @@ function DatabaseDetailContent({
       <Panel title="Database backups">
         <div className="space-y-4 p-5">
           <ErrorNote error={backupsResult.error} />
+          <ErrorNote error={restoreTargetsResult.error} />
           {!database.backupTargetId && (
             <p className="text-sm text-[var(--color-fg-muted)]">
               Assign an off-node target before creating a backup.
             </p>
+          )}
+          {canManageAccess && database.engine === 'postgres' && (
+            <div className="grid gap-3 border-y border-[var(--color-line)] py-4 sm:grid-cols-[1fr_auto] sm:items-end">
+              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                Restore into an empty PostgreSQL database
+                <select
+                  aria-label="Restore target database"
+                  value={restoreTargetId}
+                  onChange={(event) => setRestoreTargetId(event.target.value)}
+                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                >
+                  <option value="">Choose a running same-version target</option>
+                  {restoreTargets.map((target) => (
+                    <option key={target.id} value={target.id}>
+                      {target.name} · {target.nodeName ?? 'node'}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[var(--color-fg-dim)]">
+                  Create an empty target first. Restore refuses populated
+                  databases and preserves their data.
+                </span>
+              </label>
+              {backupsResult.data?.backups
+                .filter(
+                  (backup) =>
+                    backup.kind === 'logical' &&
+                    backup.state === 'complete' &&
+                    backup.verifiedAt,
+                )
+                .map((backup) => (
+                  <Button
+                    key={backup.id}
+                    variant="secondary"
+                    disabled={restoreBusy || active || !restoreTargetId}
+                    onClick={() => void restoreBackup(backup)}
+                  >
+                    {restoreBusy
+                      ? 'Starting restore…'
+                      : `Restore ${backup.id.slice(0, 8)}`}
+                  </Button>
+                ))}
+            </div>
           )}
           {canManageAccess && (
             <Button
@@ -367,8 +454,8 @@ function DatabaseDetailContent({
           )}
           <p className="text-xs text-[var(--color-fg-dim)]">
             A backup is verified only after its encrypted object is read back
-            and checksummed. Restore and point-in-time recovery are not
-            available yet.
+            and checksummed. Logical PostgreSQL restore runs into a separate
+            empty database. Point-in-time recovery is not available here yet.
           </p>
         </div>
       </Panel>
