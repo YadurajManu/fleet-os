@@ -113,6 +113,7 @@ export async function createDatabaseBackup(
   scope: { fleetId: string; project: string; databaseId: string },
   key: string,
   actor: { orgId: string; userId: string },
+  options: { kind?: 'base' | 'logical' | 'rdb'; label?: string } = {},
 ) {
   return ctx.db.transaction(async (tx) => {
     const [database] = await tx
@@ -127,6 +128,22 @@ export async function createDatabaseBackup(
       )
       .for('update')
     if (!database) throw ApiError.notFound('Database')
+    const kind =
+      options.kind ?? (database.engine === 'postgres' ? 'logical' : 'rdb')
+    if (
+      (database.engine === 'postgres' &&
+        kind !== 'base' &&
+        kind !== 'logical') ||
+      (database.engine === 'redis' && kind !== 'rdb')
+    )
+      throw ApiError.badRequest(
+        'database_backup_kind_invalid',
+        'Choose a backup type supported by this database engine.',
+      )
+    const input =
+      kind === (database.engine === 'postgres' ? 'logical' : 'rdb')
+        ? { databaseId: database.id }
+        : { databaseId: database.id, kind }
     const existing = await tx
       .select()
       .from(databaseOperations)
@@ -142,7 +159,7 @@ export async function createDatabaseBackup(
         'sha256',
         Buffer.from(ctx.config.SECRETS_MASTER_KEY, 'base64'),
       )
-        .update(`backup\n${JSON.stringify({ databaseId: database.id })}`)
+        .update(`backup\n${JSON.stringify(input)}`)
         .digest('hex')
       if (existing[0].kind !== 'backup' || existing[0].inputHash !== inputHash)
         throw ApiError.conflict(
@@ -196,7 +213,7 @@ export async function createDatabaseBackup(
       'sha256',
       Buffer.from(ctx.config.SECRETS_MASTER_KEY, 'base64'),
     )
-      .update(`backup\n${JSON.stringify({ databaseId: database.id })}`)
+      .update(`backup\n${JSON.stringify(input)}`)
       .digest('hex')
     const active = await tx
       .select({ id: databaseOperations.id })
@@ -240,9 +257,9 @@ export async function createDatabaseBackup(
       generation: database.generation,
       engine: database.engine,
       engineVersion: database.version,
-      kind: database.engine === 'postgres' ? 'logical' : 'rdb',
+      kind,
       objectPrefix: `${target.prefix ? `${target.prefix}/` : ''}databases/${database.id}/${backupId}`,
-      label: 'manual',
+      label: options.label ?? 'manual',
     })
     await recordAudit(tx, {
       orgId: actor.orgId,
@@ -695,6 +712,99 @@ export async function runDatabaseBackup(
     .update(databaseBackups)
     .set({ state: 'running', errorCode: null, startedAt: new Date() })
     .where(eq(databaseBackups.id, backup.id))
+  if (backup.kind === 'base') {
+    try {
+      if (database.engine !== 'postgres')
+        throw new Error('backup_engine_mismatch')
+      const run = async (args: string[]) => {
+        const stream = tunnel.open(
+          {
+            identity,
+            role: 'database',
+            timeoutMs: 60 * 60 * 1000,
+            command: {
+              command: args,
+              env: { AWS_ENDPOINT: target.endpoint, PGUSER: 'fleet_owner' },
+            },
+          },
+          signal,
+        )
+        let exitCode: number | undefined
+        const exited = new Promise<void>((resolve) =>
+          stream.once('exit', (code: number) => {
+            exitCode = code
+            resolve()
+          }),
+        )
+        const chunks: Buffer[] = []
+        let size = 0
+        for await (const chunk of stream) {
+          size += chunk.length
+          if (size > 1024 * 1024) {
+            stream.destroy(new Error('wal_g_output_too_large'))
+            throw new Error('wal_g_output_too_large')
+          }
+          chunks.push(Buffer.from(chunk))
+        }
+        await exited
+        if (exitCode !== 0) throw new Error('wal_g_command_failed')
+        return Buffer.concat(chunks, size).toString('utf8')
+      }
+      const readBackups = async () => {
+        const output = await run(['wal-g', 'backup-list', '--json'])
+        const parsed = z
+          .array(
+            z
+              .object({
+                backup_name: z.string().regex(/^base_[A-Za-z0-9_-]{1,180}$/),
+                start_time: z.string().optional(),
+                finish_time: z.string().optional(),
+              })
+              .passthrough(),
+          )
+          .safeParse(JSON.parse(output))
+        if (!parsed.success) throw new Error('wal_g_backup_list_invalid')
+        return parsed.data
+      }
+      const before = new Set(
+        (await readBackups()).map((item) => item.backup_name),
+      )
+      await progress('backup', 30)
+      await run(['wal-g', 'backup-push', '/var/lib/postgresql/data/pgdata'])
+      await progress('verify', 90)
+      const created = (await readBackups()).find(
+        (item) => !before.has(item.backup_name),
+      )
+      if (!created) throw new Error('wal_g_backup_not_visible')
+      await ctx.db
+        .update(databaseBackups)
+        .set({
+          state: 'complete',
+          recoveryPoint: {
+            format: 'wal-g-v1',
+            backupName: created.backup_name,
+            ...(created.start_time ? { startTime: created.start_time } : {}),
+            ...(created.finish_time ? { finishTime: created.finish_time } : {}),
+          },
+          startedAt: backup.startedAt ?? new Date(),
+          finishedAt: new Date(),
+          verifiedAt: new Date(),
+        })
+        .where(eq(databaseBackups.id, backup.id))
+      await progress('commit', 100)
+    } catch (error) {
+      await ctx.db
+        .update(databaseBackups)
+        .set({
+          state: 'failed',
+          errorCode: 'base_backup_failed',
+          finishedAt: new Date(),
+        })
+        .where(eq(databaseBackups.id, backup.id))
+      throw error
+    }
+    return
+  }
   const credentials = targetCredentials.parse(
     JSON.parse(
       openSecret(target.encryptedCredentials, ctx.config.SECRETS_MASTER_KEY),

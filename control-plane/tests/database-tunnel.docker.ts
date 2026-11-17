@@ -44,7 +44,11 @@ import WebSocket, { WebSocketServer } from 'ws'
 import postgresClient from 'postgres'
 import { TunnelRegistry } from '../src/tunnel/registry.js'
 import { DatabaseTunnel } from '../src/databases/tunnel.js'
-import { postgresEngine, redisEngine } from '../src/databases/engines.js'
+import {
+  databaseBackupPrefix,
+  postgresEngine,
+  redisEngine,
+} from '../src/databases/engines.js'
 import { sealSecret } from '../src/lib/crypto.js'
 import type { AppContext } from '../src/api/context.js'
 import {
@@ -52,6 +56,7 @@ import {
   DeleteBucketCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   S3Client,
 } from '@aws-sdk/client-s3'
 
@@ -439,6 +444,13 @@ test(
           })
           assert.equal(targetResponse.statusCode, 201, targetResponse.body)
           const targetId = targetResponse.json().id as string
+          // Docker agents need a host-gateway URL; the API-side S3 client uses the mapped port.
+          await workerContext.db
+            .update(databaseBackupTargets)
+            .set({
+              endpoint: endpoint.replace('127.0.0.1', 'host.docker.internal'),
+            })
+            .where(eq(databaseBackupTargets.id, targetId))
           const assigned = await api.inject({
             method: 'PUT',
             url: `${targets.replace('/backup-targets', '')}/databases/${postgresId}/backup-target`,
@@ -446,6 +458,26 @@ test(
             payload: { targetId },
           })
           assert.equal(assigned.statusCode, 200, assigned.body)
+          const restarted = await api.inject({
+            method: 'POST',
+            url: `${targets.replace('/backup-targets', '')}/databases/${postgresId}/actions`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+            payload: { action: 'restart' },
+          })
+          assert.equal(restarted.statusCode, 202, restarted.body)
+          assert.equal(await worker.tick(), true)
+          const [restartOperation] = await workerContext.db
+            .select({ state: databaseOperations.state })
+            .from(databaseOperations)
+            .where(eq(databaseOperations.id, restarted.json().operation.id))
+          assert.equal(restartOperation!.state, 'succeeded')
+          await workerContext.db
+            .update(databaseBackupTargets)
+            .set({ endpoint })
+            .where(eq(databaseBackupTargets.id, targetId))
           docker([
             'exec',
             '-e',
@@ -497,6 +529,58 @@ test(
           const dump = decryptBackup(workerContext, backupId, sealed)
           assert.equal(dump.subarray(0, 5).toString(), 'PGDMP')
           assert.equal(sealed.length, backup!.sizeBytes)
+          docker([
+            'network',
+            'connect',
+            '--alias',
+            'minio',
+            postgresPlan.network,
+            process.env.FLEET_DB_MINIO_CONTAINER!,
+          ])
+          await workerContext.db
+            .update(databaseBackupTargets)
+            .set({ endpoint: 'http://minio:9000' })
+            .where(eq(databaseBackupTargets.id, targetId))
+          const baseQueued = await api.inject({
+            method: 'POST',
+            url: `${targets.replace('/backup-targets', '')}/databases/${postgresId}/base-backups`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+          })
+          assert.equal(baseQueued.statusCode, 202, baseQueued.body)
+          assert.equal(await worker.tick(), true)
+          const baseBackupId = baseQueued.json().backupId as string
+          const [baseBackup] = await workerContext.db
+            .select()
+            .from(databaseBackups)
+            .where(eq(databaseBackups.id, baseBackupId))
+          assert.equal(
+            baseBackup!.state,
+            'complete',
+            `WAL-G base backup failed with ${baseBackup!.errorCode ?? 'no error code'}`,
+          )
+          assert.match(String(baseBackup!.recoveryPoint.backupName), /^base_/)
+          const walPrefix = databaseBackupPrefix('e2e', fleetId, postgresId, 1)
+          let continuationToken: string | undefined
+          do {
+            const objects = await backupS3.send(
+              new ListObjectsV2Command({
+                Bucket: backupBucket,
+                Prefix: walPrefix,
+                ContinuationToken: continuationToken,
+              }),
+            )
+            for (const object of objects.Contents ?? [])
+              if (object.Key) backupObjectKeys.push(object.Key)
+            continuationToken = objects.NextContinuationToken
+          } while (continuationToken)
+          assert.ok(backupObjectKeys.some((key) => key.startsWith(walPrefix)))
+          await workerContext.db
+            .update(databaseBackupTargets)
+            .set({ endpoint })
+            .where(eq(databaseBackupTargets.id, targetId))
           const downloaded = await api.inject({
             method: 'GET',
             url: `${backupUrl}/${backupId}/download`,

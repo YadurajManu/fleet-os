@@ -230,6 +230,24 @@ export async function databaseRoutes(app: FastifyInstance) {
     },
   )
   app.post(
+    base + '/:databaseId/base-backups',
+    { preHandler: requireFleetPermission('database.backup') },
+    async (request, reply) => {
+      const { fleetId, project, databaseId } = parseRequest(
+        detail,
+        request.params,
+      )
+      const result = await createDatabaseBackup(
+        ctx,
+        { fleetId, project, databaseId },
+        key(request),
+        { orgId: request.orgId!, userId: request.userId! },
+        { kind: 'base', label: 'manual-base' },
+      )
+      return reply.code(202).send(result)
+    },
+  )
+  app.post(
     base + '/:databaseId/backups/:backupId/restore',
     { preHandler: requireFleetPermission('database.backup') },
     async (request, reply) => {
