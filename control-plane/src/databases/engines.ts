@@ -197,6 +197,15 @@ export function projectDatabaseNetwork(
 ): string {
   return `fleet-db-${createHash('sha256').update(`${fleetId}\0${project}`).digest('hex').slice(0, 24)}`
 }
+export const databaseBackupPrefix = (
+  prefix: string,
+  fleetId: string,
+  databaseId: string,
+  generation: number,
+) =>
+  [prefix, 'databases', fleetId, databaseId, `generation-${generation}`]
+    .filter(Boolean)
+    .join('/')
 const databaseName = (options: EngineOptions) =>
   options.name.replaceAll('-', '_')
 const directHost = (options: EngineOptions) => `${options.name}.fleet.internal`

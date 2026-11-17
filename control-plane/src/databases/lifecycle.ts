@@ -16,6 +16,7 @@ import { fleetSnapshot } from '../scheduler/snapshot.js'
 import { nodePlatform } from '../build/platforms.js'
 import {
   databaseEnginePlugin,
+  databaseBackupPrefix,
   type EngineCredentials,
   type EngineOptions,
 } from './engines.js'
@@ -246,7 +247,12 @@ export async function runtimeIntent(
     backupTarget = {
       endpoint: target.endpoint,
       bucket: target.bucket,
-      prefix: target.prefix,
+      prefix: databaseBackupPrefix(
+        target.prefix,
+        database.fleetId,
+        database.id,
+        database.generation,
+      ),
       region: target.region,
       credentials: backup.data,
       encryptionKey: backup.data.encryptionKey,

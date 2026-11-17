@@ -13,7 +13,10 @@ import {
   ListObjectsV2Command,
   S3Client,
 } from '@aws-sdk/client-s3'
-import { postgresEngine } from '../src/databases/engines.js'
+import {
+  databaseBackupPrefix,
+  postgresEngine,
+} from '../src/databases/engines.js'
 
 const dockerExec = promisify(execFile)
 const run = async (...args: string[]) =>
@@ -34,7 +37,8 @@ test(
       secretAccessKey: process.env.FLEET_DB_MINIO_SECRET_KEY!,
     }
     const bucket = 'fleet-backups'
-    const prefix = `walg-test/${id}`
+    const fleetId = randomUUID()
+    const prefix = databaseBackupPrefix('walg-test', fleetId, id, 1)
     const client = new S3Client({
       endpoint,
       forcePathStyle: true,
@@ -78,7 +82,7 @@ test(
       }
       const plan = postgresEngine.plan({
         id,
-        fleetId: randomUUID(),
+        fleetId,
         project: 'walg-test',
         name: `db-${id.slice(0, 8)}`,
         version: '17',
