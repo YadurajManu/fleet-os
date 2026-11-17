@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
@@ -22,6 +22,15 @@ import {
   StatusPill,
 } from '../components/ui'
 
+type ProjectService = { id: string; name: string }
+type DatabaseLink = {
+  serviceId: string
+  serviceName: string
+  role: 'app' | 'readonly'
+  envKeys: Record<string, string>
+  restartRequired: boolean
+}
+
 export default function DatabaseDetail() {
   const { fleet } = useAuth()
   const { project, databaseId } = useParams()
@@ -39,6 +48,7 @@ export default function DatabaseDetail() {
       project={project}
       databaseId={databaseId}
       canOperate={fleet.role !== 'viewer'}
+      canManageAccess={fleet.role === 'owner' || fleet.role === 'admin'}
     />
   )
 }
@@ -48,13 +58,21 @@ function DatabaseDetailContent({
   project,
   databaseId,
   canOperate,
+  canManageAccess,
 }: {
   fleetId: string
   project: string
   databaseId: string
   canOperate: boolean
+  canManageAccess: boolean
 }) {
   const path = databasePath(fleetId, project, databaseId)
+  const linksPath = `${path}/links`
+  const linksResult = usePoll(
+    () => api<{ links: DatabaseLink[]; services: ProjectService[] }>(linksPath),
+    linksPath,
+    5000,
+  )
   const result = usePoll(
     () =>
       api<{ database: DatabaseView; operations: DatabaseOperation[] }>(path),
@@ -65,6 +83,11 @@ function DatabaseDetailContent({
     [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState<'stop' | 'restart' | null>(null)
   const [submitted, setSubmitted] = useState<string | null>(null)
+  const [serviceId, setServiceId] = useState('')
+  const [linkRole, setLinkRole] = useState<'app' | 'readonly'>('app')
+  const [envPrefix, setEnvPrefix] = useState('')
+  const [linkBusy, setLinkBusy] = useState(false)
+  const [linkNotice, setLinkNotice] = useState('')
   const [progress, setProgress] = useState<Record<string, DatabaseProgress>>({})
   const attempt = useRef<{ action: string; key: string } | null>(null)
   const stream = useDatabaseEvents(
@@ -114,6 +137,57 @@ function DatabaseDetailContent({
       setError(err)
     } finally {
       setBusy(false)
+    }
+  }
+  async function createLink(event: FormEvent) {
+    event.preventDefault()
+    if (!serviceId || linkBusy) return
+    setLinkBusy(true)
+    setError(null)
+    try {
+      const { link } = await api<{ link: DatabaseLink }>(linksPath, {
+        method: 'POST',
+        body: {
+          serviceId,
+          role: linkRole,
+          ...(envPrefix.trim() ? { as: envPrefix.trim() } : {}),
+        },
+      })
+      setServiceId('')
+      setEnvPrefix('')
+      setLinkNotice(
+        link.restartRequired
+          ? 'Redeploy the service to apply this database connection.'
+          : '',
+      )
+      linksResult.refetch()
+      result.refetch()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setLinkBusy(false)
+    }
+  }
+  async function removeLink(targetServiceId: string) {
+    if (linkBusy) return
+    setLinkBusy(true)
+    setError(null)
+    try {
+      const response = await api<{ restartRequired: boolean }>(
+        `${linksPath}/${targetServiceId}`,
+        { method: 'DELETE' },
+      )
+      setLinkNotice(
+        response.restartRequired
+          ? 'Redeploy the service to remove the connection from its running process.'
+          : '',
+      )
+      linksResult.refetch()
+      result.refetch()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setLinkBusy(false)
     }
   }
   if (!database)
@@ -249,6 +323,115 @@ function DatabaseDetailContent({
           </ul>
         </Panel>
       )}
+      <Panel title="Linked services">
+        <div className="space-y-4 p-5">
+          {linkNotice && (
+            <p role="status" className="text-sm text-[var(--color-warn)]">
+              {linkNotice}
+            </p>
+          )}
+          <ErrorNote error={linksResult.error} />
+          {!linksResult.data?.links.length ? (
+            <p className="text-sm text-[var(--color-fg-muted)]">
+              No services are linked to this database.
+            </p>
+          ) : (
+            <div className="divide-y divide-[var(--color-line)]">
+              {linksResult.data.links.map((link) => (
+                <div
+                  key={link.serviceId}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
+                >
+                  <div>
+                    <p className="font-medium">{link.serviceName}</p>
+                    <p className="mt-1 font-mono text-xs text-[var(--color-fg-muted)]">
+                      {link.role} · {Object.keys(link.envKeys).join(', ')}
+                    </p>
+                    {link.restartRequired && (
+                      <p
+                        role="status"
+                        className="mt-2 text-xs text-[var(--color-warn)]"
+                      >
+                        Redeploy this service to apply the database connection.
+                      </p>
+                    )}
+                  </div>
+                  {canManageAccess && (
+                    <Button
+                      disabled={linkBusy}
+                      onClick={() => void removeLink(link.serviceId)}
+                    >
+                      Unlink
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {canManageAccess && (
+            <form
+              onSubmit={(event) => void createLink(event)}
+              className="grid gap-3 border-t border-[var(--color-line)] pt-4 sm:grid-cols-2"
+            >
+              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                Service
+                <select
+                  aria-label="Service to link"
+                  value={serviceId}
+                  onChange={(event) => setServiceId(event.target.value)}
+                  required
+                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                >
+                  <option value="">Choose a project service</option>
+                  {(linksResult.data?.services ?? [])
+                    .filter(
+                      (service) =>
+                        !linksResult.data?.links.some(
+                          (link) => link.serviceId === service.id,
+                        ),
+                    )
+                    .map((service) => (
+                      <option key={service.id} value={service.id}>
+                        {service.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                Database role
+                <select
+                  aria-label="Database role"
+                  value={linkRole}
+                  onChange={(event) =>
+                    setLinkRole(event.target.value as 'app' | 'readonly')
+                  }
+                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                >
+                  <option value="app">Application read and write</option>
+                  <option value="readonly">Read only</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)] sm:col-span-2">
+                Optional environment prefix
+                <input
+                  aria-label="Environment prefix"
+                  value={envPrefix}
+                  onChange={(event) =>
+                    setEnvPrefix(event.target.value.toUpperCase())
+                  }
+                  placeholder="Uses DATABASE_URL by default"
+                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                />
+              </label>
+              <div className="sm:col-span-2">
+                <Button variant="primary" disabled={linkBusy || !serviceId}>
+                  {linkBusy ? 'Saving…' : 'Link service'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
+      </Panel>
       <Panel
         title="Operations"
         right={

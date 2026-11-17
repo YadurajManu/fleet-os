@@ -396,6 +396,7 @@ export const services = pgTable(
     imagePlatforms: text('image_platforms').array().notNull().default([]),
 
     affinity: text('affinity').array().notNull().default([]),
+    preferredNodeIds: uuid('preferred_node_ids').array().notNull().default([]),
     antiAffinity: text('anti_affinity').array().notNull().default([]),
 
     persistentVolume: boolean('persistent_volume').notNull().default(false),
@@ -894,6 +895,22 @@ export const databaseCredentials = pgTable('database_credentials', {
 }, t => [
   primaryKey({ columns: [t.databaseId, t.role] }),
   check('database_credentials_role_check', sql`${t.role} in ('owner', 'app', 'readonly')`),
+])
+
+export const databaseLinks = pgTable('database_links', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  databaseId: uuid('database_id').notNull().references(() => tenantDatabases.id, { onDelete: 'cascade' }),
+  serviceId: uuid('service_id').notNull().references(() => services.id, { onDelete: 'cascade' }),
+  role: text('role').$type<'app' | 'readonly'>().notNull().default('app'),
+  envKeys: jsonb('env_keys').$type<Record<string, string>>().notNull(),
+  appliedGeneration: integer('applied_generation').notNull().default(0),
+  restartRequired: boolean('restart_required').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  uniqueIndex('database_links_pair_idx').on(t.databaseId, t.serviceId),
+  index('database_links_service_idx').on(t.serviceId),
+  check('database_links_role_check', sql`${t.role} in ('app', 'readonly')`),
+  check('database_links_generation_check', sql`${t.appliedGeneration} >= 0`),
 ])
 
 export const databaseOperations = pgTable('database_operations', {

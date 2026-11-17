@@ -390,6 +390,7 @@ func (e *Engine) start(ctx context.Context, svc client.DesiredService, registryA
 		Volume:        svc.Volume,
 		VolumePath:    svc.VolumePath,
 		Env:           svc.Env,
+		Networks:      svc.DatabaseNetworks,
 		ContainerPort: containerPort,
 	}
 

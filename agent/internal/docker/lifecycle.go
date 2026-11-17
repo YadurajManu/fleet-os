@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ type RunSpec struct {
 	// inside the container is still the only route in.
 	ProbedByAgent bool
 	Memory        int64 // bytes; 0 means unlimited
+	Networks      []string
 }
 
 // HealthSpec is what the manifest's `health:` block becomes.
@@ -264,6 +266,12 @@ type endpointConfig struct {
 	Aliases []string `json:"Aliases,omitempty"`
 }
 
+type networkConnectRequest struct {
+	Container string `json:"Container"`
+}
+
+var databaseNetworkName = regexp.MustCompile(`^fleet-db-[a-f0-9]{24}$`)
+
 type healthcheck struct {
 	Test     []string `json:"Test"`
 	Interval int64    `json:"Interval"`
@@ -341,6 +349,11 @@ type createResponse struct {
 
 // Create makes the container but does not start it.
 func (c *Client) Create(ctx context.Context, spec RunSpec) (string, error) {
+	for _, network := range spec.Networks {
+		if !databaseNetworkName.MatchString(network) || network == NetworkName {
+			return "", fmt.Errorf("invalid database network name %q", network)
+		}
+	}
 	req := createRequest{
 		Image: spec.Image,
 		Labels: map[string]string{
@@ -411,6 +424,13 @@ func (c *Client) Create(ctx context.Context, spec RunSpec) (string, error) {
 			c.forgetNetwork()
 		}
 		return "", err
+	}
+	for _, network := range spec.Networks {
+		path := fmt.Sprintf("/%s/networks/%s/connect", c.api(ctx), network)
+		if err := c.do(ctx, http.MethodPost, path, networkConnectRequest{Container: out.ID}, nil); err != nil {
+			_ = c.Remove(ctx, out.ID)
+			return "", fmt.Errorf("attach database network: %w", err)
+		}
 	}
 	return out.ID, nil
 }

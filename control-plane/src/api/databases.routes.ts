@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gt } from 'drizzle-orm'
 import { once } from 'node:events'
 import { z } from 'zod'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import { tenantDatabases, databaseOperations } from '../db/schema.js'
+import { tenantDatabases, databaseOperations, services } from '../db/schema.js'
 import { requireFleetPermission } from './guards.js'
 import { ApiError } from './errors.js'
 import {
@@ -17,6 +17,11 @@ import { databaseEnginePlugin } from '../databases/engines.js'
 import { fleetSnapshot } from '../scheduler/snapshot.js'
 import { placeDatabase } from '../databases/placement.js'
 import { streamDatabaseProgress } from '../databases/progress.js'
+import {
+  linkDatabase,
+  listDatabaseLinks,
+  unlinkDatabase,
+} from '../databases/links.js'
 
 const scope = z.object({
   fleetId: z.string().uuid(),
@@ -99,6 +104,72 @@ export async function databaseRoutes(app: FastifyInstance) {
     },
   )
   const base = '/fleets/:fleetId/projects/:project/databases'
+  app.get(
+    base + '/:databaseId/links',
+    { preHandler: requireFleetPermission('database.read') },
+    async (request) => {
+      const { fleetId, project, databaseId } = parseRequest(
+        detail,
+        request.params,
+      )
+      const [links, projectServices] = await Promise.all([
+        listDatabaseLinks(ctx, fleetId, project, databaseId),
+        ctx.db
+          .select({ id: services.id, name: services.name })
+          .from(services)
+          .where(
+            and(eq(services.fleetId, fleetId), eq(services.project, project)),
+          )
+          .orderBy(services.name),
+      ])
+      return { links, services: projectServices }
+    },
+  )
+  app.post(
+    base + '/:databaseId/links',
+    { preHandler: requireFleetPermission('database.access') },
+    async (request) => {
+      const { fleetId, project, databaseId } = parseRequest(
+        detail,
+        request.params,
+      )
+      const body = parseRequest(
+        z
+          .object({
+            serviceId: z.string().uuid(),
+            role: z.enum(['app', 'readonly']).optional(),
+            as: z
+              .string()
+              .regex(/^[A-Z_][A-Z0-9_]{0,63}$/)
+              .optional(),
+          })
+          .strict(),
+        request.body,
+      )
+      return linkDatabase(ctx, fleetId, project, databaseId, body, {
+        orgId: request.orgId!,
+        userId: request.userId!,
+      })
+    },
+  )
+  app.delete(
+    base + '/:databaseId/links/:serviceId',
+    { preHandler: requireFleetPermission('database.access') },
+    async (request) => {
+      const { fleetId, project, databaseId } = parseRequest(
+        detail,
+        request.params,
+      )
+      const { serviceId } = parseRequest(
+        z.object({ serviceId: z.string().uuid() }),
+        request.params,
+      )
+      return unlinkDatabase(ctx, fleetId, project, databaseId, serviceId, {
+        orgId: request.orgId!,
+        userId: request.userId!,
+      })
+    },
+  )
   app.get(
     base + '/catalog',
     { preHandler: requireFleetPermission('database.read') },

@@ -62,6 +62,7 @@ export const KNOWN_FLAGS = new Set([
   'target', 'shell', 'timeout', 'no-animation', 'color', 'ascii',
   'engine', 'mode', 'version',
   'watch', 'services', 'nodes', 'failures', 'no-color',
+  'role',
 ])
 
 /** The closest known flag to a mistyped one, or null when nothing is close. */
