@@ -110,6 +110,7 @@ const OPTIONS: Array<[string, string]> = [
   // both have a "backend", and picking the first match silently acts on
   // somebody else's.
   ['--project <name>', 'Disambiguate when two projects have a service of the same name'],
+  ['--role <app|readonly>', 'Choose the database credentials injected by db link'],
   ['--api <url>', 'Control plane URL (default: hosted Fleet, or saved profile)'],
   ['--json', 'Machine-readable output on stdout'],
   ['--plan, --dry-run', 'Show the deploy placement plan without changing anything'],
@@ -119,7 +120,7 @@ const OPTIONS: Array<[string, string]> = [
   ['--replace <node>', 'Pair a stopped replacement machine using its existing node identity'],
   ['--from-service <name>', 'Copy a secret from this service scope'],
   ['--from-fleet <id>', 'Copy from an authorized source fleet; --fleet selects the destination'],
-  ['--as <KEY>', 'Choose another destination key when copying a secret'],
+  ['--as <PREFIX|KEY>', 'Choose a database env prefix or secret destination key'],
   ['--no-wait', 'Return once scheduled, without following the rollout'],
   ['--message <text>', 'Attach a short note to a local snapshot release'],
   ['--watch', 'Refresh fleet status every two seconds; requires a terminal'],

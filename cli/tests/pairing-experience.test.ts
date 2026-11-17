@@ -4,6 +4,7 @@ import { pairingCommand, waitForPairing } from '../src/pairing.js'
 import { compactWelcome, descriptionRows, pairingHelp } from '../src/presentation.js'
 import { spawnSync } from 'node:child_process'
 import { parseArgs } from '../src/args.js'
+import { usage } from '../src/index.js'
 
 test('target, not generator OS, selects the installer; arguments are quoted', () => {
   const win = pairingCommand('windows', 'https://example.test', "test'token")
@@ -37,6 +38,12 @@ test('help is compact and description layouts fit 40, 80 and 120 columns', () =>
     const rendered = descriptionRows([['fleet nodes pair', 'Connect another machine and verify its first heartbeat before declaring success.']], width)
     assert.ok(rendered.split('\n').every(line => line.length <= width), rendered)
   }
+})
+
+test('database link help explains role and environment prefix options', () => {
+  const help = usage()
+  assert.match(help, /--role <app\|readonly>/)
+  assert.match(help, /--as <PREFIX\|KEY>/)
 })
 
 test('presentation flags before commands remain boolean; piped output has no cursor escapes', () => {
