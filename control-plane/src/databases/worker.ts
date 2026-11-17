@@ -1,8 +1,15 @@
 import type { FastifyBaseLogger } from 'fastify'
-import { and, eq, ne } from 'drizzle-orm'
+import { and, asc, eq, lte, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import type { AppContext } from '../api/context.js'
-import { databaseBackups, nodes, tenantDatabases } from '../db/schema.js'
+import { ApiError } from '../api/errors.js'
+import {
+  databaseBackupSchedules,
+  databaseBackups,
+  fleets,
+  nodes,
+  tenantDatabases,
+} from '../db/schema.js'
 import { requireDatabaseCapabilities } from './capabilities.js'
 import {
   checkpointDatabaseOperation,
@@ -14,7 +21,11 @@ import {
   type OperationClaim,
 } from './operations.js'
 import { DatabaseTunnel, type DatabaseOperation } from './tunnel.js'
-import { runDatabaseBackup, runDatabaseRestore } from './backups.js'
+import {
+  createDatabaseBackup,
+  runDatabaseBackup,
+  runDatabaseRestore,
+} from './backups.js'
 
 const command = z.object({
   command: z.array(z.string()).min(1).max(128),
@@ -95,6 +106,7 @@ export class DatabaseWorker {
   private controller = new AbortController()
   private timer: NodeJS.Timeout | undefined
   private active: Promise<boolean> | undefined
+  private nextBackupScan = 0
   private tunnel: DatabaseTunnel
   constructor(private ctx: AppContext) {
     this.tunnel = new DatabaseTunnel(ctx.tunnels)
@@ -124,6 +136,7 @@ export class DatabaseWorker {
     return this.active
   }
   private async run(): Promise<boolean> {
+    await this.queueScheduledBackups()
     const claim = await claimDatabaseOperation(this.ctx, [
       'create',
       'start',
@@ -136,6 +149,66 @@ export class DatabaseWorker {
     if (!claim) return false
     await this.execute(claim)
     return true
+  }
+  private async queueScheduledBackups(): Promise<void> {
+    if (Date.now() < this.nextBackupScan) return
+    this.nextBackupScan = Date.now() + 60_000
+    const due = await this.ctx.db
+      .select({
+        schedule: databaseBackupSchedules,
+        database: tenantDatabases,
+        orgId: fleets.orgId,
+      })
+      .from(databaseBackupSchedules)
+      .innerJoin(
+        tenantDatabases,
+        eq(databaseBackupSchedules.databaseId, tenantDatabases.id),
+      )
+      .innerJoin(fleets, eq(tenantDatabases.fleetId, fleets.id))
+      .where(
+        and(
+          eq(databaseBackupSchedules.enabled, true),
+          lte(databaseBackupSchedules.nextRunAt, new Date()),
+        ),
+      )
+      .orderBy(asc(databaseBackupSchedules.nextRunAt))
+      .limit(20)
+    for (const { schedule, database, orgId } of due) {
+      if (
+        database.deletedAt ||
+        database.status !== 'running' ||
+        !database.backupTargetId
+      )
+        continue
+      const dueDate = schedule.nextRunAt.toISOString().slice(0, 10)
+      try {
+        await createDatabaseBackup(
+          this.ctx,
+          {
+            fleetId: database.fleetId,
+            project: database.project,
+            databaseId: database.id,
+          },
+          `scheduled:${dueDate}`,
+          { orgId, actorKind: 'system' },
+          {
+            kind: database.engine === 'postgres' ? 'base' : 'rdb',
+            label: 'scheduled-daily',
+          },
+        )
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'database_busy')
+          continue
+        throw error
+      }
+      await this.ctx.db
+        .update(databaseBackupSchedules)
+        .set({
+          nextRunAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          lastQueuedAt: new Date(),
+        })
+        .where(eq(databaseBackupSchedules.databaseId, database.id))
+    }
   }
   private async execute(claim: OperationClaim): Promise<void> {
     if (this.controller.signal.aborted) return

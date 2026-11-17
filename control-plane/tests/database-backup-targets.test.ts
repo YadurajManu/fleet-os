@@ -13,6 +13,7 @@ import { buildServer } from '../src/server.js'
 import {
   databaseBackups,
   databaseBackupTargets,
+  databaseBackupSchedules,
   databaseOperations,
   nodes,
   orgs,
@@ -181,6 +182,12 @@ test('backup targets are project scoped, encrypted, audited and safely removable
   })
   assert.equal(assigned.statusCode, 200, assigned.body)
   assert.equal(assigned.json().backupTargetId, second.json().id)
+  const [schedule] = await ctx.db
+    .select()
+    .from(databaseBackupSchedules)
+    .where(eq(databaseBackupSchedules.databaseId, databaseId))
+  assert.equal(schedule!.enabled, true)
+  assert.ok(schedule!.nextRunAt.getTime() > Date.now())
   const detail = await app.inject({
     url: `/fleets/${fleetId}/projects/${project}/databases/${databaseId}`,
     headers: auth,
@@ -298,4 +305,9 @@ test('backup targets are project scoped, encrypted, audited and safely removable
   })
   assert.equal(detached.statusCode, 200, detached.body)
   assert.equal(detached.json().backupTargetId, null)
+  const [disabledSchedule] = await ctx.db
+    .select()
+    .from(databaseBackupSchedules)
+    .where(eq(databaseBackupSchedules.databaseId, databaseId))
+  assert.equal(disabledSchedule!.enabled, false)
 })

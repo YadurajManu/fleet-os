@@ -9,7 +9,11 @@ import {
 } from '@aws-sdk/client-s3'
 import type { AppContext } from '../api/context.js'
 import { ApiError } from '../api/errors.js'
-import { databaseBackupTargets, tenantDatabases } from '../db/schema.js'
+import {
+  databaseBackupSchedules,
+  databaseBackupTargets,
+  tenantDatabases,
+} from '../db/schema.js'
 import { recordAudit } from '../lib/audit.js'
 import { openSecret, sealSecret } from '../lib/crypto.js'
 
@@ -280,7 +284,12 @@ export async function setDatabaseBackupTarget(
 ) {
   return ctx.db.transaction(async (tx) => {
     const [database] = await tx
-      .select({ id: tenantDatabases.id, deletedAt: tenantDatabases.deletedAt })
+      .select({
+        id: tenantDatabases.id,
+        engine: tenantDatabases.engine,
+        mode: tenantDatabases.mode,
+        deletedAt: tenantDatabases.deletedAt,
+      })
       .from(tenantDatabases)
       .where(
         and(
@@ -321,6 +330,30 @@ export async function setDatabaseBackupTarget(
       .update(tenantDatabases)
       .set({ backupTargetId: targetId, updatedAt: new Date() })
       .where(eq(tenantDatabases.id, databaseId))
+    const scheduleEnabled =
+      targetId !== null &&
+      (database.engine === 'postgres' ||
+        (database.engine === 'redis' && database.mode === 'durable'))
+    if (scheduleEnabled)
+      await tx
+        .insert(databaseBackupSchedules)
+        .values({
+          databaseId,
+          enabled: true,
+          nextRunAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        })
+        .onConflictDoUpdate({
+          target: databaseBackupSchedules.databaseId,
+          set: {
+            enabled: true,
+            nextRunAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
+        })
+    else
+      await tx
+        .update(databaseBackupSchedules)
+        .set({ enabled: false })
+        .where(eq(databaseBackupSchedules.databaseId, databaseId))
     await recordAudit(tx, {
       orgId: actor.orgId,
       actorUserId: actor.userId,

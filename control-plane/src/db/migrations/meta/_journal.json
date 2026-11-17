@@ -330,6 +330,13 @@
       "when": 1794918394903,
       "tag": "0046_database_backup_manifest",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794939509757,
+      "tag": "0047_database_backup_schedules",
+      "breakpoints": true
     }
   ]
 }

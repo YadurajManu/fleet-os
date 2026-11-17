@@ -112,7 +112,11 @@ export async function createDatabaseBackup(
   ctx: AppContext,
   scope: { fleetId: string; project: string; databaseId: string },
   key: string,
-  actor: { orgId: string; userId: string },
+  actor: {
+    orgId: string
+    userId?: string | null
+    actorKind?: 'user' | 'system'
+  },
   options: { kind?: 'base' | 'logical' | 'rdb'; label?: string } = {},
 ) {
   return ctx.db.transaction(async (tx) => {
@@ -264,6 +268,7 @@ export async function createDatabaseBackup(
     await recordAudit(tx, {
       orgId: actor.orgId,
       actorUserId: actor.userId,
+      actorKind: actor.actorKind,
       action: 'database.backup.created',
       targetType: 'database',
       targetId: database.id,

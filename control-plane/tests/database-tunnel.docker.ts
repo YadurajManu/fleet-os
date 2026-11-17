@@ -9,6 +9,7 @@ import {
   tenantDatabases,
   databaseCredentials,
   databaseBackups,
+  databaseBackupSchedules,
   databaseBackupTargets,
   databaseOperations,
   orgMembers,
@@ -169,6 +170,7 @@ test(
     const orgId = randomUUID()
     if (workerContext) workerContext.tunnels = registry
     let worker: DatabaseWorker | undefined
+    let restartedWorker: DatabaseWorker | undefined
     let api: FastifyInstance | undefined
     let cliProcess: ReturnType<typeof spawn> | undefined
     let postgresCliProcess: ReturnType<typeof spawn> | undefined
@@ -578,6 +580,43 @@ test(
           } while (continuationToken)
           assert.ok(backupObjectKeys.some((key) => key.startsWith(walPrefix)))
           await workerContext.db
+            .update(databaseBackupSchedules)
+            .set({ nextRunAt: new Date(Date.now() - 1000) })
+            .where(eq(databaseBackupSchedules.databaseId, postgresId))
+          restartedWorker = new DatabaseWorker(workerContext)
+          assert.equal(await restartedWorker.tick(), true)
+          const [scheduledBackup] = await workerContext.db
+            .select()
+            .from(databaseBackups)
+            .where(
+              and(
+                eq(databaseBackups.databaseId, postgresId),
+                eq(databaseBackups.label, 'scheduled-daily'),
+              ),
+            )
+          assert.equal(scheduledBackup!.state, 'complete')
+          assert.equal(scheduledBackup!.kind, 'base')
+          assert.ok(scheduledBackup!.verifiedAt)
+          const [schedule] = await workerContext.db
+            .select()
+            .from(databaseBackupSchedules)
+            .where(eq(databaseBackupSchedules.databaseId, postgresId))
+          assert.ok(schedule!.nextRunAt.getTime() > Date.now())
+          assert.ok(schedule!.lastQueuedAt)
+          const [scheduledAudit] = await workerContext.db
+            .select()
+            .from(auditLog)
+            .where(
+              and(
+                eq(auditLog.action, 'database.backup.created'),
+                eq(auditLog.targetId, postgresId),
+                eq(auditLog.actorKind, 'system'),
+              ),
+            )
+          assert.ok(scheduledAudit)
+          await restartedWorker.close()
+          restartedWorker = undefined
+          await workerContext.db
             .update(databaseBackupTargets)
             .set({ endpoint })
             .where(eq(databaseBackupTargets.id, targetId))
@@ -824,6 +863,26 @@ test(
             '',
           )
           backupObjectKeys.push(`e2e/databases/${id}/${redisBackupId}/data.enc`)
+          await workerContext.db
+            .update(databaseBackupSchedules)
+            .set({ nextRunAt: new Date(Date.now() - 1000) })
+            .where(eq(databaseBackupSchedules.databaseId, id))
+          restartedWorker = new DatabaseWorker(workerContext)
+          assert.equal(await restartedWorker.tick(), true)
+          const [scheduledRedisBackup] = await workerContext.db
+            .select()
+            .from(databaseBackups)
+            .where(
+              and(
+                eq(databaseBackups.databaseId, id),
+                eq(databaseBackups.label, 'scheduled-daily'),
+              ),
+            )
+          assert.equal(scheduledRedisBackup!.state, 'complete')
+          assert.equal(scheduledRedisBackup!.kind, 'rdb')
+          assert.ok(scheduledRedisBackup!.verifiedAt)
+          await restartedWorker.close()
+          restartedWorker = undefined
           t.diagnostic('encrypted Redis RDB uploaded and verified in MinIO')
           t.diagnostic(
             'encrypted PostgreSQL dump uploaded and verified in MinIO',
@@ -1494,6 +1553,7 @@ test(
       postgresCliProcess?.kill('SIGTERM')
       if (api) await api.close()
       await worker?.close()
+      await restartedWorker?.close()
       relay.close()
       registry.close(nodeId)
       registry.close(serviceNodeId)

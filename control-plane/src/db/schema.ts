@@ -1007,3 +1007,10 @@ export const databaseBackups = pgTable('database_backups', {
   check('database_backups_size_check', sql`${t.sizeBytes} is null or ${t.sizeBytes} >= 0`),
   check('database_backups_checksum_check', sql`${t.checksumSha256} is null or ${t.checksumSha256} ~ '^[a-f0-9]{64}$'`),
 ])
+
+export const databaseBackupSchedules = pgTable('database_backup_schedules', {
+  databaseId: uuid('database_id').primaryKey().references(() => tenantDatabases.id, { onDelete: 'cascade' }),
+  enabled: boolean('enabled').notNull().default(true),
+  nextRunAt: timestamp('next_run_at', { withTimezone: true }).notNull(),
+  lastQueuedAt: timestamp('last_queued_at', { withTimezone: true }),
+}, t => [index('database_backup_schedules_due_idx').on(t.enabled, t.nextRunAt)])
