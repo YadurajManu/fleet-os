@@ -31,7 +31,7 @@ func TestDatabaseExecStreamsStdinAndSeparatesReadonlyOSIdentity(t *testing.T) {
 				AttachStdin bool
 			}
 			_ = json.NewDecoder(r.Body).Decode(&b)
-			if b.User != "10000:10000" || !b.AttachStdin || b.Cmd[0] != "timeout" || strings.Contains(strings.Join(b.Cmd, " "), secret) {
+			if b.User != "10000:10000" || !b.AttachStdin || b.Cmd[0] != "fleet-db-proxy" || b.Cmd[1] != "exec" || len(b.Cmd[2]) != 32 || strings.Contains(strings.Join(b.Cmd, " "), secret) {
 				t.Error("exec lost role isolation, deadline or argv secrecy")
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"Id": execID})

@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/fleet-os/fleet-os/agent/internal/build"
+	"github.com/fleet-os/fleet-os/agent/internal/database"
 	"github.com/fleet-os/fleet-os/agent/internal/docker"
 	"github.com/fleet-os/fleet-os/agent/internal/terminal"
 )
@@ -78,6 +79,7 @@ type Client struct {
 	tasks           map[string]context.CancelFunc
 	taskDocker      *docker.Client
 	Builder         *build.Executor
+	Databases       *database.Handler
 	controlPlaneURL string
 	agentToken      string
 	log             *slog.Logger
@@ -252,6 +254,10 @@ func (c *Client) connectAndServe(ctx context.Context, wsURL string) error {
 			c.Builder.Handle(ctx, message)
 			continue
 		}
+		if strings.HasPrefix(req.Type, "db.") && c.Databases != nil {
+			c.Databases.Handle(ctx, message)
+			continue
+		}
 		switch req.Type {
 		case "task_start":
 			c.startTask(ctx, req)
@@ -384,6 +390,16 @@ func (c *Client) SendBuild(ev build.Event) {
 	}
 	_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 	_ = c.conn.WriteJSON(ev)
+}
+
+func (c *Client) SendDatabase(ctx context.Context, event database.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil || ctx.Err() != nil {
+		return
+	}
+	_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	_ = c.conn.WriteJSON(event)
 }
 
 // Register before spawning so a cancellation cannot overtake task creation.

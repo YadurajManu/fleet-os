@@ -93,3 +93,9 @@ All V1 product acceptance scenarios and all V2 scenarios in REQUEST.md remain in
 - The repository has no configured formatter/linter. Use Prettier with existing single-quote/no-semicolon conventions and pinned Oxlint 1.57.0 for these files at each milestone, alongside tsc and Go checks. Both tools passed for the relay and tests.
 
 Verification for protocol commit: full control-plane suite **711/711 passed**, typecheck/build passed, `go test ./...` passed. The repeatable disposable-dependency command is `node control-plane/scripts/test-databases.mjs --unit-only` (excludes maintained-image/registry integration, which remains a separate gate). Focused protocol tests **8/8 passed**; Oxlint 1.57.0 reports zero warnings/errors.
+
+## 2026-11-17 — Agent commit 2 of 4
+
+Matching Go stream negotiation selects 16 frames only when requested, otherwise one. Input queues and unconsumed-frame counts are bounded; output waits when credit is exhausted and drains acknowledgements before closing. Go tests cover both windows, invalid frames, exhausted credit and cancellation. `go test ./...`, `go vet ./...` and `go test -race ./internal/database ./internal/dbproxy ./internal/docker` passed. Stateful runtime receipts, client process cancellation and the private container TCP helper are included as handler prerequisites; capabilities remain disabled.
+
+A fresh Docker Desktop session has no maintained runtime images. Re-running the Docker runtime tests failed during image lookup, before runtime creation; rebuilding the pinned local images is in progress. Build utility now restores its pinned BuildKit wrapper image even when the saved builder metadata survives an empty image store. No new Docker/two-node verification is claimed by this commit. Previous runtime-only Docker evidence is recorded above.
