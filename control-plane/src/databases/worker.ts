@@ -1,8 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import type { AppContext } from '../api/context.js'
-import { nodes, tenantDatabases } from '../db/schema.js'
+import { databaseBackups, nodes, tenantDatabases } from '../db/schema.js'
 import { requireDatabaseCapabilities } from './capabilities.js'
 import {
   checkpointDatabaseOperation,
@@ -13,6 +13,7 @@ import {
   type OperationClaim,
 } from './operations.js'
 import { DatabaseTunnel, type DatabaseOperation } from './tunnel.js'
+import { runDatabaseBackup } from './backups.js'
 
 const command = z.object({
   command: z.array(z.string()).min(1).max(128),
@@ -28,6 +29,7 @@ const identity = z.object({
 })
 const intent = z
   .object({
+    backupId: z.string().uuid().optional(),
     identity,
     requestHash: z
       .string()
@@ -122,6 +124,7 @@ export class DatabaseWorker {
       'start',
       'stop',
       'restart',
+      'backup',
     ])
     if (!claim) return false
     await this.execute(claim)
@@ -209,6 +212,46 @@ export class DatabaseWorker {
         )
       requireDatabaseCapabilities(node?.capabilities, ['database.runtime.v1'])
       if (!this.ctx.tunnels.has(database.nodeId)) return // Preserve the lease for receipt reconciliation after reconnect.
+      if (operation.kind === 'backup') {
+        if (!parsed.data.backupId) throw new Error('backup_intent_invalid')
+        requireDatabaseCapabilities(node?.capabilities, ['database.exec.v1'])
+        let backupProgress = Math.max(operation.progress, 20)
+        await checkpointDatabaseOperation(
+          this.ctx,
+          operation.id,
+          token,
+          { step: 'execute' },
+          backupProgress,
+        )
+        await runDatabaseBackup(
+          this.ctx,
+          this.tunnel,
+          parsed.data.backupId,
+          database,
+          parsed.data.identity,
+          abort.signal,
+          async (step, progress) => {
+            backupProgress = Math.max(backupProgress, Math.min(progress, 99))
+            await checkpointDatabaseOperation(
+              this.ctx,
+              operation.id,
+              token,
+              {
+                step:
+                  step === 'verify'
+                    ? 'verify'
+                    : step === 'commit'
+                      ? 'commit'
+                      : 'execute',
+              },
+              backupProgress,
+            )
+          },
+        )
+        if (!leaseLost && !abort.signal.aborted)
+          await finishDatabaseOperation(this.ctx, operation.id, token)
+        return
+      }
       await checkpointDatabaseOperation(
         this.ctx,
         operation.id,
@@ -242,6 +285,29 @@ export class DatabaseWorker {
         status,
       )
     } catch {
+      if (operation.kind === 'backup') {
+        const parsedInput = intent.safeParse(claim.input)
+        const backupId = parsedInput.success ? parsedInput.data.backupId : null
+        if (backupId) {
+          const [backup] = await this.ctx.db
+            .select({ errorCode: databaseBackups.errorCode })
+            .from(databaseBackups)
+            .where(eq(databaseBackups.id, backupId))
+          await this.ctx.db
+            .update(databaseBackups)
+            .set({
+              state: 'failed',
+              errorCode: backup?.errorCode ?? 'backup_worker_failed',
+              finishedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(databaseBackups.id, backupId),
+                ne(databaseBackups.state, 'complete'),
+              ),
+            )
+        }
+      }
       // A lost reply does not prove failure: lease expiry resumes the same agent receipt, with bounded attempts.
     } finally {
       clearInterval(renew)

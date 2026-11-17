@@ -13,6 +13,8 @@ import { buildServer } from '../src/server.js'
 import {
   databaseBackups,
   databaseBackupTargets,
+  databaseOperations,
+  nodes,
   orgs,
   tenantDatabases,
   users,
@@ -182,6 +184,47 @@ test('backup targets are project scoped, encrypted, audited and safely removable
     headers: auth,
   })
   assert.equal(detail.json().database.backupConfigured, true)
+
+  const backupNodeId = randomUUID()
+  await ctx.db.insert(nodes).values({
+    id: backupNodeId,
+    fleetId,
+    name: `backup-test-${backupNodeId.slice(0, 8)}`,
+    arch: 'amd64',
+    cpuCores: 2,
+    ramMb: 4096,
+    diskMb: 100000,
+    agentTokenHash: randomUUID(),
+  })
+  await ctx.db
+    .update(tenantDatabases)
+    .set({ status: 'running', nodeId: backupNodeId })
+    .where(eq(tenantDatabases.id, databaseId))
+  const backupsUrl = `/fleets/${fleetId}/projects/${project}/databases/${databaseId}/backups`
+  const backupKey = randomUUID()
+  const queuedBackup = await app.inject({
+    method: 'POST',
+    url: backupsUrl,
+    headers: { ...auth, 'idempotency-key': backupKey },
+  })
+  assert.equal(queuedBackup.statusCode, 202, queuedBackup.body)
+  assert.equal(queuedBackup.body.includes(accessKeyId), false)
+  assert.equal(queuedBackup.body.includes(secretAccessKey), false)
+  const replayedBackup = await app.inject({
+    method: 'POST',
+    url: backupsUrl,
+    headers: { ...auth, 'idempotency-key': backupKey },
+  })
+  assert.equal(replayedBackup.statusCode, 202)
+  assert.deepEqual(replayedBackup.json(), queuedBackup.json())
+  const [backupOperation] = await ctx.db
+    .select()
+    .from(databaseOperations)
+    .where(eq(databaseOperations.id, queuedBackup.json().operationId))
+  assert.equal(
+    JSON.stringify(backupOperation!.encryptedInput).includes(secretAccessKey),
+    false,
+  )
 
   const foreignTarget = await app.inject({
     method: 'POST',

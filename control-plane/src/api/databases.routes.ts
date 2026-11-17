@@ -30,6 +30,10 @@ import {
   setDatabaseBackupTarget,
   testBackupTarget,
 } from '../databases/backup-targets.js'
+import {
+  createDatabaseBackup,
+  listDatabaseBackups,
+} from '../databases/backups.js'
 
 const scope = z.object({
   fleetId: z.string().uuid(),
@@ -185,6 +189,40 @@ export async function databaseRoutes(app: FastifyInstance) {
         targetId,
         { orgId: request.orgId!, userId: request.userId! },
       )
+    },
+  )
+  app.get(
+    base + '/:databaseId/backups',
+    { preHandler: requireFleetPermission('database.read') },
+    async (request) => {
+      const { fleetId, project, databaseId } = parseRequest(
+        detail,
+        request.params,
+      )
+      return {
+        backups: await listDatabaseBackups(ctx, {
+          fleetId,
+          project,
+          databaseId,
+        }),
+      }
+    },
+  )
+  app.post(
+    base + '/:databaseId/backups',
+    { preHandler: requireFleetPermission('database.backup') },
+    async (request, reply) => {
+      const { fleetId, project, databaseId } = parseRequest(
+        detail,
+        request.params,
+      )
+      const result = await createDatabaseBackup(
+        ctx,
+        { fleetId, project, databaseId },
+        key(request),
+        { orgId: request.orgId!, userId: request.userId! },
+      )
+      return reply.code(202).send(result)
     },
   )
   app.get(

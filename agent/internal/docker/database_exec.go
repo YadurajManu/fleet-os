@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
@@ -11,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -87,6 +90,30 @@ func (c *Client) ExecDatabase(ctx context.Context, identity DatabaseIdentity, ro
 		return -1, databaseFailure("exec session identity")
 	}
 	sessionID := hex.EncodeToString(sessionBytes)
+	rdbPath := ""
+	fileRemoved := false
+	if command.Env["FLEET_DB_BACKUP"] == "1" {
+		if command.Command[0] != "redis-cli" {
+			return -1, databaseFailure("database backup command validation")
+		}
+		for i, argument := range command.Command {
+			if argument == "--rdb" && i+1 < len(command.Command) && rdbPath == "" {
+				rdbPath = "/tmp/fleet-db-backup-" + sessionID + ".rdb"
+				command.Command[i+1] = rdbPath
+			}
+		}
+		if rdbPath == "" {
+			return -1, databaseFailure("database backup command validation")
+		}
+		defer func() {
+			if fileRemoved {
+				return
+			}
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = c.removeDatabaseFile(cleanup, state.ID, user, rdbPath)
+		}()
+	}
 	args := append([]string{"fleet-db-proxy", "exec", sessionID, strconv.Itoa(int(timeout.Seconds()))}, command.Command...)
 	if c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/"+state.ID+"/exec", map[string]any{"Cmd": args, "Env": env, "User": user, "AttachStdin": stdin != nil, "AttachStdout": true, "AttachStderr": true, "Tty": tty}, &created) != nil {
 		return -1, databaseFailure("exec creation")
@@ -178,7 +205,79 @@ func (c *Client) ExecDatabase(ctx context.Context, identity DatabaseIdentity, ro
 	if c.do(ctx, http.MethodGet, "/"+c.api(ctx)+"/exec/"+created.ID+"/json", nil, &result) != nil || result.Running {
 		return -1, databaseFailure("exec completion check; inspect the operation before retrying")
 	}
+	if command.Env["FLEET_DB_BACKUP"] == "1" {
+		if result.ExitCode != 0 || rdbPath == "" {
+			return result.ExitCode, nil
+		}
+		if err := c.streamDatabaseFile(ctx, state.ID, rdbPath, stdout); err != nil {
+			return -1, databaseFailure("database backup file transfer")
+		}
+		if err := c.removeDatabaseFile(ctx, state.ID, user, rdbPath); err != nil {
+			return -1, databaseFailure("database backup temporary file cleanup")
+		}
+		fileRemoved = true
+	}
 	return result.ExitCode, nil
+}
+
+func (c *Client) streamDatabaseFile(ctx context.Context, containerID, file string, output io.Writer) error {
+	requestPath := fmt.Sprintf("/%s/containers/%s/archive?path=%s", c.api(ctx), containerID, url.QueryEscape(file))
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+requestPath, nil)
+	if err != nil {
+		return err
+	}
+	response, err := c.http.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("docker archive returned %d", response.StatusCode)
+	}
+	reader := tar.NewReader(response.Body)
+	header, err := reader.Next()
+	if err != nil || header.Typeflag != tar.TypeReg || path.Base(header.Name) != path.Base(file) {
+		return fmt.Errorf("unexpected database backup archive")
+	}
+	if _, err := io.Copy(output, reader); err != nil {
+		return err
+	}
+	if _, err := reader.Next(); err != io.EOF {
+		return fmt.Errorf("database backup archive has extra entries")
+	}
+	return nil
+}
+
+func (c *Client) removeDatabaseFile(ctx context.Context, containerID, user, file string) error {
+	var execution struct {
+		ID string `json:"Id"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/"+containerID+"/exec", map[string]any{
+		"Cmd": []string{"/bin/rm", "-f", file}, "User": user,
+	}, &execution); err != nil {
+		return err
+	}
+	if err := c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/exec/"+execution.ID+"/start", map[string]bool{"Detach": true, "Tty": false}, nil); err != nil {
+		return err
+	}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		var result struct {
+			Running  bool `json:"Running"`
+			ExitCode int  `json:"ExitCode"`
+		}
+		if err := c.do(ctx, http.MethodGet, "/"+c.api(ctx)+"/exec/"+execution.ID+"/json", nil, &result); err == nil && !result.Running {
+			if result.ExitCode == 0 {
+				return nil
+			}
+			return databaseFailure("database backup temporary file cleanup")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return context.DeadlineExceeded
 }
 
 func (c *Client) cancelDatabaseExec(containerID, user, sessionID string) {
