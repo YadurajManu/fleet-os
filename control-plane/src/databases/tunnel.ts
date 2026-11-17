@@ -181,7 +181,19 @@ export class DatabaseTunnel {
   }
   private receive(nodeId: string, body: unknown): void {
     const parsed = event.safeParse(body)
-    if (!parsed.success) return
+    if (!parsed.success) {
+      if (
+        body &&
+        typeof body === 'object' &&
+        'id' in body &&
+        typeof body.id === 'string'
+      ) {
+        const stream = this.streams.get(body.id)
+        if (stream?.nodeId === nodeId)
+          stream.destroy(new Error('Invalid database stream message.'))
+      }
+      return
+    }
     const message = parsed.data
     if (message.type === 'db.disconnected') {
       for (const pending of this.operations.values())
