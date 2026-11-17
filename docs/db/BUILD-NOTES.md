@@ -150,3 +150,8 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 - Real Docker acceptance: `FLEET_DB_REAL_NETWORK_TEST=1 go test ./internal/docker -run TestRealDockerDatabaseNetworkConnection -count=1 -v` passed. An agent-created service container joined the private network and executed a successful `psql` query against a Postgres container by its private alias. This proves same-node networking only; cross-node application TCP forwarding is still missing.
 - Control-plane full suite: **723/723**, including authenticated project link/list/unlink route coverage; formatter and Oxlint clean, typecheck/build clean. Dashboard typecheck, **31/31** tests and build passed. CLI typecheck and **223/223** tests passed after registering the new `--role` option. Agent Go suite passed; the separate real network Docker test passed as above.
 - Product acceptance remains in progress: no full database lifecycle API-to-live-app rollout was run. Playwright, cross-node app connector, database connect/shell/exec, backups/PITR, delete/recover and the remaining V1 scenarios are not verified. No production or Raunak data was used; nothing was published or merged.
+
+## 2026-11-17 — Short database link CLI
+
+- Added `fleet db` as a short alias and documented `db list`, `db link <database> <service>` and `db unlink <database> <service>`. Link/unlink resolve exact database or service names and IDs; paginated database lookup reports duplicate names and accepts `--project` to disambiguate.
+- CLI typecheck and **225/225 tests** passed, including alias and ambiguous database-name selection coverage. This is a CLI usability slice; full database-link end-to-end acceptance remains open.

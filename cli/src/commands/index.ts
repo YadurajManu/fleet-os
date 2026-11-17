@@ -51,6 +51,7 @@ export const commands: Record<string, Command> = {
   rm: removeServiceCommand,
   auth: authCommand,
   databases: databasesCommand,
+  db: databasesCommand,
   config: configCommand,
   use: useCommand,
   doctor: doctorCommand,
