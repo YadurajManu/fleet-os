@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
+import WebSocket from 'ws'
 import { CliError, EXIT, request, requireFleet } from '../api.js'
+import { loadProfile } from '../config.js'
 import { c, table, statusBadge } from '../render.js'
 import type { Flags } from '../args.js'
 
@@ -8,6 +11,7 @@ type Database = {
   id: string
   project: string
   name: string
+  nodeId: string | null
   engine: string
   version: string
   status: string
@@ -201,6 +205,24 @@ export const databasesCommand = {
         console.log('Redeploy the service to remove the database connection.')
       return
     }
+    if (action === 'connect') {
+      if (!project)
+        throw new CliError(
+          'usage: fleet db connect <database> [--project PROJECT] [--port LOCAL_PORT]',
+          EXIT.usage,
+        )
+      const database = await findDatabase(fleet, project, flags)
+      if (database.status !== 'running' || !database.nodeId)
+        throw new CliError(
+          `Database ${database.name} must be running before connecting.`,
+        )
+      const portValue =
+        typeof flags.port === 'string' ? Number(flags.port) : 15432
+      if (!Number.isInteger(portValue) || portValue < 1 || portValue > 65535)
+        throw new CliError('--port must be a valid TCP port.', EXIT.usage)
+      await connectDatabase(fleet, database, portValue)
+      return
+    }
     if (['start', 'stop', 'restart'].includes(action ?? '')) {
       if (!project || !nameOrId)
         throw new CliError(
@@ -225,10 +247,101 @@ export const databasesCommand = {
       return
     }
     throw new CliError(
-      'usage: fleet databases list|create|start|stop|restart|link|unlink …',
+      'usage: fleet databases list|create|start|stop|restart|link|unlink|connect …',
       EXIT.usage,
     )
   },
+}
+
+async function connectDatabase(
+  fleet: string,
+  database: Database,
+  localPort: number,
+) {
+  const profile = await loadProfile()
+  if (!profile.api || !profile.accessToken)
+    throw new CliError(
+      'Sign in before opening a database connection.',
+      EXIT.usage,
+    )
+  const endpoint = new URL(profile.api)
+  endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
+  endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}${base(fleet, database.project)}/${database.id}/connect`
+  const clients = new Set<import('node:net').Socket>()
+  const server = createServer((client) => {
+    clients.add(client)
+    client.once('close', () => clients.delete(client))
+    const tunnel = new WebSocket(endpoint, {
+      headers: { authorization: `Bearer ${profile.accessToken}` },
+      maxPayload: 1_048_576,
+    })
+    const rawSocket = () =>
+      (
+        tunnel as WebSocket & {
+          _socket: import('node:stream').Duplex | null
+        }
+      )._socket
+    client.pause()
+    tunnel.once('unexpected-response', (_request, response) => {
+      console.error(`Database connect was rejected (${response.statusCode}).`)
+      client.destroy()
+    })
+    tunnel.once('open', () => {
+      rawSocket()?.on('drain', () => client.resume())
+      client.resume()
+    })
+    tunnel.on('message', (data, binary) => {
+      if (!binary) return client.destroy()
+      const frame =
+        data instanceof ArrayBuffer
+          ? Buffer.from(data)
+          : Array.isArray(data)
+            ? Buffer.concat(data)
+            : data
+      if (!client.write(frame)) rawSocket()?.pause()
+    })
+    client.on('data', (data) => {
+      if (tunnel.readyState !== WebSocket.OPEN) return client.destroy()
+      try {
+        tunnel.send(data, { binary: true })
+      } catch {
+        client.destroy()
+        return
+      }
+      if (tunnel.bufferedAmount > 1_048_576) client.pause()
+    })
+    client.on('drain', () => rawSocket()?.resume())
+    tunnel.on('error', () => client.destroy())
+    tunnel.on('close', () => client.destroy())
+    client.on('close', () => tunnel.close())
+    client.on('error', () => tunnel.close())
+  })
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(localPort, '127.0.0.1', () => {
+      server.off('error', reject)
+      resolve()
+    })
+  })
+  console.log(
+    `Database tunnel listening on 127.0.0.1:${localPort}; press Ctrl-C to close.`,
+  )
+  await new Promise<void>((resolve) => {
+    let closing = false
+    const close = () => {
+      if (closing) return
+      closing = true
+      for (const client of clients) client.destroy()
+      server.close(() => resolve())
+    }
+    process.once('SIGINT', close)
+    process.once('SIGTERM', close)
+    server.once('close', () => {
+      process.off('SIGINT', close)
+      process.off('SIGTERM', close)
+      resolve()
+    })
+  })
 }
 
 async function findDatabase(fleet: string, nameOrId: string, flags: Flags) {

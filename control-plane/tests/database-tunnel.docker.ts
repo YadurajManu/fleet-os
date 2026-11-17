@@ -8,7 +8,12 @@ import {
   nodes,
   tenantDatabases,
   databaseOperations,
+  orgMembers,
+  users,
 } from '../src/db/schema.js'
+import { buildServer } from '../src/server.js'
+import type { FastifyInstance } from 'fastify'
+import { revokeSessions } from '../src/auth/tokens.js'
 import { DatabaseWorker } from '../src/databases/worker.js'
 import {
   enqueueDatabaseOperation,
@@ -21,11 +26,11 @@ import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { createServer as createTCPServer } from 'node:net'
+import { createConnection, createServer as createTCPServer } from 'node:net'
 import { once } from 'node:events'
 import { spawn, execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
-import { WebSocketServer } from 'ws'
+import WebSocket, { WebSocketServer } from 'ws'
 import { TunnelRegistry } from '../src/tunnel/registry.js'
 import { DatabaseTunnel } from '../src/databases/tunnel.js'
 import { redisEngine } from '../src/databases/engines.js'
@@ -120,7 +125,17 @@ test(
     const orgId = randomUUID()
     if (workerContext) workerContext.tunnels = registry
     let worker: DatabaseWorker | undefined
+    let api: FastifyInstance | undefined
+    let cliProcess: ReturnType<typeof spawn> | undefined
+    let connectAccount:
+      | { user: { id: string }; org: { id: string }; accessToken: string }
+      | undefined
     const credentials = redisEngine.credentials()
+    const auth = resp([
+      Buffer.from('AUTH'),
+      Buffer.from(credentials.app.username),
+      Buffer.from(credentials.app.password),
+    ])
     const platform = `linux/${process.arch === 'arm64' ? 'arm64' : 'amd64'}`
     const plan = redisEngine.plan({
       id,
@@ -235,6 +250,123 @@ test(
         )
         worker = new DatabaseWorker(workerContext)
         assert.equal(await worker.tick(), true)
+        api = await buildServer(workerContext)
+        const signup = await api.inject({
+          method: 'POST',
+          url: '/auth/signup',
+          payload: {
+            email: `database-connect-${randomUUID()}@example.test`,
+            password: 'database-connect-test-password',
+          },
+        })
+        assert.equal(signup.statusCode, 201, signup.body)
+        const account = signup.json() as NonNullable<typeof connectAccount>
+        connectAccount = account
+        await workerContext.db.insert(orgMembers).values({
+          orgId,
+          userId: account.user.id,
+          role: 'admin',
+        })
+        const apiUrl = await api.listen({ port: 0, host: '127.0.0.1' })
+        const connectUrl = new URL(
+          `/fleets/${fleetId}/projects/${identity.project}/databases/${id}/connect`,
+          apiUrl,
+        )
+        connectUrl.protocol = 'ws:'
+        const unauthorized = new WebSocket(connectUrl)
+        const unauthorizedStatus = await new Promise<number>(
+          (resolve, reject) => {
+            unauthorized.once('unexpected-response', (_request, response) => {
+              response.resume()
+              resolve(response.statusCode ?? 0)
+            })
+            unauthorized.once('error', reject)
+          },
+        )
+        assert.equal(unauthorizedStatus, 401)
+        t.diagnostic('unauthenticated database WebSocket rejected')
+        const portProbe = createTCPServer()
+        portProbe.listen(0, '127.0.0.1')
+        await once(portProbe, 'listening')
+        const portProbeAddress = portProbe.address()
+        assert.ok(portProbeAddress && typeof portProbeAddress !== 'string')
+        const localPort = portProbeAddress.port
+        await new Promise<void>((resolve, reject) =>
+          portProbe.close((error) => (error ? reject(error) : resolve())),
+        )
+        cliProcess = spawn(
+          'node',
+          [
+            '--import',
+            'tsx',
+            'src/index.ts',
+            'db',
+            'connect',
+            'tunnel',
+            '--project',
+            identity.project,
+            '--port',
+            String(localPort),
+          ],
+          {
+            cwd: '../cli',
+            env: {
+              ...process.env,
+              FLEET_API: apiUrl,
+              FLEET_TOKEN: account.accessToken,
+              FLEET_ID: fleetId,
+              FLEET_CONFIG: `/tmp/fleet-db-connect-${id}.json`,
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          },
+        )
+        const cliOutput: Buffer[] = []
+        const cliErrors: Buffer[] = []
+        cliProcess.stdout?.on('data', (chunk) => cliOutput.push(chunk))
+        cliProcess.stderr?.on('data', (chunk) =>
+          cliErrors.push(Buffer.from(chunk)),
+        )
+        cliProcess.once('error', (error) => {
+          throw error
+        })
+        await until(() =>
+          Buffer.concat(cliOutput)
+            .toString()
+            .includes(`127.0.0.1:${localPort}`),
+        )
+        t.diagnostic('local CLI forwarder is listening')
+        const localClient = createConnection({
+          host: '127.0.0.1',
+          port: localPort,
+        })
+        await once(localClient, 'connect')
+        t.diagnostic('local client connected to CLI forwarder')
+        const streamOutput: Buffer[] = []
+        localClient.on('error', (error) =>
+          t.diagnostic(`local client socket error: ${error.message}`),
+        )
+        localClient.on('data', (chunk) => streamOutput.push(Buffer.from(chunk)))
+        localClient.write(auth)
+        localClient.write(resp([Buffer.from('PING')]))
+        const pongDeadline = Date.now() + 30000
+        while (
+          !Buffer.concat(streamOutput).includes(Buffer.from('+PONG\r\n')) &&
+          Date.now() < pongDeadline
+        )
+          await delay(20)
+        assert.ok(
+          Buffer.concat(streamOutput).includes(Buffer.from('+PONG\r\n')),
+          Buffer.concat(cliErrors).toString(),
+        )
+        t.diagnostic('local CLI forwarder completed Redis PING')
+        assert.ok(Buffer.concat(streamOutput).includes(Buffer.from('+OK\r\n')))
+        const disconnected = once(localClient, 'close')
+        await revokeSessions(workerContext.redis, account.user.id)
+        await disconnected
+        const cliExit = once(cliProcess, 'exit')
+        cliProcess.kill('SIGINT')
+        await cliExit
+        cliProcess = undefined
         const [finished] = await workerContext.db
           .select()
           .from(databaseOperations)
@@ -324,11 +456,6 @@ test(
           new AbortController().signal,
         )
       }
-      const auth = resp([
-        Buffer.from('AUTH'),
-        Buffer.from(credentials.app.username),
-        Buffer.from(credentials.app.password),
-      ])
       const payload = randomBytes(2 * 1024 * 1024)
       const request = Buffer.concat([
         auth,
@@ -422,6 +549,8 @@ test(
       await until(() => registry.has(nodeId))
       await transfer()
     } finally {
+      cliProcess?.kill('SIGTERM')
+      if (api) await api.close()
       await worker?.close()
       relay.close()
       registry.close(nodeId)
@@ -457,6 +586,14 @@ test(
           .delete(tenantDatabases)
           .where(eq(tenantDatabases.id, id))
         await workerContext.db.delete(orgs).where(eq(orgs.id, orgId))
+        if (connectAccount) {
+          await workerContext.db
+            .delete(orgs)
+            .where(eq(orgs.id, connectAccount.org.id))
+          await workerContext.db
+            .delete(users)
+            .where(eq(users.id, connectAccount.user.id))
+        }
         await closeContext(workerContext)
       }
     }

@@ -85,6 +85,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
       ['db list', 'Short form for listing databases'],
       ['db link <database> <service>', 'Inject a private database URL into a project service'],
       ['db unlink <database> <service>', 'Remove a database link from a project service'],
+      ['db connect <database>', 'Forward a local TCP port to a running private database'],
       ['databases start|stop|restart <project> <database-id>', 'Operate a managed database and follow its durable operation'],
       ['backups <service>', 'List backups, newest first'],
       ['restore <service> [id]', 'Write a backup back into the volume; service must be stopped'],
@@ -111,6 +112,7 @@ const OPTIONS: Array<[string, string]> = [
   // somebody else's.
   ['--project <name>', 'Disambiguate when two projects have a service of the same name'],
   ['--role <app|readonly>', 'Choose the database credentials injected by db link'],
+  ['--port <number>', 'Choose the local port for db connect (default: 15432)'],
   ['--api <url>', 'Control plane URL (default: hosted Fleet, or saved profile)'],
   ['--json', 'Machine-readable output on stdout'],
   ['--plan, --dry-run', 'Show the deploy placement plan without changing anything'],
