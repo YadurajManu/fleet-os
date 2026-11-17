@@ -1,6 +1,8 @@
 # Fleet Databases progress
 
-Resume here. Scope: REQUEST.md plus CONTINUATION.md; neither V1 nor V2 is complete. Branch: feat/db-v1. Status vocabulary: not started / in progress / verified. An acceptance scenario is verified only after its complete end-to-end flow runs; component tests below are explicitly partial evidence.
+Resume here. Scope: REQUEST.md plus CONTINUATION.md; neither V1 nor V2 is complete. Branch: feat/db-v1-runtime, advanced to main merge `55420b4` after user-authorized foundations PR #35. Status vocabulary: not started / in progress / verified. An acceptance scenario is verified only after its complete end-to-end flow runs; component tests below are explicitly partial evidence.
+
+Foundations PR #35 is merged on explicit user instruction. This does not mark V1 complete; the eventual V1/V2 product PR gates remain unchanged.
 
 ## Current work
 
@@ -85,3 +87,9 @@ V2 starts only after the V1 gate is verified and its unmerged PR is open; branch
 ## Regression evidence from previous increment
 
 2026-11-16: full control-plane suite 697/697 passed; control-plane typecheck/build and `go test ./...` passed; explicit Docker engine suite 4/4 passed. See BUILD-NOTES.md. These results do not establish any untested product scenario. At every completed milestone rerun full API tests/typecheck/build, Go tests and the milestone's real Docker/E2E suite, then record exact results here.
+
+## 2026-11-17 — Protocol commit 1 of 4
+
+Control-plane relay now negotiates a 16-frame window and retains a one-frame fallback. Credits are returned as the readable buffer drains; sending stops when the window is exhausted. Unit tests cover credit bounds, old peers, slow readers, invalid acknowledgements, out-of-order/oversize frames and excessive credit use. At simulated 100 ms RTT, a 2 MiB transfer measured 6.47 seconds with one frame and 0.41 seconds with 16 (15.7x faster). This is a protocol test, not the pending two-node Docker proof. Capability flags remain disabled. Commands: `node --test --import tsx tests/database-tunnel.test.ts`; `npx prettier --check --single-quote --no-semi src/databases/tunnel.ts tests/database-tunnel.test.ts`; `npx --yes oxlint@1.57.0 src/databases/tunnel.ts tests/database-tunnel.test.ts`; `npx tsc --noEmit`.
+
+Verification for protocol commit: full control-plane suite **711/711 passed**, typecheck/build passed, `go test ./...` passed. The repeatable disposable-dependency command is `node control-plane/scripts/test-databases.mjs --unit-only` (excludes maintained-image/registry integration, which remains a separate gate). Focused protocol tests **8/8 passed**; Oxlint 1.57.0 reports zero warnings/errors.
