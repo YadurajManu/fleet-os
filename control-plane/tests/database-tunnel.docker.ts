@@ -32,6 +32,7 @@ import { once } from 'node:events'
 import { spawn, execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import WebSocket, { WebSocketServer } from 'ws'
+import postgresClient from 'postgres'
 import { TunnelRegistry } from '../src/tunnel/registry.js'
 import { DatabaseTunnel } from '../src/databases/tunnel.js'
 import { postgresEngine, redisEngine } from '../src/databases/engines.js'
@@ -130,6 +131,7 @@ test(
     let worker: DatabaseWorker | undefined
     let api: FastifyInstance | undefined
     let cliProcess: ReturnType<typeof spawn> | undefined
+    let postgresCliProcess: ReturnType<typeof spawn> | undefined
     let connectAccount:
       | { user: { id: string }; org: { id: string }; accessToken: string }
       | undefined
@@ -542,6 +544,76 @@ test(
         t.diagnostic(
           'authenticated CLI db exec completed Postgres SELECT 1 over the tunnel',
         )
+        const postgresPortProbe = createTCPServer()
+        postgresPortProbe.listen(0, '127.0.0.1')
+        await once(postgresPortProbe, 'listening')
+        const postgresPortAddress = postgresPortProbe.address()
+        assert.ok(
+          postgresPortAddress && typeof postgresPortAddress !== 'string',
+        )
+        const postgresPort = postgresPortAddress.port
+        await new Promise<void>((resolve, reject) =>
+          postgresPortProbe.close((error) =>
+            error ? reject(error) : resolve(),
+          ),
+        )
+        const postgresCli = spawn(
+          'node',
+          [
+            '--import',
+            'tsx',
+            'src/index.ts',
+            'db',
+            'connect',
+            'tunnel-postgres',
+            '--project',
+            identity.project,
+            '--port',
+            String(postgresPort),
+          ],
+          {
+            cwd: '../cli',
+            env: {
+              ...process.env,
+              FLEET_API: apiUrl,
+              FLEET_TOKEN: account.accessToken,
+              FLEET_ID: fleetId,
+              FLEET_CONFIG: `/tmp/fleet-db-psql-connect-${id}.json`,
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          },
+        )
+        postgresCliProcess = postgresCli
+        const postgresCliOutput: Buffer[] = []
+        postgresCli.stdout?.on('data', (chunk) =>
+          postgresCliOutput.push(Buffer.from(chunk)),
+        )
+        await until(() =>
+          Buffer.concat(postgresCliOutput)
+            .toString()
+            .includes(`127.0.0.1:${postgresPort}`),
+        )
+        const psql = postgresClient({
+          host: '127.0.0.1',
+          port: postgresPort,
+          username: postgresCredentials.app.username,
+          password: postgresCredentials.app.password,
+          database: 'tunnel_postgres',
+          max: 1,
+        })
+        try {
+          const [row] = await psql`SELECT 1 AS value`
+          assert.equal(row!.value, 1)
+        } finally {
+          await psql.end()
+        }
+        const postgresCliExit = once(postgresCli, 'exit')
+        postgresCli.kill('SIGINT')
+        await postgresCliExit
+        postgresCliProcess = undefined
+        t.diagnostic(
+          'Postgres protocol query succeeded through CLI local TCP forwarding',
+        )
         const disconnected = once(localClient, 'close')
         await revokeSessions(workerContext.redis, account.user.id)
         await disconnected
@@ -732,6 +804,7 @@ test(
       await transfer()
     } finally {
       cliProcess?.kill('SIGTERM')
+      postgresCliProcess?.kill('SIGTERM')
       if (api) await api.close()
       await worker?.close()
       relay.close()
