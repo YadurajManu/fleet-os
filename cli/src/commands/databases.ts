@@ -38,6 +38,15 @@ type BackupTarget = {
   isDefault: boolean
   lastTestedAt: string | null
 }
+type DatabaseBackup = {
+  id: string
+  kind: string
+  state: string
+  sizeBytes: number | null
+  errorCode: string | null
+  createdAt: string
+  verifiedAt: string | null
+}
 const base = (fleet: string, project: string) =>
   `/fleets/${encodeURIComponent(fleet)}/projects/${encodeURIComponent(project)}/databases`
 
@@ -253,6 +262,51 @@ export const databasesCommand = {
         'usage: fleet db target add|assign|test|remove <project> ...',
         EXIT.usage,
       )
+    }
+    if (action === 'backup' || action === 'backups') {
+      if (!project)
+        throw new CliError(
+          `usage: fleet db ${action} <database> [--project PROJECT]`,
+          EXIT.usage,
+        )
+      const database = await findDatabase(fleet, project, flags)
+      const path = `${base(fleet, database.project)}/${database.id}/backups`
+      if (action === 'backup') {
+        const { body } = await request<{
+          backupId: string
+          operationId: string
+        }>('POST', path, { idempotencyKey: randomUUID() })
+        if (flags.json) return console.log(JSON.stringify(body, null, 2))
+        await waitForOperation(
+          fleet,
+          database.project,
+          database,
+          body.operationId,
+          flags,
+        )
+      }
+      const { body } = await request<{ backups: DatabaseBackup[] }>('GET', path)
+      if (flags.json) return console.log(JSON.stringify(body.backups, null, 2))
+      if (!body.backups.length) {
+        console.log(`No backups recorded for ${database.name}.`)
+        return
+      }
+      console.log(
+        table(
+          ['id', 'kind', 'state', 'size', 'created', 'verified'],
+          body.backups.map((backup) => [
+            c.dim(backup.id.slice(0, 8)),
+            backup.kind,
+            statusBadge(backup.verifiedAt ? 'verified' : backup.state),
+            backup.sizeBytes === null
+              ? 'pending'
+              : `${(backup.sizeBytes / 1024 / 1024).toFixed(1)} MiB`,
+            backup.createdAt,
+            backup.verifiedAt ?? 'no',
+          ]),
+        ),
+      )
+      return
     }
     if (action === 'create') {
       if (!project || !nameOrId)

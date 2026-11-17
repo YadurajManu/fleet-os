@@ -24,6 +24,93 @@ test('backup target lookup refuses missing and ambiguous selectors', () => {
   assert.throws(() => selectBackupTarget(targets, '1111'), /ambiguous/)
 })
 
+test('database backup creates an idempotent operation and lists its manifest', async () => {
+  const originalFetch = globalThis.fetch
+  const originalApi = process.env.FLEET_API
+  const originalToken = process.env.FLEET_TOKEN
+  const calls: Array<{ path: string; method: string; key: string | null }> = []
+  process.env.FLEET_API = 'https://control.example.test'
+  process.env.FLEET_TOKEN = 'access-token'
+  globalThis.fetch = async (input, options) => {
+    const path = String(input)
+    const method = options?.method ?? 'GET'
+    calls.push({
+      path,
+      method,
+      key: new Headers(options?.headers).get('idempotency-key'),
+    })
+    const body = path.includes('/databases?')
+      ? {
+          databases: [
+            {
+              id: 'database-id',
+              project: 'production',
+              name: 'primary',
+              nodeId: 'node-id',
+              engine: 'postgres',
+              version: '17',
+              status: 'running',
+              nodeName: 'node',
+              backupConfigured: true,
+            },
+          ],
+          nextCursor: null,
+        }
+      : method === 'POST'
+        ? { backupId: 'backup-id', operationId: 'operation-id' }
+        : {
+            backups: [
+              {
+                id: 'backup-id',
+                kind: 'logical',
+                state: 'complete',
+                sizeBytes: 2048,
+                errorCode: null,
+                createdAt: '2026-11-17T00:00:00Z',
+                verifiedAt: '2026-11-17T00:01:00Z',
+              },
+            ],
+          }
+    return new Response(JSON.stringify(body), {
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  const output: string[] = []
+  const originalLog = console.log
+  console.log = (...args) => output.push(args.join(' '))
+  try {
+    await databasesCommand.run(['backup', 'primary'], {
+      fleet: 'fleet-id',
+      project: 'production',
+      'no-wait': true,
+    })
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.method === 'POST' && call.path.endsWith('/database-id/backups'),
+      ),
+    )
+    assert.match(
+      calls.find((call) => call.method === 'POST')?.key ?? '',
+      /^[0-9a-f-]{36}$/,
+    )
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.method === 'GET' && call.path.endsWith('/database-id/backups'),
+      ),
+    )
+    assert.match(output.join('\n'), /verified/)
+  } finally {
+    globalThis.fetch = originalFetch
+    console.log = originalLog
+    if (originalApi === undefined) delete process.env.FLEET_API
+    else process.env.FLEET_API = originalApi
+    if (originalToken === undefined) delete process.env.FLEET_TOKEN
+    else process.env.FLEET_TOKEN = originalToken
+  }
+})
+
 test('target creation sends credentials only in the authenticated request body', async () => {
   const originalFetch = globalThis.fetch
   const originalEnv = {
