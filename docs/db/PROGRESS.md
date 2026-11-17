@@ -6,9 +6,15 @@ Foundations PR #35 is merged on explicit user instruction. This does not mark V1
 
 ## Current work
 
-Continuation milestone 1 is verified: engine contract, maintained images, private registry resolution and agent image pre-pull. Milestone 2 is in progress: durable stateful runtime, exec/PTY and TCP tunnel handlers. Runtime/TCP/exec tunnel handlers are verified and enabled on Linux arm64/amd64 engines; backup/metrics capabilities remain disabled.
+Continuation milestone 1 is verified: engine contract, maintained images, private registry resolution and agent image pre-pull. The worker and scheduler component gates are verified. Lifecycle API/CLI/dashboard work is in progress: catalog, placement, create, list/detail, start/stop/restart and durable progress are wired. Database links now have encrypted connection-secret injection, project-scoped API/CLI/dashboard controls, soft placement preference and same-node private-network attachment. Runtime/TCP/exec tunnel handlers are enabled on Linux arm64/amd64 engines; backup/metrics capabilities remain disabled.
+
+Recovery chain work is in progress. New backup targets receive an independent random libsodium key inside the existing encrypted credential envelope. When a Postgres target is attached, the engine plan mounts target credentials, key and `.pgpass` as mode-0600 secret files and configures WAL-G archive/replay commands with a 60-second archive timeout. WAL-G prefixes isolate each fleet, database and generation. Fleet-managed manual base backups run through a durable API/worker operation and record a WAL-G recovery point; real Docker with MinIO verifies the created objects. Logical restore into a distinct database and in-place WAL-G restore to a named recovery point are exercised through the Fleet API/worker/agent path. In-place restore first retains the original data in a separate owned volume and only removes it after PostgreSQL passes recovery readiness; a real failed-fetch case proves the original data remains usable. Remaining: restore into a new database from a base backup, Redis RDB restore, durable per-object base/WAL manifests, retention, and browser acceptance. A running database still needs a restart after target selection before the archive configuration is active.
+
+Fleet-managed manual PostgreSQL base backups now have a dedicated API operation, durable manifest row, and lease-backed worker execution over the authenticated database tunnel. The worker records the WAL-G backup identifier and recovery timestamps after WAL-G can list the new backup; the Docker API/worker/agent test confirms base objects in real MinIO. Default daily schedules are persisted when a compatible database gets a target: PostgreSQL queues base backups and durable Redis queues RDB backups. A new worker instance recovers a due schedule and queues it under the normal operation lease. The engine test also performs PITR from a WAL-G base to a timestamp. Durable object manifests/checksums, restore/recover flows and retention remain open.
 
 Milestone 1 gate: `node control-plane/scripts/test-databases.mjs` completed with **703/703 control-plane tests**, typecheck, build, `go test ./...`, and **8/8 real Docker checks** passing. The Docker checks cover official engine tuning (4), maintained engine/Go resource lifecycle/roles/pooler/extensions/metrics/export (3), and authenticated dual-architecture registry resolution plus real Go pre-pull/cache/disk guards (1). Disposable test dependencies and registry resources were removed.
+
+The CLI now supports `fleet db list|link|unlink|connect|exec`; link/unlink accept exact database and service names or IDs, with `--project` resolving duplicate database names. `db connect` forwards loopback TCP through an authenticated, revocable control-plane WebSocket and the existing bounded agent stream. `db exec` sends Redis command arguments or Postgres SQL on stdin, selects only app/readonly credentials, and streams stdout/stderr with local backpressure. CLI typecheck and **226/226 tests** pass. A real Docker test used the CLI to AUTH/PING Redis through two agents, ran Redis `PING` and Postgres `SELECT 1` through the exec tunnel, and used the PostgreSQL JS driver to run `SELECT 1` through the local TCP forwarder. Unauthorized access was rejected and session revocation disconnected the Redis client. Native `psql`/Prisma Studio compatibility and API-to-live-app rollout remain unverified; no cross-node application connector exists yet.
 
 Cross-platform evidence: `FLEET_DB_PLATFORMS=linux/arm64,linux/amd64 node deploy/databases/build.mjs` built all four OCI indexes. `python3 deploy/databases/verify-oci.py` verified every referenced blob/checksum and both platform configurations before local Docker import. Checked scratch archives were then removed to recover host disk space; ignored verification metadata remains. `FLEET_DB_TEST_PLATFORM=linux/amd64 node --test --test-concurrency=1 --import tsx tests/database-plugins.docker.ts` passed **3/3** under Docker Desktop emulation. Agent `CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> go build ./cmd/agent` compiled Linux arm64/amd64, Windows amd64 and Darwin arm64. Native hardware is arm64 only; no native amd64 or Windows runtime coverage is claimed.
 
@@ -21,13 +27,13 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 0 | Understand and design | verified | docs/db/00-understanding.md and 01-design.md committed before feature code at ed4a38e; source review recorded in BUILD-NOTES.md. |
 | 1 | Schema, engine contract, operations, negotiation | in progress | 0042 generated/applied; `node --test --import tsx tests/database-operations.test.ts tests/database-agent-capabilities.test.ts tests/migrations.test.ts` with disposable test config passed. Engine contract and actual execution still required. |
 | 2 | Agent stateful runtime, TCP/exec/PTY, disk, images | in progress | Image/runtime implementation underway. No complete runtime verification yet. |
-| 3 | Postgres lifecycle, placement, networking, links, pooler | not started | No product E2E proof yet. |
+| 3 | Postgres lifecycle, placement, networking, links, pooler | in progress | Create/catalog/placement/list/detail/start/stop/restart and link/unlink API, CLI and dashboard are wired. Link tests verify encrypted role URLs and cleanup; real Docker verifies an agent-created service can query Postgres through a same-node private project network. Typed delete with a recent verified final backup, seven-day soft-delete grace, and row-preserving restore/restart now passes real Docker. A complete lifecycle API-to-app rollout proof, cross-node application TCP connector, interactive shell and browser acceptance remain. |
 | 4 | Redis engine | in progress | `node --test --import tsx tests/database-engines.docker.ts` proves configuration behavior only; lifecycle/link API+CLI+UI are absent. |
-| 5 | Targets, backups, restore, recover, import/export | not started | No engine-consistent recovery E2E proof yet. |
+| 5 | Targets, backups, restore, recover, import/export | in progress | Migrations 0045–0047 add scoped targets, backup manifests and persistent schedules. Manual base backup, logical restore into another database, and named in-place WAL-G PITR run through durable API/worker operations. Real Docker/MinIO verifies backup objects, restores to the named point and confirms post-point rows are gone; a deliberately missing WAL-G backup proves failed fetch restores the original data and leaves PostgreSQL available. Still open: base restore into a new database, Redis RDB restore, durable object manifests/checksums, retention and broader import/recovery acceptance. |
 | 6 | Release migrations, config, exec/shell/migrate | not started | No release-gate E2E proof yet. |
 | 7 | Monitoring, alerts, tuning | in progress | `node --test --import tsx tests/database-tuning.test.ts` passes; no metrics/alert product flow yet. |
-| 8 | Complete CLI | not started | No Fleet Databases CLI E2E proof yet. |
-| 9 | Complete dashboard | not started | No Fleet Databases Playwright proof yet. |
+| 8 | Complete CLI | in progress | Lifecycle list/create/actions, typed delete with `--backup`/`--confirm`, grace restore, link/unlink, loopback `db connect`, and Redis/Postgres `db exec` are wired. Interactive database shell, backup/recovery and declarative release commands remain. |
+| 9 | Complete dashboard | in progress | Create wizard, list/detail, lifecycle controls, typed delete with recent verified backup selection, grace restore and reconnecting SSE progress are wired. Playwright and remaining backup/recovery flows remain. |
 | 10 | Security, E2E, docs, release prep, V1 PR | not started | No V1 acceptance gate or PR yet. |
 
 ## V1 acceptance scenarios (REQUEST.md §10)
@@ -38,17 +44,65 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 2 | Restore deleted rows to timestamp T into new DB | not started | No PITR E2E proof. |
 | 3 | Migration failure retains old app, restore point and actionable logs | not started | No failing-release E2E proof. |
 | 4 | Offline -> unreachable/alert; no empty failover; recover with measured RPO | not started | No offline/recover E2E proof. |
-| 5 | Localhost connect supports psql/Prisma Studio; revocation is immediate | not started | No live session/revocation proof. |
+| 5 | Localhost connect supports psql/Prisma Studio; revocation is immediate | in progress | Real Docker test proves CLI local TCP forwarding, Redis AUTH/PING, Redis `db exec`, Postgres `psql -f -` executing `SELECT 1`, and PostgreSQL JS-driver `SELECT 1` over the local `db connect` port. Native `psql`/Prisma Studio over that port and revocation timing under a normal database client remain unverified. |
 | 6 | Redis cache actually evicts; durable survives restart | in progress | `node --test --import tsx tests/database-engines.docker.ts` passes with official images; full Fleet-managed flow still missing. |
 | 7 | External Postgres import -> portable export -> restore elsewhere | not started | No full import/export round trip. |
-| 8 | Typed delete, final backup, grace-period recovery | not started | No deletion E2E proof. |
+| 8 | Typed delete, final backup, grace-period recovery | verified | Real API/worker/agent/Docker/MinIO flow required exact-name confirmation and a recent verified final backup, removed only owned runtime/config resources, retained the data volume, restored inside the grace period, restarted, and queried the original row. Automatic expiry/purge and Playwright coverage remain open. |
 | 9 | Old agent runs services; DB action gives upgrade-required | in progress | `node --test --import tsx tests/database-agent-capabilities.test.ts tests/database-operations.test.ts` passes old HTTP registration/heartbeat + helper refusal; old-binary service/DB E2E missing. |
 | 10 | No secrets in logs/errors/API/process args except authorized reveal | in progress | Operation input/history tests pass; complete runtime/backup/CLI/UI leak checks missing. |
 | 11 | Playwright create, backup, both restores, link, delete | not started | No browser flow proof. |
 
+## 2026-11-17 — Backup target schema foundation
+
+- Generated migration 0045 adds project-scoped S3-compatible target metadata, stores credentials only as an encrypted envelope, permits one default target per fleet/project, and adds an optional target reference to tenant databases. A database can still be created without a target, matching the design's explicit no-off-node-backup state.
+- `node control-plane/scripts/test-databases.mjs --worker` passed: migration applied, **723/723** control-plane tests, Prettier/Oxlint, TypeScript typecheck/build, `go test ./...`, and the real two-agent Docker tunnel/worker check **1/1**. The Docker transfer completed 2 MiB at 100 ms RTT in 2.87 seconds versus the 12.8-second stop-and-wait lower bound. Backup-target API/CLI/UI, MinIO connectivity and object streaming are not implemented or verified; no backup acceptance scenario is marked complete.
+
+## 2026-11-17 — Backup target API slice
+
+- Added authenticated project-scoped list/create/delete routes. Target credentials are encrypted before persistence, excluded from API projections and audit metadata, and redacted from request logs. Defaults are replaced transactionally; plain HTTP is accepted only for loopback MinIO development endpoints. Delete detaches database target references without deleting database data.
+- `node control-plane/scripts/test-databases.mjs --unit-only` passed: **724/724** control-plane tests, including the new target API integration test; formatter/Oxlint, TypeScript typecheck/build and `go test ./...` passed. CLI/UI and backup streaming remain outstanding; no backup acceptance scenario is verified.
+
+## 2026-11-17 — Backup target connectivity probe
+
+- Added the authenticated target test route. It writes a random object below the configured prefix, reads and compares it, then removes only that object. `lastTestedAt` and sanitized audit metadata update only after success; failures return a generic message without endpoint credentials.
+- `node control-plane/scripts/test-databases.mjs --target-only` passed against MinIO running in Docker: write/read/compare/delete succeeded, the probe prefix was empty afterward, an unrelated object remained intact, and `lastTestedAt` was set. The runner builds pinned MinIO source into a disposable local image because the previous `minio/minio` image is unavailable.
+- The combined `--target` run passed 724/724 control-plane tests, formatter/Oxlint, typecheck/build and `go test ./...`; engine/registry integrations reached 7/8 before the existing private-registry transfer check failed (`Isolated registry image transfer failed`), so the combined command did not reach the MinIO test. The isolated MinIO test passed separately. CLI/UI, backup streaming, backup/restore/PITR/recover and import/export remain unimplemented; no backup acceptance scenario is marked complete.
+
+## 2026-11-17 — Backup target CLI and dashboard
+
+- Added `fleet db targets <project>` and `fleet db target add|assign|test|remove`. Creation accepts access keys through hidden interactive prompts or `FLEET_S3_ACCESS_KEY_ID` and `FLEET_S3_SECRET_ACCESS_KEY`; secrets do not go in arguments or CLI output. Target removal asks before detaching target configuration unless `--yes` is given.
+- Added project-scoped target listing and creation to the dashboard with password-masked secret entry, default-target selection, connection testing, and typed-name confirmation before removal. Credential inputs clear after successful creation and API responses contain only public target fields.
+- CLI typecheck and **230/230** tests passed. Dashboard typecheck, **32/32** tests and production build passed. The build reports its existing large JavaScript chunk warning. No backup data operation is implemented yet; no backup acceptance scenario is complete.
+
+## 2026-11-17 — Per-database backup target assignment
+
+- Added an authenticated project-scoped assignment route that accepts a target ID or `null`; target IDs must belong to the same fleet and project. Deleted databases cannot change targets. Assignment and detachment are audited, and the database view now reports `backupConfigured` and `backupTargetId` from persisted state. Removing a target continues to detach references through the FK.
+- Added dashboard selection on database detail and `fleet db target assign <project> <database> <target|none>`. The control-plane suite passed **724/724** with formatter/Oxlint, typecheck/build and `go test ./...`; CLI typecheck and **230/230** tests passed; dashboard typecheck, **32/32** tests and build passed.
+- This only records target selection; no backup bytes are created or streamed yet. Restore/PITR/recover and import/export remain unimplemented, so backup acceptance remains open.
+
+## 2026-11-17 — Durable backup manifest schema
+
+- Added migration 0046 with `database_backups`, backup kind/state enums, object manifest checksums/sizes, generation/engine identity, recovery-point metadata and timestamps. Database references are retained until backup records are explicitly removed; target and node deletion detach metadata without erasing verified backup history.
+- `node control-plane/scripts/test-databases.mjs --unit-only` passed: migration applied, **724/724** control-plane tests, Prettier/Oxlint, TypeScript typecheck/build and `go test ./...`. The target test now verifies an existing backup record survives target deletion with target reference cleared.
+- This is metadata persistence only. No worker writes a manifest, no database data is uploaded, and no backup/restore/PITR acceptance is complete.
+
 ## V2 work and acceptance gate
 
 V2 starts only after the V1 gate is verified and its unmerged PR is open; branch feat/db-v2 from feat/db-v1.
+
+## 2026-11-18 — Fleet-managed named PostgreSQL PITR
+
+- Added an exact-name-confirmed in-place restore path for verified WAL-G base backups. The API and worker pass an optional timestamp or named recovery point; the agent validates the restore plan before stopping the database, restores into its owned volume, writes PostgreSQL recovery configuration, and waits for WAL replay to finish before the operation succeeds. Failures expose sanitized error codes, and failures after destructive restore begins leave the database marked failed.
+- Added `fleet db restore <database> <backup> --in-place --confirm NAME [--to ISO|name:POINT]` and matching dashboard controls. Existing logical restore into a separate empty database remains available. Both front ends require verified backups and exact database confirmation for the destructive path.
+- Real API/worker/agent/Docker/MinIO acceptance created a base backup, generated a named PostgreSQL restore point, archived later WAL, confirmed an incorrect name is rejected, restored at the named point, and verified a post-point table was absent after promotion. The same run verified logical restore into a new target, Redis/Postgres backups, soft delete and grace recovery, CLI TCP/exec/dump, tunnel drop/reconnect, and 2 MiB transfer at 100 ms RTT in 2.90 s versus a 12.8 s stop-and-wait lower bound. The separate WAL-G/MinIO archive and PITR test passed.
+- Verification: control-plane **727/727 tests**, pinned Prettier/Oxlint, TypeScript typecheck/build, `go test ./...`; CLI **235/235 tests** and typecheck; dashboard **35/35 tests**, typecheck/build. Graphify refresh follows this source change.
+- Open: the in-place WAL-G path replaces the current data volume before fetching the base. A failed fetch/replay can therefore require a fresh restore rather than rollback; staging-volume swap/rollback is still needed before calling this recovery path fully hardened. Base restore into a new database, Redis RDB restore, durable object manifests/checksums, retention, Playwright and remaining V1 acceptance are open. No production access, Raunak data, publishing or merge was used; PR #36 remains unmerged.
+
+## 2026-11-18 — Preserve PostgreSQL data on failed PITR
+
+- Before WAL-G replaces `PGDATA`, the agent copies the current data directory into a separately labeled Docker volume. The restore helper runs as the database UID after the volume is prepared for that owner. The original is retained until PostgreSQL recovery/readiness succeeds, then removed. A failed fetch restores the original files; a failed recovery attempts rollback, restarts the prior database, and only reports it available after readiness succeeds. Restore receipts fence replay after rollback and allow a new operation to proceed.
+- Real two-agent Docker/API/worker/MinIO acceptance deliberately requested a syntactically valid but missing WAL-G base backup. The operation failed, PostgreSQL remained `running`, and a row inserted immediately before the restore was queryable afterward. The same test passed named-point PITR, logical restore, backup/export, soft delete/recovery, tunnel drop/reconnect, and 2 MiB over 100 ms RTT in 2.91 s versus a 12.8 s stop-and-wait lower bound. Go tests and pinned database formatter/linter/typecheck passed; full control-plane suite is the next gate.
+- The original database copy consumes additional disk space until recovery succeeds. Insufficient space prevents backup preparation before the current data is removed; a failed cleanup can leave the labeled backup volume for later cleanup. Restore into a new database from a base backup, Redis restore and remaining V1 gates remain open. No production/Raunak data, publishing or merge was used; PR #36 remains unmerged.
 
 | V2 area | Status | Missing proof |
 | --- | --- | --- |
@@ -133,3 +187,83 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 - Non-builder agents now run the existing safe disk probe too, so database eligibility does not require opting into builds. The real two-agent fixture verifies non-builder disk reporting while leaving build capability disabled.
 - `node control-plane/scripts/test-databases.mjs --worker`: **717/717 control-plane tests**, formatter/lint, typecheck/build, Go tests and the real two-agent worker/tunnel test passed. Pure scheduler and legacy scheduler checks passed **33/33**. Real Postgres/Redis fixture proves stopped reservations, uptime/outage observations and offline pin preservation. Product offline/recovery acceptance remains pending full lifecycle, alerts and backup recovery.
 - Next: lifecycle API, CLI and dashboard wizard using these recommendations and leased jobs. No production resources or Raunak data were used.
+
+## 2026-11-17 — Lifecycle API, CLI and dashboard work in progress
+
+- Added project-scoped catalog and placement endpoints, fleet database pagination, create with server-side placement revalidation, pinned digest image identities, encrypted role credentials, lifecycle actions, detail/history and authenticated cursor-resumable progress SSE. Validation failures at route trust boundaries return stable 4xx errors. Database errors/progress projections omit operation secrets.
+- Added the dashboard create wizard, capacity recommendation review, resource list/detail, start/stop/restart controls and reconnecting progress stream. Added `fleet databases list|create|start|stop|restart`; action/create commands carry an idempotency key and follow durable operation state unless `--no-wait` or `--json` is used.
+- Added migration 0043 for pinned image references. CLI and dashboard formats/builds and API route tests are included. `node control-plane/scripts/test-databases.mjs --worker` passed: **719/719 control-plane tests**, formatter/lint, typecheck/build, `go test ./...`, and the real delayed two-agent Docker tunnel test (2 MiB at 100 ms RTT: 2.83 s versus a 12.8 s stop-and-wait lower bound). Dashboard typecheck, **31/31 tests** and build passed. CLI typecheck and **223/223 tests** passed.
+- This is component/API coverage, not a full create-through-authenticated-API-to-live-agent acceptance run. Delete/final backup, recover, links/env injection, connection clients and browser E2E remain unimplemented; do not mark a product scenario verified. No PR merge, publishing, production access or Raunak data use.
+
+## 2026-11-17 — Encrypted logical backup operation
+
+- Added scoped `GET/POST .../databases/:databaseId/backups` routes. Backup creation requires a running database and an assigned project target, is admin-authorized and idempotent, and creates the operation and manifest atomically. The worker claims the durable backup lease and resumes the same backup identity after a restart or lost reply.
+- Postgres uses `pg_dump` custom format; durable Redis uses `redis-cli --rdb`. Both stream through the negotiated database tunnel, receive AES-256-GCM encryption in the control plane, and upload through backpressured 8 MiB S3 multipart chunks. A read-back checksum is required before the manifest is marked complete. Keys are derived from the existing master secret and backup ID; only the nonce and format are stored alongside the manifest.
+- Verification: **724/724** control-plane tests, formatter/Oxlint and TypeScript typecheck/build passed; `go test ./...` passed; `node control-plane/scripts/test-databases.mjs --worker-only --backup` passed the **1/1 real two-agent Docker test**. It creates actual Postgres and Redis backups in disposable MinIO, verifies the stored checksum, decrypts each artifact and checks its format, and confirms temporary Redis files are removed. The 2 MiB tunnel run at 100 ms RTT completed in about 2.86 s against the 12.8 s stop-and-wait lower bound.
+- This implements manual logical/RDB snapshots and engine-level WAL archiving/fetch, but not a Fleet-managed recoverable base/WAL manifest. PITR, restore/recover, retention/delete, import/export, and backup controls in CLI/dashboard remain open. No production access, Raunak data, publishing or merge was used; PR #36 remains unmerged.
+
+## 2026-11-17 — Manual database backup CLI and dashboard
+
+- Added `fleet db backup <database>` and `fleet db backups <database>`. Creation sends an idempotency key, follows durable operation progress by default, and displays persisted state, size, creation time and verification. Legacy service `fleet backup` is unchanged.
+- Added a database detail backup panel with manifest state, byte size, age and safe error code. Admins/owners can request a snapshot only while the database is available, not already operating, and has an assigned target. The UI follows operation progress and refreshes persisted manifests. PITR and restore are labeled unavailable.
+- CLI typecheck and **231/231 tests** passed; dashboard typecheck, **32/32 tests** and build passed (existing Vite chunk-size warning). `node control-plane/scripts/test-databases.mjs --unit-only` and `go test ./...` passed for the full milestone gate. Formatter/lint and Graphify were refreshed. WAL/PITR, restore/recover and real browser acceptance remain open.
+- Next: Fleet-managed base backup manifests and restore/PITR, then end-to-end recovery proofs. No production access, Raunak data, publishing or merge was used; PR #36 remains unmerged.
+- UI copy states verification only after object read-back and checksum, without calling Redis RDB artifacts logical backups.
+
+## 2026-11-17 — Portable database dump export
+
+- Added `fleet db dump <database> <file>`. Postgres emits a standard custom `pg_dump` archive; durable Redis emits an RDB snapshot. The control plane uses the owner role only for this admin-authorized export mode, rejects Redis cache mode, writes a durable audit event without credentials, and streams bytes through the existing bounded tunnel. CLI output is created with mode 0600 and exclusive-create semantics; interrupted writes are removed when the process handles the failure.
+- The real Docker/two-agent tunnel test drove both CLI exports end to end, verified `PGDMP` and `REDIS` signatures, checked private file permissions, and confirmed an existing file is not overwritten. The same run retained the 2 MiB/100 ms RTT result (about 2.85 s versus a 12.8 s stop-and-wait minimum).
+- CLI **231/231 tests** and typecheck passed. `node control-plane/scripts/test-databases.mjs --unit-only` passed **724/724 control-plane tests**, pinned Prettier/Oxlint, typecheck/build, and `go test ./...`. `--worker-only` passed the real Docker transfer. Graphify refreshed. Fleet-managed base/WAL manifests, import, PITR, restore/recover and browser download remain open.
+- Next: schedule Fleet base backups and persist the recoverable WAL chain independently of target credentials, then prove timestamp restore into a new database against real Docker/MinIO. No production access, Raunak data, publishing or merge was used; PR #36 remains unmerged.
+
+## 2026-11-17 — Apply changed backup configuration on restart
+
+- Start/restart intents now include the server-generated engine container plan. The agent safely replaces only its owned stopped container when the configuration hash changes, removes only owned obsolete config volumes, and reuses the existing data volume without initialization. The worker intent validator now accepts both image digest forms already supported by the agent.
+- The real two-agent Docker test assigns a target, restarts the database through the API/worker/agent, verifies active WAL-G Postgres settings and all three secret files at mode 0600, then completes encrypted Postgres/Redis backup and MinIO checks. It passed with the operation asserted successful; the 2 MiB transfer at 100 ms RTT completed in about 2.84 s versus 12.8 s stop-and-wait minimum.
+- Verification: full control-plane suite **726/726**, formatter, Oxlint, TypeScript typecheck/build, `go test ./...`, and `node scripts/test-databases.mjs --worker-only --backup` passed. Graphify refreshed to 4,553 nodes / 11,866 edges.
+- Archive settings take effect after restart. Fleet-managed base/WAL manifests, PITR and restore/recover remain open; no product acceptance is claimed for those flows. No production or Raunak data was used, and PR #36 remains unmerged.
+
+## 2026-11-17 — Download verified logical backups
+
+- Added an owner/admin-only API download that streams the encrypted S3 object through AES-GCM decryption, checks the stored size and SHA-256 manifest and authenticates the GCM tag before the stream completes. Downloads are audited. `fleet db backup download <db> <backup-id> <file>` writes an exclusive mode-0600 file and removes partial output on transfer errors.
+- Real Docker/API/MinIO validation downloaded a Postgres backup and compared the result byte-for-byte with direct decryption of the encrypted object. CLI tests verify the file bytes and mode. This downloads logical/RDB artifacts; Fleet restore, point-in-time recovery, import and target-independent access after target deletion remain outstanding.
+- Verification: control-plane **726/726**, Prettier/Oxlint, typecheck/build, `go test ./...`, real tunnel + MinIO backup/download/WAL-G Docker tests, and CLI **232/232** with typecheck passed. Graphify refreshed to 4,554 nodes / 11,875 edges.
+
+## 2026-11-17 — Real WAL-G point-in-time restore proof
+
+- Extended the disposable Docker/MinIO test to execute the Postgres engine's restore plan: fetch an encrypted base into a new volume, replay encrypted WAL to a timestamp, promote, and verify a row inserted before the target exists while a later deletion does not. The archive segment and encrypted WAL were fetched and validated with `pg_waldump`.
+- `node scripts/test-databases.mjs --worker-only --backup` passed the real two-agent transfer/backup scenario and the WAL-G/PITR restore. This proves the engine-level WAL-G path only; no Fleet restore/recover operation, new-database lifecycle, in-place safety copy, CLI/UI wizard, or restore progress workflow is claimed yet.
+
+## 2026-11-17 — Fleet-managed logical PostgreSQL restore
+
+- Added an authenticated, idempotent restore operation from a verified logical backup into a different running PostgreSQL database in the same project. The target is marked `restoring` with the queued lease, receives bounded decrypted backup bytes over the database tunnel, and only completes after `pg_restore --single-transaction` exits successfully. A preflight rejects user relations in the target while ignoring extension-owned relations. Rejected non-empty targets remain running and keep their data intact.
+- Real Docker/MinIO API/worker test created a source dump, restored it into a separately provisioned PostgreSQL container on the node, verified the restored row, then proved a second restore into the now-nonempty target fails without changing that row. The fixture also retains the two-agent 2 MiB transfer at 100 ms RTT (about 2.85 s versus a 12.8 s stop-and-wait lower bound) and WAL-G/PITR Docker test.
+- Full verification: **726/726 control-plane tests**, Prettier/Oxlint, TypeScript typecheck/build, `go test ./...`, and `node scripts/test-databases.mjs --worker --backup`. Graphify refreshed to 4,560 nodes / 11,892 edges.
+- This covers the Fleet-managed logical PostgreSQL restore slice only. The CLI restore flow, dashboard controls, Redis RDB restore, WAL-G base/time/named PITR through the Fleet worker, in-place safety copies, `recover`, import, retention and V1 acceptance remain open. No production access, Raunak data, publishing or merge was used; PR #36 remains unmerged.
+
+## 2026-11-17 — CLI logical restore command
+
+- Added `fleet db restore <source-database> <backup-id> --into <empty-target>`. It accepts a full or unique backup ID prefix, requires a verified logical PostgreSQL backup and a separate running PostgreSQL target of the same major version, submits an idempotent restore operation and follows durable progress by default. `--no-wait` and `--json` return the queued operation. The existing safe target check rejects a populated database without replacing its contents.
+- CLI `npm run typecheck && npm test` passed **233/233**. The Fleet-managed restore API/worker integration remains covered by the full control-plane + real Docker/MinIO run recorded above.
+- The CLI currently requires the user to create an empty target first with `fleet db create`; it does not infer or create a second database. Dashboard restore controls, Redis RDB, WAL-G PITR worker flow, in-place safety copies, recover, import and overall V1 acceptance remain open.
+
+## 2026-11-17 — Dashboard logical restore controls
+
+- Database detail now lists running, online PostgreSQL targets in the same project and at the source's major version. Verified logical Postgres backups can be queued into the selected target; the UI navigates to that target so its persisted operation state and SSE progress are visible. Copy states that populated targets are refused and their data is preserved.
+- Added a mounted dashboard test for target selection, restore API payload, and navigation to the target operation. Dashboard typecheck, **33/33 tests**, Prettier, and production build passed. Vite retains its existing large-chunk warning.
+- The dashboard requires the user to create the empty target separately. Browser/Playwright acceptance, Redis restore, Fleet-managed WAL-G PITR, in-place restore, recovery, import, and full V1 acceptance remain open.
+
+## 2026-11-17 — Typed soft delete and grace restore
+
+- Added owner/admin API routes for typed-name database deletion and restore during a seven-day grace period. Delete requires an engine-matching verified backup created within 15 minutes, queues on the existing durable database operation lease, and removes only owned runtime containers and config volumes. The data volume stays intact. Restore clears deletion markers, returns the row to stopped, and uses the normal lifecycle worker to start it.
+- Real Docker/API/worker/agent/MinIO coverage verified the final backup gate, idempotent delete replay, container removal, data-volume retention, grace restore and restart, then queried a row written before deletion. The first run exposed a timestamp precision race; the atomic restore predicate now checks status, non-null deletion time and the database-side grace deadline.
+- Verification: `node control-plane/scripts/test-databases.mjs --worker-only --backup` passed the real two-agent tunnel/backup/delete/restore test and WAL-G/MinIO PITR test. `node control-plane/scripts/test-databases.mjs --unit-only` passed **726/726**, Prettier, Oxlint, TypeScript typecheck/build and `go test ./...`. Graphify refreshed to 4,574 nodes / 11,954 edges.
+- Automatic grace-period purge, dashboard/CLI delete controls, and Playwright acceptance remain open. No production access or Raunak data was used; PR #36 remains unmerged.
+
+## 2026-11-17 — CLI and dashboard soft delete controls
+
+- Added `fleet db delete <database> --backup <id> --confirm <name>` and `fleet db restore-deleted <database>`. CLI deletion resolves a unique verified backup of the correct engine, requires its creation and verification timestamps within 15 minutes, and submits the exact database name. The recovery command restores the row stopped so the normal `fleet db start` can resume it.
+- Database detail now offers deletion only to owners/admins, only while stopped/running and online, and only after selecting a matching recent verified backup. Confirmation requires typing the database name. During the seven-day period, the dashboard hides runtime mutation and link controls and offers a recovery action with the deadline.
+- CLI Prettier, TypeScript typecheck and **234/234 tests** passed. Dashboard Prettier, TypeScript typecheck, **34/34 tests** and production build passed (existing Vite large-chunk warning). No Playwright browser flow was run.
+- Automatic grace-period purge and broader V1 UI acceptance remain open. PR #36 remains unmerged; no production access or Raunak data was used.

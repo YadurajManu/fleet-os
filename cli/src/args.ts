@@ -5,13 +5,19 @@ export type Flags = Record<string, string | boolean>
  * stable. Lives apart from the entrypoint so it can be tested without the
  * entrypoint running.
  */
-export function parseArgs(argv: string[]): { positional: string[]; flags: Flags } {
+export function parseArgs(argv: string[]): {
+  positional: string[]
+  flags: Flags
+} {
   const positional: string[] = []
   const flags: Flags = {}
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
-    if (arg === '--') { positional.push(...argv.slice(i)); break }
+    if (arg === '--') {
+      positional.push(...argv.slice(i))
+      break
+    }
     if (!arg.startsWith('-')) {
       positional.push(arg)
       continue
@@ -49,18 +55,85 @@ export function parseArgs(argv: string[]): { positional: string[]; flags: Flags 
  * a real flag used on the wrong command; that is a smaller wrong than this.
  */
 export const KNOWN_FLAGS = new Set([
-  'replace', 'as', 'from-service', 'from-fleet', 'verbose', 'public',
+  'replace',
+  'as',
+  'from-service',
+  'from-fleet',
+  'verbose',
+  'public',
   // global
-  'fleet', 'api', 'json', 'yes', 'y', 'help', 'h', 'version', 'v', 'no-wait',
-  'plan', 'dry-run', 'force', 'dir', 'file', 'manifest',
+  'fleet',
+  'api',
+  'json',
+  'yes',
+  'y',
+  'help',
+  'h',
+  'version',
+  'v',
+  'no-wait',
+  'plan',
+  'dry-run',
+  'force',
+  'dir',
+  'file',
+  'manifest',
   'choose-node',
-  'purge-data', 'stop-docker',
+  'purge-data',
+  'stop-docker',
   // per command
-  'ai', 'all', 'apply', 'channel', 'deploy', 'email', 'events', 'f', 'fix', 'follow', 'limit',
-  'name', 'node', 'only', 'out', 'password', 'project', 'secret', 'service', 'sha', 'message',
-  'since', 'terminal', 'to', 'token', 'url',
-  'target', 'shell', 'timeout', 'no-animation', 'color', 'ascii',
-  'watch', 'services', 'nodes', 'failures', 'no-color',
+  'ai',
+  'all',
+  'apply',
+  'channel',
+  'deploy',
+  'email',
+  'events',
+  'f',
+  'fix',
+  'follow',
+  'limit',
+  'name',
+  'node',
+  'only',
+  'out',
+  'password',
+  'project',
+  'secret',
+  'service',
+  'sha',
+  'message',
+  'since',
+  'terminal',
+  'to',
+  'token',
+  'url',
+  'target',
+  'shell',
+  'timeout',
+  'port',
+  'no-animation',
+  'color',
+  'ascii',
+  'into',
+  'in-place',
+  'backup',
+  'confirm',
+  'engine',
+  'mode',
+  'version',
+  'c',
+  'watch',
+  'services',
+  'nodes',
+  'failures',
+  'no-color',
+  'role',
+  'endpoint',
+  'bucket',
+  'region',
+  'prefix',
+  'default',
 ])
 
 /** The closest known flag to a mistyped one, or null when nothing is close. */
@@ -75,7 +148,11 @@ export function nearestFlag(name: string): string | null {
   for (const known of KNOWN_FLAGS) {
     if (known.length < 2) continue
     if (!name.startsWith(known) && !known.startsWith(name)) continue
-    if (!prefixBest || Math.abs(known.length - name.length) < Math.abs(prefixBest.length - name.length)) {
+    if (
+      !prefixBest ||
+      Math.abs(known.length - name.length) <
+        Math.abs(prefixBest.length - name.length)
+    ) {
       prefixBest = known
     }
   }

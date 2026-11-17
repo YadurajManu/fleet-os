@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
   databaseEnginePlugin,
+  databaseBackupPrefix,
   postgresEngine,
   redisEngine,
   type EngineOptions,
@@ -104,6 +105,75 @@ test('Postgres plans isolate projects, restrict roles and separate pool/direct e
   assert.equal(
     plan.containers.reduce((sum, c) => sum + c.memoryMb, 0),
     512,
+  )
+})
+
+test('Postgres WAL archive plan keeps object credentials and encryption key in secret files', () => {
+  const input = options('postgres')
+  input.backupTarget = {
+    endpoint: 'http://127.0.0.1:9000',
+    bucket: 'fleet-backups',
+    prefix: 'project/db',
+    region: 'us-east-1',
+    credentials: {
+      accessKeyId: 'test-access',
+      secretAccessKey: 'test-secret-value',
+      sessionToken: 'test-session-token',
+    },
+    encryptionKey: 'a'.repeat(64),
+  }
+  const database = postgresEngine.plan(input).containers[0]!
+  const config = database.files.find(
+    (entry) => entry.path === '/etc/fleet/postgresql.conf',
+  )!
+  assert.match(config.content, /archive_mode = on/)
+  assert.match(config.content, /archive_timeout = '60s'/)
+  assert.match(config.content, /archive_command = 'wal-g wal-push %p'/)
+  assert.match(config.content, /restore_command = 'wal-g wal-fetch %f %p'/)
+  assert.equal(database.env.WALG_S3_PREFIX, 's3://fleet-backups/project/db')
+  assert.equal(database.env.AWS_ENDPOINT, input.backupTarget.endpoint)
+  assert.ok(!JSON.stringify(database.env).includes('test-secret-value'))
+  assert.ok(!JSON.stringify(database.command).includes('test-access'))
+  for (const path of [
+    '/etc/fleet/aws-credentials',
+    '/etc/fleet/walg-key',
+    '/etc/fleet/walg.pgpass',
+  ]) {
+    const secret = database.files.find((entry) => entry.path === path)!
+    assert.equal(secret.secret, true)
+    assert.equal(secret.mode, 0o600)
+  }
+  assert.match(
+    database.files.find((entry) => entry.path === '/etc/fleet/aws-credentials')!
+      .content,
+    /aws_session_token=test-session-token/,
+  )
+  assert.equal(database.env.PGPASSFILE, '/etc/fleet/walg.pgpass')
+  assert.ok(
+    !JSON.stringify(database.env).includes(input.credentials.owner.password),
+  )
+  const withoutTarget = postgresEngine.plan(options('postgres')).containers[0]!
+  assert.equal(withoutTarget.env.WALG_S3_PREFIX, undefined)
+  assert.doesNotMatch(
+    withoutTarget.files.find(
+      (entry) => entry.path === '/etc/fleet/postgresql.conf',
+    )!.content,
+    /archive_mode = on/,
+  )
+})
+
+test('WAL-G storage prefixes isolate fleets, databases and runtime generations', () => {
+  assert.equal(
+    databaseBackupPrefix('tenant-backups', 'fleet-a', 'db-one', 1),
+    'tenant-backups/databases/fleet-a/db-one/generation-1',
+  )
+  assert.notEqual(
+    databaseBackupPrefix('', 'fleet-a', 'db-one', 1),
+    databaseBackupPrefix('', 'fleet-a', 'db-two', 1),
+  )
+  assert.notEqual(
+    databaseBackupPrefix('', 'fleet-a', 'db-one', 1),
+    databaseBackupPrefix('', 'fleet-a', 'db-one', 2),
   )
 })
 

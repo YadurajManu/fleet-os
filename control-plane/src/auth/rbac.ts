@@ -2,7 +2,12 @@ export const ROLES = ['viewer', 'deployer', 'admin', 'owner'] as const
 export type Role = (typeof ROLES)[number]
 
 /** Roles are a strict ladder; each one can do everything below it. */
-const RANK: Record<Role, number> = { viewer: 0, deployer: 1, admin: 2, owner: 3 }
+const RANK: Record<Role, number> = {
+  viewer: 0,
+  deployer: 1,
+  admin: 2,
+  owner: 3,
+}
 
 export function atLeast(role: Role, required: Role): boolean {
   return RANK[role] >= RANK[required]
@@ -16,6 +21,14 @@ export function atLeast(role: Role, required: Role): boolean {
  */
 export const PERMISSIONS = {
   'fleet.read': 'viewer',
+  'database.read': 'viewer',
+  'database.operate': 'deployer',
+  'database.create': 'admin',
+  'database.access': 'admin',
+  'database.restore': 'admin',
+  'database.delete': 'admin',
+  'database.target': 'admin',
+  'database.backup': 'admin',
   'node.read': 'viewer',
   'service.read': 'viewer',
   'logs.read': 'viewer',

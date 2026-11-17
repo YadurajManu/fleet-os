@@ -21,9 +21,15 @@ export function toneOf(status: string): 'ok' | 'warn' | 'down' | 'idle' {
     case 'running':
     case 'succeeded':
       return 'ok'
+    case 'unreachable':
     case 'offline':
     case 'failed':
       return 'down'
+    case 'degraded':
+    case 'provisioning':
+    case 'restoring':
+    case 'deleting':
+    case 'reconciling':
     case 'cordoned':
     case 'draining':
     case 'deploying':

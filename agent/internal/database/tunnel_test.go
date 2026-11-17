@@ -99,3 +99,35 @@ func TestDropUnblocksWindowWait(t *testing.T) {
 		t.Fatal("drop stranded writer")
 	}
 }
+
+func TestRejectedOperationReturnsOperationResult(t *testing.T) {
+	ctx := t.Context()
+	sent := make(chan Event, 1)
+	h := &Handler{
+		Runtime: &docker.DatabaseRuntime{},
+		Send:    func(_ context.Context, event Event) { sent <- event },
+		streams: map[string]*stream{},
+		operations: map[string]context.CancelFunc{
+			"bbbbbbbb-1111-4444-8888-bbbbbbbbbbbb": func() {},
+			"cccccccc-1111-4444-8888-cccccccccccc": func() {},
+		},
+	}
+	body, err := json.Marshal(Message{
+		Type:      "db.operation",
+		Version:   1,
+		ID:        "aaaaaaaa-1111-4444-8888-aaaaaaaaaaaa",
+		Operation: &docker.DatabaseOperation{Action: "delete"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Handle(ctx, body)
+	select {
+	case event := <-sent:
+		if event.Type != "db.result" || event.ErrorCode != "operation_rejected" {
+			t.Fatalf("unexpected operation rejection: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("rejected operation did not return a result")
+	}
+}

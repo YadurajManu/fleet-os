@@ -302,6 +302,41 @@
       "when": 1794800276091,
       "tag": "0042_database_foundations",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794888391473,
+      "tag": "0043_database_image_pins",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1794905522469,
+      "tag": "0044_database_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794915104822,
+      "tag": "0045_database_backup_targets",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794918394903,
+      "tag": "0046_database_backup_manifest",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794939509757,
+      "tag": "0047_database_backup_schedules",
+      "breakpoints": true
     }
   ]
 }

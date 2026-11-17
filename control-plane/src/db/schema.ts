@@ -396,6 +396,7 @@ export const services = pgTable(
     imagePlatforms: text('image_platforms').array().notNull().default([]),
 
     affinity: text('affinity').array().notNull().default([]),
+    preferredNodeIds: uuid('preferred_node_ids').array().notNull().default([]),
     antiAffinity: text('anti_affinity').array().notNull().default([]),
 
     persistentVolume: boolean('persistent_volume').notNull().default(false),
@@ -844,9 +845,35 @@ export const databaseStatus = pgEnum('database_status', [
 export const databaseOperationState = pgEnum('database_operation_state', [
   'queued', 'running', 'reconciling', 'succeeded', 'failed', 'cancelled',
 ])
+export const databaseBackupState = pgEnum('database_backup_state', [
+  'pending', 'running', 'complete', 'failed',
+])
+export const databaseBackupKind = pgEnum('database_backup_kind', [
+  'base', 'wal', 'rdb', 'logical',
+])
 export const databaseOperationKind = pgEnum('database_operation_kind', [
   'create', 'start', 'stop', 'restart', 'delete', 'purge', 'backup', 'restore', 'recover',
   'import', 'dump', 'migrate', 'exec', 'tune', 'extension', 'rotate', 'link', 'unlink',
+])
+
+export const databaseBackupTargets = pgTable('database_backup_targets', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  fleetId: uuid('fleet_id').notNull().references(() => fleets.id, { onDelete: 'restrict' }),
+  project: text('project').notNull(),
+  name: text('name').notNull(),
+  endpoint: text('endpoint').notNull(),
+  bucket: text('bucket').notNull(),
+  prefix: text('prefix').notNull().default(''),
+  region: text('region').notNull().default('us-east-1'),
+  encryptedCredentials: jsonb('encrypted_credentials').$type<SealedSecret>().notNull(),
+  isDefault: boolean('is_default').notNull().default(false),
+  lastTestedAt: timestamp('last_tested_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  uniqueIndex('database_backup_targets_name_idx').on(t.fleetId, t.project, t.name),
+  uniqueIndex('database_backup_targets_default_idx').on(t.fleetId, t.project).where(sql`${t.isDefault}`),
+  check('database_backup_targets_project_check', sql`length(${t.project}) between 1 and 128`),
+  check('database_backup_targets_name_check', sql`length(${t.name}) between 1 and 128`),
 ])
 
 export const tenantDatabases = pgTable('tenant_databases', {
@@ -865,8 +892,10 @@ export const tenantDatabases = pgTable('tenant_databases', {
   memoryMb: integer('memory_mb').notNull(),
   cpu: real('cpu').notNull(),
   diskMb: integer('disk_mb').notNull(),
+  backupTargetId: uuid('backup_target_id').references(() => databaseBackupTargets.id, { onDelete: 'set null' }),
   profile: text('profile').$type<'dev' | 'standard' | 'performance'>().notNull().default('standard'),
   config: jsonb('config').$type<Record<string, string | number>>().notNull().default({}),
+  images: jsonb('images').$type<{ primary?: string; pooler?: string }>().notNull().default({}),
   generation: integer('generation').notNull().default(1),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -893,6 +922,22 @@ export const databaseCredentials = pgTable('database_credentials', {
 }, t => [
   primaryKey({ columns: [t.databaseId, t.role] }),
   check('database_credentials_role_check', sql`${t.role} in ('owner', 'app', 'readonly')`),
+])
+
+export const databaseLinks = pgTable('database_links', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  databaseId: uuid('database_id').notNull().references(() => tenantDatabases.id, { onDelete: 'cascade' }),
+  serviceId: uuid('service_id').notNull().references(() => services.id, { onDelete: 'cascade' }),
+  role: text('role').$type<'app' | 'readonly'>().notNull().default('app'),
+  envKeys: jsonb('env_keys').$type<Record<string, string>>().notNull(),
+  appliedGeneration: integer('applied_generation').notNull().default(0),
+  restartRequired: boolean('restart_required').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  uniqueIndex('database_links_pair_idx').on(t.databaseId, t.serviceId),
+  index('database_links_service_idx').on(t.serviceId),
+  check('database_links_role_check', sql`${t.role} in ('app', 'readonly')`),
+  check('database_links_generation_check', sql`${t.appliedGeneration} >= 0`),
 ])
 
 export const databaseOperations = pgTable('database_operations', {
@@ -931,3 +976,41 @@ export const databaseOperationEvents = pgTable('database_operation_events', {
   index('database_operation_events_cursor_idx').on(t.operationId, t.id),
   check('database_operation_events_progress_check', sql`${t.progress} between 0 and 100`),
 ])
+
+export const databaseBackups = pgTable('database_backups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  databaseId: uuid('database_id').notNull().references(() => tenantDatabases.id, { onDelete: 'restrict' }),
+  targetId: uuid('target_id').references(() => databaseBackupTargets.id, { onDelete: 'set null' }),
+  operationId: uuid('operation_id').references(() => databaseOperations.id, { onDelete: 'set null' }),
+  nodeId: uuid('node_id').references(() => nodes.id, { onDelete: 'set null' }),
+  generation: integer('generation').notNull(),
+  engine: databaseEngine('engine').notNull(),
+  engineVersion: text('engine_version').notNull(),
+  kind: databaseBackupKind('kind').notNull(),
+  state: databaseBackupState('state').notNull().default('pending'),
+  objectPrefix: text('object_prefix').notNull(),
+  manifest: jsonb('manifest').$type<Array<{ key: string; sizeBytes: number; checksumSha256: string }>>().notNull().default([]),
+  sizeBytes: bigint('size_bytes', { mode: 'number' }),
+  checksumSha256: text('checksum_sha256'),
+  recoveryPoint: jsonb('recovery_point').$type<Record<string, string | number | null>>().notNull().default({}),
+  label: text('label'),
+  errorCode: text('error_code'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }),
+}, t => [
+  index('database_backups_database_idx').on(t.databaseId, t.createdAt),
+  index('database_backups_target_idx').on(t.targetId, t.state),
+  uniqueIndex('database_backups_operation_idx').on(t.operationId),
+  check('database_backups_generation_check', sql`${t.generation} > 0`),
+  check('database_backups_size_check', sql`${t.sizeBytes} is null or ${t.sizeBytes} >= 0`),
+  check('database_backups_checksum_check', sql`${t.checksumSha256} is null or ${t.checksumSha256} ~ '^[a-f0-9]{64}$'`),
+])
+
+export const databaseBackupSchedules = pgTable('database_backup_schedules', {
+  databaseId: uuid('database_id').primaryKey().references(() => tenantDatabases.id, { onDelete: 'cascade' }),
+  enabled: boolean('enabled').notNull().default(true),
+  nextRunAt: timestamp('next_run_at', { withTimezone: true }).notNull(),
+  lastQueuedAt: timestamp('last_queued_at', { withTimezone: true }),
+}, t => [index('database_backup_schedules_due_idx').on(t.enabled, t.nextRunAt)])

@@ -36,12 +36,14 @@ export type OperationFailure =
   | 'deadline_exceeded'
   | 'retry_limit'
   | 'generation_changed'
+  | 'restore_rolled_back'
 const failureSchema = z.enum([
   'runtime_failed',
   'agent_disconnected',
   'deadline_exceeded',
   'retry_limit',
   'generation_changed',
+  'restore_rolled_back',
 ])
 
 // Canonical JSON makes retry identity independent of object key insertion order.
@@ -90,6 +92,7 @@ export async function enqueueDatabaseOperation(
   kind: OperationKind,
   key: string,
   input: unknown,
+  status?: 'restoring' | 'deleting',
 ): Promise<Operation> {
   if (!idempotencyKey.safeParse(key).success)
     throw ApiError.badRequest(
@@ -132,6 +135,17 @@ export async function enqueueDatabaseOperation(
         )
       return existing
     }
+    if (
+      (status === 'restoring' && database.status !== 'running') ||
+      (status === 'deleting' &&
+        !['running', 'stopped'].includes(database.status))
+    )
+      throw ApiError.conflict(
+        'database_unavailable',
+        status === 'restoring'
+          ? 'Start the target database and wait until it is running before restoring.'
+          : 'Wait for the database to finish its current lifecycle transition before deleting it.',
+      )
     const [busy] = await tx
       .select({ id: operations.id })
       .from(operations)
@@ -160,6 +174,11 @@ export async function enqueueDatabaseOperation(
     await tx
       .insert(events)
       .values({ operationId: operation!.id, code: 'queued', progress: 0 })
+    if (status)
+      await tx
+        .update(tenantDatabases)
+        .set({ status, updatedAt: sql`clock_timestamp()` })
+        .where(eq(tenantDatabases.id, database.id))
     return operation!
   })
 }
@@ -223,6 +242,17 @@ export async function claimDatabaseOperation(
         code: errorCode,
         progress: operation.progress,
       })
+      if (operation.kind === 'restore' || operation.kind === 'delete')
+        await tx
+          .update(tenantDatabases)
+          .set({
+            status: operation.kind === 'restore' ? 'running' : 'failed',
+            ...(operation.kind === 'restore'
+              ? { desiredState: 'running' }
+              : {}),
+            updatedAt: sql`clock_timestamp()`,
+          })
+          .where(eq(tenantDatabases.id, operation.databaseId))
       return null
     }
     const token = randomUUID()
@@ -361,13 +391,70 @@ export async function finishDatabaseOperation(
         leaseExpiresAt: null,
       })
       .where(ownedLease(id, token))
-      .returning({ progress: operations.progress })
+      .returning({
+        progress: operations.progress,
+        kind: operations.kind,
+        databaseId: operations.databaseId,
+      })
     assertOwned(row)
     await tx.insert(events).values({
       operationId: id,
       code: errorCode ? 'failed' : 'succeeded',
       progress: row.progress,
     })
+    if (errorCode && row.kind === 'restore')
+      await tx
+        .update(tenantDatabases)
+        .set({
+          status:
+            errorCode === 'restore_rolled_back'
+              ? 'running'
+              : row.progress >= 30
+                ? 'failed'
+                : 'running',
+          desiredState: 'running',
+          updatedAt: sql`clock_timestamp()`,
+        })
+        .where(eq(tenantDatabases.id, row.databaseId))
+    if (errorCode && row.kind === 'delete')
+      await tx
+        .update(tenantDatabases)
+        .set({ status: 'failed', updatedAt: sql`clock_timestamp()` })
+        .where(eq(tenantDatabases.id, row.databaseId))
+  })
+}
+
+export async function commitDatabaseDeleteOperation(
+  ctx: Context,
+  id: string,
+  token: string,
+): Promise<void> {
+  await ctx.db.transaction(async (tx) => {
+    const [operation] = await tx
+      .update(operations)
+      .set({
+        state: 'succeeded',
+        progress: 100,
+        errorCode: null,
+        finishedAt: sql`clock_timestamp()`,
+        leaseToken: null,
+        leaseExpiresAt: null,
+      })
+      .where(ownedLease(id, token))
+      .returning({ databaseId: operations.databaseId })
+    assertOwned(operation)
+    await tx
+      .update(tenantDatabases)
+      .set({
+        status: 'deleting',
+        deletedAt: sql`clock_timestamp()`,
+        purgeAfter: sql`clock_timestamp() + interval '7 days'`,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(eq(tenantDatabases.id, operation.databaseId))
+    await tx
+      .insert(events)
+      .values({ operationId: id, code: 'succeeded', progress: 100 })
   })
 }
 

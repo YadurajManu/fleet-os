@@ -21,6 +21,8 @@ import { registerLogStream } from './api/log-stream.js'
 import { pairingStatusRoutes } from './api/pairing-status.js'
 import { opsRoutes } from './api/ops.routes.js'
 import { instrumentApi } from './ops/metrics.js'
+import { databaseRoutes } from './api/databases.routes.js'
+import { setupDatabaseConnectServer } from './databases/connect.js'
 import { statusRoutes } from './status/routes.js'
 import { statusIngestRoutes } from './status/ingest.js'
 import { fleetHealthRoutes } from './status/private.js'
@@ -39,6 +41,9 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
           'body.password',
           'body.refreshToken',
           'body.value',
+          'body.credentials.accessKeyId',
+          'body.credentials.secretAccessKey',
+          'body.credentials.sessionToken',
           'body.manifest',
         ],
         censor: '[redacted]',
@@ -114,6 +119,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
   await app.register(webhookRoutes)
   await app.register(githubRoutes)
   await app.register(installRoutes)
+  await app.register(databaseRoutes)
   await app.register(serviceRoutes)
   await app.register(taskRoutes)
   await app.register(domainRoutes)
@@ -128,6 +134,7 @@ export async function buildServer(ctx: AppContext): Promise<FastifyInstance> {
 
   setupTunnelServer(app, ctx, ctx.tunnels)
   setupTerminalServer(app, ctx, ctx.tunnels)
+  setupDatabaseConnectServer(app, ctx)
 
   return app
 }

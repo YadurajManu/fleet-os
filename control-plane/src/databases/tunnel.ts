@@ -12,8 +12,15 @@ export type DatabaseIdentity = {
   generation: number
 }
 export type DatabaseOperation = {
+  images?: Array<{
+    reference: string
+    platform: string
+    required_bytes: number
+  }>
+  registryAuth?: string
+  reserveBytes?: number
   id: string
-  action: 'provision' | 'start' | 'stop' | 'restart'
+  action: 'provision' | 'start' | 'stop' | 'restart' | 'delete' | 'restore'
   identity: DatabaseIdentity
   containers?: Array<{
     initialize: boolean
@@ -27,6 +34,13 @@ export type DatabaseOperation = {
   }>
   bootstrap?: EngineCommand | null
   readiness?: EngineCommand
+  restore?: {
+    backupName: string
+    targetTime?: string
+    targetName?: string
+    env: Record<string, string>
+    files: EnginePlan['containers'][number]['files']
+  }
 }
 const identity = z.object({
   id: z.string().uuid(),
@@ -38,9 +52,16 @@ const identity = z.object({
 const receipt = z.object({
   identity,
   operationId: z.string().uuid(),
-  action: z.enum(['provision', 'start', 'stop', 'restart']),
+  action: z.enum([
+    'provision',
+    'start',
+    'stop',
+    'restart',
+    'delete',
+    'restore',
+  ]),
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-  phase: z.enum(['prepare', 'stopped', 'created', 'running']),
+  phase: z.enum(['prepare', 'stopped', 'created', 'restored', 'running']),
   roles: z
     .array(z.enum(['database', 'pooler']))
     .min(1)
@@ -188,6 +209,14 @@ export class DatabaseTunnel {
         'id' in body &&
         typeof body.id === 'string'
       ) {
+        const pending = this.operations.get(body.id)
+        if (pending?.nodeId === nodeId) {
+          pending.finish(
+            undefined,
+            new Error('Invalid database operation response.'),
+          )
+          return
+        }
         const stream = this.streams.get(body.id)
         if (stream?.nodeId === nodeId)
           stream.destroy(new Error('Invalid database stream message.'))
@@ -215,7 +244,9 @@ export class DatabaseTunnel {
       if (message.errorCode)
         pending.finish(
           undefined,
-          new Error('Database operation requires reconciliation.'),
+          new Error(
+            `Database operation requires reconciliation (${message.errorCode}).`,
+          ),
         )
       else if (
         result &&
@@ -228,6 +259,11 @@ export class DatabaseTunnel {
         )
       )
         pending.finish(result)
+      else
+        pending.finish(
+          undefined,
+          new Error('Database operation receipt did not match the request.'),
+        )
       return
     }
     const stream = this.streams.get(message.id)
