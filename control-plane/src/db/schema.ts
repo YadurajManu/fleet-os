@@ -867,6 +867,7 @@ export const tenantDatabases = pgTable('tenant_databases', {
   diskMb: integer('disk_mb').notNull(),
   profile: text('profile').$type<'dev' | 'standard' | 'performance'>().notNull().default('standard'),
   config: jsonb('config').$type<Record<string, string | number>>().notNull().default({}),
+  images: jsonb('images').$type<{ primary?: string; pooler?: string }>().notNull().default({}),
   generation: integer('generation').notNull().default(1),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

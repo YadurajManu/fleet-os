@@ -302,6 +302,13 @@
       "when": 1794800276091,
       "tag": "0042_database_foundations",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794888391473,
+      "tag": "0043_database_image_pins",
+      "breakpoints": true
     }
   ]
 }

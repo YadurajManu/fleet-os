@@ -1,0 +1,1 @@
+ALTER TABLE "tenant_databases" ADD COLUMN "images" jsonb DEFAULT '{}'::jsonb NOT NULL;

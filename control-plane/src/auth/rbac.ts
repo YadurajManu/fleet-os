@@ -16,6 +16,13 @@ export function atLeast(role: Role, required: Role): boolean {
  */
 export const PERMISSIONS = {
   'fleet.read': 'viewer',
+  'database.read': 'viewer',
+  'database.operate': 'deployer',
+  'database.create': 'admin',
+  'database.access': 'admin',
+  'database.restore': 'admin',
+  'database.delete': 'admin',
+  'database.target': 'admin',
   'node.read': 'viewer',
   'service.read': 'viewer',
   'logs.read': 'viewer',

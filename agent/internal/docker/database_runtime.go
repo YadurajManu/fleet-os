@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/fleet-os/fleet-os/agent/internal/capability"
 	"io"
 	"os"
 	"path/filepath"
@@ -23,12 +24,15 @@ type DatabaseRuntime struct {
 }
 
 type DatabaseOperation struct {
-	ID         string                  `json:"id"`
-	Action     string                  `json:"action"`
-	Identity   DatabaseIdentity        `json:"identity"`
-	Containers []DatabaseContainerSpec `json:"containers,omitempty"`
-	Bootstrap  *DatabaseCommand        `json:"bootstrap,omitempty"`
-	Readiness  *DatabaseCommand        `json:"readiness,omitempty"`
+	Images       []DatabaseImage         `json:"images,omitempty"`
+	RegistryAuth string                  `json:"registryAuth,omitempty"`
+	ReserveBytes int64                   `json:"reserveBytes,omitempty"`
+	ID           string                  `json:"id"`
+	Action       string                  `json:"action"`
+	Identity     DatabaseIdentity        `json:"identity"`
+	Containers   []DatabaseContainerSpec `json:"containers,omitempty"`
+	Bootstrap    *DatabaseCommand        `json:"bootstrap,omitempty"`
+	Readiness    *DatabaseCommand        `json:"readiness,omitempty"`
 }
 
 type DatabaseReceipt struct {
@@ -166,6 +170,19 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 		}
 	}
 	if operation.Action == "provision" && !receipt.Initialized {
+		if len(operation.Images) > 0 {
+			if operation.ReserveBytes < 1<<30 {
+				return nil, databaseFailure("image reserve validation")
+			}
+			budget, err := capability.ProbeDisk(ctx, r.Dir, operation.ReserveBytes, "")
+			if err != nil {
+				return nil, databaseFailure("image disk preflight")
+			}
+			if err := r.Docker.PrepullDatabaseImages(ctx, operation.Images, operation.RegistryAuth, budget, nil); err != nil {
+				return nil, err
+			}
+		}
+
 		for _, spec := range operation.Containers {
 			if _, err := r.Docker.EnsureDatabaseContainer(ctx, spec); err != nil {
 				return nil, err
