@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useAuth, usePoll } from '../lib/auth'
@@ -269,6 +269,14 @@ function DatabaseDetailContent({
           </p>
         </div>
       )}
+      <DatabaseTargetAssignment
+        fleetId={fleetId}
+        project={project}
+        databaseId={databaseId}
+        targetId={database.backupTargetId}
+        canManage={canManageAccess}
+        onUpdated={result.refetch}
+      />
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel title="Data location">
           <div className="space-y-4 p-5">
@@ -521,5 +529,81 @@ function DatabaseDetailContent({
         }}
       />
     </div>
+  )
+}
+
+function DatabaseTargetAssignment({
+  fleetId,
+  project,
+  databaseId,
+  targetId,
+  canManage,
+  onUpdated,
+}: {
+  fleetId: string
+  project: string
+  databaseId: string
+  targetId: string | null
+  canManage: boolean
+  onUpdated: () => void
+}) {
+  const path = `/fleets/${encodeURIComponent(fleetId)}/projects/${encodeURIComponent(project)}`
+  const targetsPath = `${path}/backup-targets`
+  const targets = usePoll(
+    () => api<{ targets: Array<{ id: string; name: string }> }>(targetsPath),
+    targetsPath,
+  )
+  const [selected, setSelected] = useState(targetId ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  useEffect(() => setSelected(targetId ?? ''), [targetId])
+  async function save() {
+    setBusy(true)
+    setError(null)
+    try {
+      await api(`${path}/databases/${databaseId}/backup-target`, {
+        method: 'PUT',
+        body: { targetId: selected || null },
+      })
+      onUpdated()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Panel title="Off-node backup target">
+      <div className="flex flex-wrap items-end gap-3 p-5">
+        <div className="min-w-[16rem] flex-1">
+          <label className="block">
+            <span className="mono-label">Project target</span>
+            <select
+              value={selected}
+              disabled={!canManage || busy || targets.loading}
+              onChange={(event) => setSelected(event.target.value)}
+              className="mt-2 w-full rounded-[3px] border border-[var(--color-line)] bg-[var(--color-ink-950)] px-3.5 py-2.5 text-sm text-[var(--color-fg)]"
+            >
+              <option value="">No off-node target</option>
+              {(targets.data?.targets ?? []).map((target) => (
+                <option key={target.id} value={target.id}>
+                  {target.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {canManage && (
+          <Button
+            variant="secondary"
+            disabled={busy || selected === (targetId ?? '')}
+            onClick={() => void save()}
+          >
+            {busy ? 'Saving…' : 'Save target'}
+          </Button>
+        )}
+        <ErrorNote error={error ?? targets.error} />
+      </div>
+    </Panel>
   )
 }

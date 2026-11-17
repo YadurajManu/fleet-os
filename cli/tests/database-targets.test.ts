@@ -93,3 +93,60 @@ test('target creation sends credentials only in the authenticated request body',
     }
   }
 })
+
+test('target assignment resolves scoped database and target names', async () => {
+  const originalFetch = globalThis.fetch
+  const originalApi = process.env.FLEET_API
+  const originalToken = process.env.FLEET_TOKEN
+  const calls: Array<{ path: string; method: string; body?: unknown }> = []
+  process.env.FLEET_API = 'https://control.example.test'
+  process.env.FLEET_TOKEN = 'access-token'
+  globalThis.fetch = async (input, options) => {
+    const path = new URL(String(input)).pathname
+    const method = options?.method ?? 'GET'
+    const body = options?.body ? JSON.parse(String(options.body)) : undefined
+    calls.push({ path, method, body })
+    const response = path.endsWith('/databases')
+      ? {
+          databases: [
+            {
+              id: 'database-id',
+              project: 'production',
+              name: 'primary',
+            },
+          ],
+          nextCursor: null,
+        }
+      : path.endsWith('/backup-targets')
+        ? {
+            targets: [
+              {
+                id: 'target-id',
+                name: 'archive',
+              },
+            ],
+          }
+        : { backupTargetId: 'target-id' }
+    return new Response(JSON.stringify(response), {
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    await databasesCommand.run(
+      ['target', 'assign', 'production', 'primary', 'archive'],
+      { fleet: 'fleet-id' },
+    )
+    const assignment = calls.find((call) => call.method === 'PUT')
+    assert.equal(
+      assignment?.path,
+      '/fleets/fleet-id/projects/production/databases/database-id/backup-target',
+    )
+    assert.deepEqual(assignment?.body, { targetId: 'target-id' })
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalApi === undefined) delete process.env.FLEET_API
+    else process.env.FLEET_API = originalApi
+    if (originalToken === undefined) delete process.env.FLEET_TOKEN
+    else process.env.FLEET_TOKEN = originalToken
+  }
+})

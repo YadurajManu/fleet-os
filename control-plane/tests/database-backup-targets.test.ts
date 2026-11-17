@@ -161,8 +161,36 @@ test('backup targets are project scoped, encrypted, audited and safely removable
     memoryMb: 512,
     cpu: 0.5,
     diskMb: 1024,
-    backupTargetId: second.json().id,
   })
+  const targetPath = `/fleets/${fleetId}/projects/${project}/databases/${databaseId}/backup-target`
+  const assigned = await app.inject({
+    method: 'PUT',
+    url: targetPath,
+    headers: auth,
+    payload: { targetId: second.json().id },
+  })
+  assert.equal(assigned.statusCode, 200, assigned.body)
+  assert.equal(assigned.json().backupTargetId, second.json().id)
+  const detail = await app.inject({
+    url: `/fleets/${fleetId}/projects/${project}/databases/${databaseId}`,
+    headers: auth,
+  })
+  assert.equal(detail.json().database.backupConfigured, true)
+
+  const foreignTarget = await app.inject({
+    method: 'POST',
+    url: `/fleets/${fleetId}/projects/other-project/backup-targets`,
+    headers: auth,
+    payload: payload('foreign'),
+  })
+  const rejectedAssignment = await app.inject({
+    method: 'PUT',
+    url: targetPath,
+    headers: auth,
+    payload: { targetId: foreignTarget.json().id },
+  })
+  assert.equal(rejectedAssignment.statusCode, 404)
+
   const wrongProjectDelete = await app.inject({
     method: 'DELETE',
     url: `/fleets/${fleetId}/projects/other-project/backup-targets/${second.json().id}`,
@@ -181,4 +209,12 @@ test('backup targets are project scoped, encrypted, audited and safely removable
     .from(tenantDatabases)
     .where(eq(tenantDatabases.id, databaseId))
   assert.equal(database!.backupTargetId, null)
+  const detached = await app.inject({
+    method: 'PUT',
+    url: targetPath,
+    headers: auth,
+    payload: { targetId: null },
+  })
+  assert.equal(detached.statusCode, 200, detached.body)
+  assert.equal(detached.json().backupTargetId, null)
 })

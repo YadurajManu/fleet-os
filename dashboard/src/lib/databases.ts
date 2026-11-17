@@ -25,6 +25,7 @@ export type DatabaseView = {
   purgeAfter: string | null
   warnings: string[]
   backupConfigured: boolean
+  backupTargetId: string | null
 }
 export type DatabaseOperation = {
   id: string

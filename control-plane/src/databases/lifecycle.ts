@@ -84,9 +84,14 @@ export async function databaseView(
     purgeAfter: row.purgeAfter,
     nodeName: node?.name ?? null,
     nodeStatus: node?.status ?? null,
-    backupConfigured: false,
+    backupTargetId: row.backupTargetId,
+    backupConfigured: row.backupTargetId !== null,
     warnings: [
-      'No off-node backups are configured. Losing this node can lose this database.',
+      ...(row.backupTargetId
+        ? []
+        : [
+            'No off-node backups are configured. Losing this node can lose this database.',
+          ]),
       ...(row.engine === 'redis' && row.mode === 'cache'
         ? [
             'Cache mode has no persistence; keys can be evicted and are lost on restart.',
