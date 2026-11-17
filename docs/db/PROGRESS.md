@@ -10,7 +10,7 @@ Continuation milestone 1 is verified: engine contract, maintained images, privat
 
 Milestone 1 gate: `node control-plane/scripts/test-databases.mjs` completed with **703/703 control-plane tests**, typecheck, build, `go test ./...`, and **8/8 real Docker checks** passing. The Docker checks cover official engine tuning (4), maintained engine/Go resource lifecycle/roles/pooler/extensions/metrics/export (3), and authenticated dual-architecture registry resolution plus real Go pre-pull/cache/disk guards (1). Disposable test dependencies and registry resources were removed.
 
-The CLI now supports `fleet db list|link|unlink`; link/unlink accept exact database and service names or IDs, with `--project` resolving duplicate database names. Help documents `--role` and `--as`. CLI typecheck and **226/226 tests** pass. This improves the operator path but does not complete database-link acceptance: no API-to-live-app rollout or cross-node connector has been verified.
+The CLI now supports `fleet db list|link|unlink|connect`; link/unlink accept exact database and service names or IDs, with `--project` resolving duplicate database names. `db connect` forwards loopback TCP through an authenticated, revocable control-plane WebSocket and the existing bounded agent stream. Help documents `--role`, `--as` and `--port`. CLI typecheck and **226/226 tests** pass. A real Docker test used the CLI to AUTH/PING Redis through two agents and verified unauthorized rejection and session-revocation disconnect. Postgres client compatibility and API-to-live-app rollout remain unverified; no cross-node application connector exists yet.
 
 Cross-platform evidence: `FLEET_DB_PLATFORMS=linux/arm64,linux/amd64 node deploy/databases/build.mjs` built all four OCI indexes. `python3 deploy/databases/verify-oci.py` verified every referenced blob/checksum and both platform configurations before local Docker import. Checked scratch archives were then removed to recover host disk space; ignored verification metadata remains. `FLEET_DB_TEST_PLATFORM=linux/amd64 node --test --test-concurrency=1 --import tsx tests/database-plugins.docker.ts` passed **3/3** under Docker Desktop emulation. Agent `CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> go build ./cmd/agent` compiled Linux arm64/amd64, Windows amd64 and Darwin arm64. Native hardware is arm64 only; no native amd64 or Windows runtime coverage is claimed.
 
@@ -28,7 +28,7 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 5 | Targets, backups, restore, recover, import/export | not started | No engine-consistent recovery E2E proof yet. |
 | 6 | Release migrations, config, exec/shell/migrate | not started | No release-gate E2E proof yet. |
 | 7 | Monitoring, alerts, tuning | in progress | `node --test --import tsx tests/database-tuning.test.ts` passes; no metrics/alert product flow yet. |
-| 8 | Complete CLI | in progress | Lifecycle list/create/actions commands are wired; database connect/shell/exec, backup/recovery and declarative release commands remain. |
+| 8 | Complete CLI | in progress | Lifecycle list/create/actions, link/unlink and loopback `db connect` are wired. Shell/exec, backup/recovery and declarative release commands remain. |
 | 9 | Complete dashboard | in progress | Create wizard, list/detail, lifecycle controls and reconnecting SSE progress are wired. Playwright and backup/delete/link flows remain. |
 | 10 | Security, E2E, docs, release prep, V1 PR | not started | No V1 acceptance gate or PR yet. |
 
@@ -40,7 +40,7 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 2 | Restore deleted rows to timestamp T into new DB | not started | No PITR E2E proof. |
 | 3 | Migration failure retains old app, restore point and actionable logs | not started | No failing-release E2E proof. |
 | 4 | Offline -> unreachable/alert; no empty failover; recover with measured RPO | not started | No offline/recover E2E proof. |
-| 5 | Localhost connect supports psql/Prisma Studio; revocation is immediate | not started | No live session/revocation proof. |
+| 5 | Localhost connect supports psql/Prisma Studio; revocation is immediate | in progress | Real Docker test proves CLI local TCP forwarding, Redis AUTH/PING and revocation disconnect through the two-agent stream. Still need Postgres `psql`/Prisma Studio and revocation timing under a normal database client. |
 | 6 | Redis cache actually evicts; durable survives restart | in progress | `node --test --import tsx tests/database-engines.docker.ts` passes with official images; full Fleet-managed flow still missing. |
 | 7 | External Postgres import -> portable export -> restore elsewhere | not started | No full import/export round trip. |
 | 8 | Typed delete, final backup, grace-period recovery | not started | No deletion E2E proof. |
