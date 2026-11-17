@@ -230,6 +230,12 @@ test('database restore targets a separate running Postgres database', async () =
               state: 'complete',
               verifiedAt: '2026-11-17T00:00:00Z',
             },
+            {
+              id: 'base-id',
+              kind: 'base',
+              state: 'complete',
+              verifiedAt: '2026-11-17T00:00:00Z',
+            },
           ],
         }),
         { headers: { 'content-type': 'application/json' } },
@@ -252,6 +258,14 @@ test('database restore targets a separate running Postgres database', async () =
       'no-wait': true,
     })
     assert.ok(restorePath.endsWith('/source-id/backups/backup-id/restore'))
+    assert.deepEqual(restoreBody, { targetDatabaseId: 'target-id' })
+    await databasesCommand.run(['restore', 'source', 'base-id'], {
+      fleet: 'fleet-id',
+      project: 'production',
+      into: 'target',
+      'no-wait': true,
+    })
+    assert.ok(restorePath.endsWith('/source-id/backups/base-id/restore'))
     assert.deepEqual(restoreBody, { targetDatabaseId: 'target-id' })
   } finally {
     globalThis.fetch = originalFetch

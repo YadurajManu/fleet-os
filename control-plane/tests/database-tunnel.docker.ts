@@ -168,6 +168,7 @@ test(
       project: 'tunnel-e2e',
       generation: 1,
     }
+    const testSubnet = `10.255.${Number.parseInt(id.slice(0, 2), 16) % 240}.0/24`
     const workerContext = fixtureConfig ? createContext(fixtureConfig) : null
     const orgId = randomUUID()
     if (workerContext) workerContext.tunnels = registry
@@ -234,6 +235,20 @@ test(
         ]),
       },
     })
+    // Repeat runs can exhaust Docker Desktop's predefined address pools.
+    docker([
+      'network',
+      'create',
+      '--driver',
+      'bridge',
+      '--subnet',
+      testSubnet,
+      '--label',
+      `io.fleet.database-fleet=${fleetId}`,
+      '--label',
+      `io.fleet.database-project=${plan.network}`,
+      plan.network,
+    ])
     const proxy = createTCPServer((socket) => {
       const stream = relay.open(
         { identity, role: 'database', port: 6379, timeoutMs: 30000 },
@@ -962,6 +977,78 @@ test(
             ]),
             'restored-from-verified-backup',
           )
+          docker([
+            'exec',
+            '-e',
+            `PGPASSWORD=${restoreCredentials.owner.password}`,
+            `fleet-db-${restoreTargetId}-database`,
+            'psql',
+            '-X',
+            '-v',
+            'ON_ERROR_STOP=1',
+            '-U',
+            restoreCredentials.owner.username,
+            '-d',
+            'tunnel_restore_target',
+            '-c',
+            'DROP TABLE restore_marker',
+          ])
+          await workerContext.db
+            .update(databaseBackupTargets)
+            .set({ endpoint: 'http://minio:9000' })
+            .where(eq(databaseBackupTargets.id, targetId))
+          const baseIntoNewTarget = await api.inject({
+            method: 'POST',
+            url: `${backupUrl}/${baseBackupId}/restore`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+            payload: { targetDatabaseId: restoreTargetId },
+          })
+          assert.equal(
+            baseIntoNewTarget.statusCode,
+            202,
+            baseIntoNewTarget.body,
+          )
+          assert.equal(await worker.tick(), true)
+          const [baseIntoNewOperation] = await workerContext.db
+            .select({ state: databaseOperations.state })
+            .from(databaseOperations)
+            .where(
+              eq(databaseOperations.id, baseIntoNewTarget.json().operationId),
+            )
+          assert.equal(
+            baseIntoNewOperation!.state,
+            'succeeded',
+            'WAL-G base restore into a separate database should succeed',
+          )
+          assert.equal(
+            docker([
+              'exec',
+              '-e',
+              `PGPASSWORD=${restoreCredentials.owner.password}`,
+              `fleet-db-${restoreTargetId}-database`,
+              'psql',
+              '-X',
+              '-A',
+              '-t',
+              '-U',
+              restoreCredentials.owner.username,
+              '-d',
+              'tunnel_restore_target',
+              '-c',
+              'SELECT value FROM restore_marker',
+            ]),
+            'restored-from-verified-backup',
+          )
+          t.diagnostic(
+            'verified WAL-G base restore into a separate PostgreSQL database with target credentials',
+          )
+          await workerContext.db
+            .update(databaseBackupTargets)
+            .set({ endpoint })
+            .where(eq(databaseBackupTargets.id, targetId))
           const unsafeRestore = await api.inject({
             method: 'POST',
             url: `${backupUrl}/${backupId}/restore`,

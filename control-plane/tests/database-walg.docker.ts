@@ -52,7 +52,7 @@ test(
     let sql: ReturnType<typeof postgres> | undefined
     let restoreSql: ReturnType<typeof postgres> | undefined
     try {
-      await run('network', 'create', network)
+      await run('network', 'create', '--subnet', '10.255.240.0/24', network)
       await run(
         'network',
         'connect',

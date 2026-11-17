@@ -260,12 +260,17 @@ function DatabaseDetailContent({
       setRestoreBusy(false)
     }
   }
-  async function restoreBaseBackup(backup: DatabaseBackup) {
+  async function restoreBaseBackup(
+    backup: DatabaseBackup,
+    targetDatabaseId = database?.id,
+  ) {
+    const inPlace = targetDatabaseId === database?.id
     if (
       restoreBusy ||
       active ||
       !database ||
-      restoreConfirmName !== database.name
+      !targetDatabaseId ||
+      (inPlace && restoreConfirmName !== database.name)
     )
       return
     const recoveryTarget = pitrTarget
@@ -289,15 +294,22 @@ function DatabaseDetailContent({
         {
           method: 'POST',
           body: {
-            targetDatabaseId: database.id,
-            confirmation: database.name,
+            targetDatabaseId,
+            ...(inPlace ? { confirmation: database.name } : {}),
             ...(recoveryTarget ? { recoveryTarget } : {}),
           },
           idempotencyKey: databaseRequestKey(),
         },
       )
-      setSubmitted(accepted.operationId)
-      result.refetch()
+      if (!inPlace) {
+        const target = restoreTargets.find(
+          (candidate) => candidate.id === targetDatabaseId,
+        )
+        if (target) navigate(databaseRoute(target))
+      } else {
+        setSubmitted(accepted.operationId)
+        result.refetch()
+      }
     } catch (err) {
       setError(err)
     } finally {
@@ -509,7 +521,7 @@ function DatabaseDetailContent({
               {backupsResult.data?.backups
                 .filter(
                   (backup) =>
-                    backup.kind === 'logical' &&
+                    (backup.kind === 'logical' || backup.kind === 'base') &&
                     backup.state === 'complete' &&
                     backup.verifiedAt,
                 )
@@ -518,7 +530,11 @@ function DatabaseDetailContent({
                     key={backup.id}
                     variant="secondary"
                     disabled={restoreBusy || active || !restoreTargetId}
-                    onClick={() => void restoreBackup(backup)}
+                    onClick={() =>
+                      void (backup.kind === 'base'
+                        ? restoreBaseBackup(backup, restoreTargetId)
+                        : restoreBackup(backup))
+                    }
                   >
                     {restoreBusy
                       ? 'Starting restore…'

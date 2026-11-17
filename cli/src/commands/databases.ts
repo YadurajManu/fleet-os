@@ -517,7 +517,9 @@ export const databasesCommand = {
       const matches = body.backups.filter(
         (backup) =>
           (backup.id === nameOrId || backup.id.startsWith(nameOrId)) &&
-          backup.kind === (inPlace ? 'base' : 'logical') &&
+          (inPlace
+            ? backup.kind === 'base'
+            : backup.kind === 'logical' || backup.kind === 'base') &&
           backup.state === 'complete' &&
           backup.verifiedAt,
       )
@@ -525,11 +527,13 @@ export const databasesCommand = {
         throw new CliError(
           matches.length
             ? `Backup id prefix "${nameOrId}" is ambiguous.`
-            : `No verified ${inPlace ? 'base' : 'logical'} PostgreSQL backup starts with "${nameOrId}".`,
+            : `No verified PostgreSQL backup starts with "${nameOrId}".`,
           EXIT.usage,
         )
+      if (typeof flags.to === 'string' && matches[0]!.kind !== 'base')
+        throw new CliError('The --to option requires a verified base backup.')
       const recoveryTarget =
-        inPlace && typeof flags.to === 'string'
+        matches[0]!.kind === 'base' && typeof flags.to === 'string'
           ? flags.to.startsWith('name:')
             ? { type: 'name' as const, value: flags.to.slice(5) }
             : Number.isNaN(Date.parse(flags.to))
