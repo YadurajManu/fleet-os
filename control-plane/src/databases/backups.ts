@@ -1,12 +1,13 @@
 import {
   createCipheriv,
+  createDecipheriv,
   createHash,
   createHmac,
   hkdfSync,
   randomBytes,
   randomUUID,
 } from 'node:crypto'
-import { PassThrough, Transform } from 'node:stream'
+import { PassThrough, Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import {
@@ -278,6 +279,167 @@ export async function listDatabaseBackups(
     .from(databaseBackups)
     .where(eq(databaseBackups.databaseId, database.id))
     .orderBy(asc(databaseBackups.createdAt))
+}
+
+export async function downloadDatabaseBackup(
+  ctx: AppContext,
+  scope: { fleetId: string; project: string; databaseId: string },
+  backupId: string,
+  actor: { orgId: string; userId: string },
+) {
+  const [backup] = await ctx.db
+    .select()
+    .from(databaseBackups)
+    .where(
+      and(
+        eq(databaseBackups.id, backupId),
+        eq(databaseBackups.databaseId, scope.databaseId),
+      ),
+    )
+  if (!backup) throw ApiError.notFound('Database backup')
+  const [entry] = backup.manifest
+  if (
+    backup.state !== 'complete' ||
+    !backup.verifiedAt ||
+    !backup.checksumSha256 ||
+    !backup.sizeBytes ||
+    !entry ||
+    entry.key !== `${backup.objectPrefix}/data.enc` ||
+    entry.checksumSha256 !== backup.checksumSha256 ||
+    entry.sizeBytes !== backup.sizeBytes
+  )
+    throw ApiError.conflict(
+      'database_backup_unverified',
+      'This backup has no verified downloadable artifact.',
+    )
+  const [target] = backup.targetId
+    ? await ctx.db
+        .select()
+        .from(databaseBackupTargets)
+        .where(
+          and(
+            eq(databaseBackupTargets.id, backup.targetId),
+            eq(databaseBackupTargets.fleetId, scope.fleetId),
+            eq(databaseBackupTargets.project, scope.project),
+          ),
+        )
+    : []
+  if (!target)
+    throw ApiError.conflict(
+      'database_backup_target_unavailable',
+      'The backup target is no longer available. Reconnect or restore the configured target before downloading this backup.',
+    )
+  const credentials = targetCredentials.parse(
+    JSON.parse(
+      openSecret(target.encryptedCredentials, ctx.config.SECRETS_MASTER_KEY),
+    ),
+  )
+  const client = new S3Client({
+    endpoint: target.endpoint,
+    forcePathStyle: true,
+    region: target.region,
+    credentials,
+    maxAttempts: 2,
+  })
+  let object
+  try {
+    object = await client.send(
+      new GetObjectCommand({ Bucket: target.bucket, Key: entry.key }),
+    )
+  } catch {
+    client.destroy()
+    throw ApiError.unavailable(
+      'database_backup_unavailable',
+      'The backup artifact could not be read from its target. Check the target and retry.',
+    )
+  }
+  if (!object.Body) {
+    client.destroy()
+    throw ApiError.unavailable(
+      'database_backup_unavailable',
+      'The backup target returned no artifact. Check the target and retry.',
+    )
+  }
+  await recordAudit(ctx.db, {
+    orgId: actor.orgId,
+    actorUserId: actor.userId,
+    action: 'database.backup.downloaded',
+    targetType: 'database',
+    targetId: scope.databaseId,
+    metadata: { backupId, project: scope.project },
+  })
+  const encryptionKey = Buffer.from(
+    hkdfSync(
+      'sha256',
+      Buffer.from(ctx.config.SECRETS_MASTER_KEY, 'base64'),
+      Buffer.from(backup.id),
+      Buffer.from('fleet-database-backup-v1'),
+      32,
+    ),
+  )
+  const checksum = createHash('sha256')
+  let sizeBytes = 0
+  const body = async function* () {
+    let header = Buffer.alloc(0)
+    let tail = Buffer.alloc(0)
+    let decipher: ReturnType<typeof createDecipheriv> | undefined
+    try {
+      for await (const raw of object.Body as NodeJS.ReadableStream) {
+        const chunk = Buffer.from(raw as Uint8Array)
+        checksum.update(chunk)
+        sizeBytes += chunk.length
+        let data = chunk
+        if (!decipher) {
+          header = Buffer.concat([header, chunk])
+          if (header.length < 20) continue
+          const nonce = header.subarray(8, 20)
+          const recordedNonce = Buffer.from(
+            String(backup.recoveryPoint.nonce ?? ''),
+            'base64',
+          )
+          if (
+            header.subarray(0, 8).toString() !== 'FLEETDB1' ||
+            nonce.length !== 12 ||
+            !nonce.equals(recordedNonce)
+          )
+            throw new Error('database_backup_header_invalid')
+          decipher = createDecipheriv('aes-256-gcm', encryptionKey, nonce)
+          data = header.subarray(20)
+          header = Buffer.alloc(0)
+        }
+        const ciphertext = Buffer.concat([tail, data])
+        if (ciphertext.length <= 16) {
+          tail = ciphertext
+          continue
+        }
+        const encrypted = ciphertext.subarray(0, ciphertext.length - 16)
+        tail = ciphertext.subarray(ciphertext.length - 16)
+        const plaintext = decipher.update(encrypted)
+        if (plaintext.length) yield plaintext
+      }
+      if (
+        !decipher ||
+        header.length ||
+        tail.length !== 16 ||
+        sizeBytes !== backup.sizeBytes ||
+        checksum.digest('hex') !== backup.checksumSha256
+      )
+        throw new Error('database_backup_checksum_invalid')
+      const authenticatedDecipher = decipher as ReturnType<
+        typeof createDecipheriv
+      > & { setAuthTag(tag: Buffer): void }
+      authenticatedDecipher.setAuthTag(tail)
+      const final = authenticatedDecipher.final()
+      if (final.length) yield final
+    } finally {
+      encryptionKey.fill(0)
+      client.destroy()
+    }
+  }
+  return {
+    stream: Readable.from(body()),
+    filename: `fleet-database-${backup.id}.dump`,
+  }
 }
 
 export async function runDatabaseBackup(
