@@ -22,6 +22,8 @@ type Database = {
   status: string
   nodeName: string | null
   backupConfigured: boolean
+  deletedAt?: string | null
+  purgeAfter?: string | null
 }
 type Operation = {
   id: string
@@ -361,6 +363,85 @@ export const databasesCommand = {
       )
       return
     }
+    if (action === 'delete') {
+      if (
+        !project ||
+        typeof flags.backup !== 'string' ||
+        typeof flags.confirm !== 'string'
+      )
+        throw new CliError(
+          'usage: fleet db delete <database> --backup <verified-backup-id> --confirm <exact-database-name> [--project PROJECT]',
+          EXIT.usage,
+        )
+      const database = await findDatabase(fleet, project, flags)
+      if (flags.confirm !== database.name)
+        throw new CliError(
+          '--confirm must exactly match the database name.',
+          EXIT.usage,
+        )
+      const { body } = await request<{ backups: DatabaseBackup[] }>(
+        'GET',
+        `${base(fleet, database.project)}/${database.id}/backups`,
+      )
+      const expectedKind = database.engine === 'postgres' ? 'logical' : 'rdb'
+      const backups = body.backups.filter(
+        (backup) =>
+          (backup.id === flags.backup ||
+            backup.id.startsWith(flags.backup as string)) &&
+          backup.kind === expectedKind &&
+          backup.state === 'complete' &&
+          !!backup.verifiedAt &&
+          Date.now() - Date.parse(backup.createdAt) <= 15 * 60_000 &&
+          Date.now() - Date.parse(backup.verifiedAt) <= 15 * 60_000,
+      )
+      if (backups.length !== 1)
+        throw new CliError(
+          backups.length
+            ? `Backup id prefix "${flags.backup}" is ambiguous.`
+            : 'Choose a recent, completed, verified final backup for this database.',
+          EXIT.usage,
+        )
+      const { body: result } = await request<{
+        database: Database
+        operation: Operation
+      }>('POST', `${base(fleet, database.project)}/${database.id}/delete`, {
+        body: { confirmation: database.name, backupId: backups[0]!.id },
+        idempotencyKey: randomUUID(),
+      })
+      if (flags.json) return console.log(JSON.stringify(result, null, 2))
+      await waitForOperation(
+        fleet,
+        database.project,
+        database,
+        result.operation.id,
+        flags,
+      )
+      console.log(
+        `Database ${database.name} is in its seven-day recovery period.`,
+      )
+      return
+    }
+    if (action === 'restore-deleted') {
+      if (!project)
+        throw new CliError(
+          'usage: fleet db restore-deleted <database> [--project PROJECT]',
+          EXIT.usage,
+        )
+      const database = await findDatabase(fleet, project, flags)
+      if (!database.deletedAt)
+        throw new CliError(
+          `${database.name} is not in its deletion recovery period.`,
+        )
+      const { body } = await request<{ database: Database }>(
+        'POST',
+        `${base(fleet, database.project)}/${database.id}/restore-deleted`,
+      )
+      if (flags.json) return console.log(JSON.stringify(body, null, 2))
+      console.log(
+        `${c.green('restored')}  ${database.name} is stopped; start it to resume service.`,
+      )
+      return
+    }
     if (action === 'create') {
       if (!project || !nameOrId)
         throw new CliError(
@@ -604,7 +685,7 @@ export const databasesCommand = {
       return
     }
     throw new CliError(
-      'usage: fleet db list|create|start|stop|restart|link|unlink|connect|exec|targets|target|backup|backups|restore|dump …',
+      'usage: fleet db list|create|start|stop|restart|delete|restore-deleted|link|unlink|connect|exec|targets|target|backup|backups|restore|dump …',
       EXIT.usage,
     )
   },

@@ -106,8 +106,11 @@ function DatabaseDetailContent({
     [busy, setBusy] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteBackupId, setDeleteBackupId] = useState('')
+  const [deleteConfirmBackupId, setDeleteConfirmBackupId] = useState('')
   const [restoreTargetId, setRestoreTargetId] = useState('')
-  const [confirm, setConfirm] = useState<'stop' | 'restart' | null>(null)
+  const [confirm, setConfirm] = useState<'stop' | 'restart' | 'delete' | null>(null)
   const [submitted, setSubmitted] = useState<string | null>(null)
   const [serviceId, setServiceId] = useState('')
   const [linkRole, setLinkRole] = useState<'app' | 'readonly'>('app')
@@ -149,6 +152,14 @@ function DatabaseDetailContent({
       candidate.status === 'running' &&
       candidate.nodeStatus === 'online' &&
       !candidate.deletedAt,
+  )
+  const finalBackups = (backupsResult.data?.backups ?? []).filter(
+    (backup) =>
+      backup.kind === (database?.engine === 'postgres' ? 'logical' : 'rdb') &&
+      backup.state === 'complete' &&
+      !!backup.verifiedAt &&
+      Date.now() - Date.parse(backup.createdAt) <= 15 * 60_000 &&
+      Date.now() - Date.parse(backup.verifiedAt) <= 15 * 60_000,
   )
   async function action(name: 'start' | 'stop' | 'restart') {
     if (busy || active) return
@@ -245,6 +256,41 @@ function DatabaseDetailContent({
       setRestoreBusy(false)
     }
   }
+  async function deleteDatabase() {
+    if (deleteBusy || active || !deleteConfirmBackupId || !database) return
+    setDeleteBusy(true)
+    setError(null)
+    try {
+      const accepted = await api<{ operation: DatabaseOperation }>(
+        `${path}/delete`,
+        {
+          method: 'POST',
+          body: { confirmation: database.name, backupId: deleteConfirmBackupId },
+          idempotencyKey: databaseRequestKey(),
+        },
+      )
+      setSubmitted(accepted.operation.id)
+      setConfirm(null)
+      result.refetch()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+  async function restoreDeletedDatabase() {
+    if (deleteBusy || !database) return
+    setDeleteBusy(true)
+    setError(null)
+    try {
+      await api(`${path}/restore-deleted`, { method: 'POST' })
+      result.refetch()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
   async function removeLink(targetServiceId: string) {
     if (linkBusy) return
     setLinkBusy(true)
@@ -300,7 +346,7 @@ function DatabaseDetailContent({
             <StatusPill status={database.status} />
           </div>
         </div>
-        {canOperate && (
+        {canOperate && !database.deletedAt && (
           <div className="flex flex-wrap items-start gap-2">
             {database.status !== 'running' && (
               <Button
@@ -332,6 +378,25 @@ function DatabaseDetailContent({
         )}
       </header>
       <ErrorNote error={error ?? result.error} />
+      {database.deletedAt && (
+        <Panel title="Database recovery period">
+          <div className="flex flex-wrap items-center justify-between gap-4 p-5">
+            <p className="max-w-2xl text-sm text-[var(--color-fg-muted)]">
+              The runtime is removed and the data volume is retained until{' '}
+              {database.purgeAfter ? new Date(database.purgeAfter).toLocaleString() : 'the recovery deadline'}.
+            </p>
+            {canManageAccess && (
+              <Button
+                variant="primary"
+                disabled={deleteBusy || active}
+                onClick={() => void restoreDeletedDatabase()}
+              >
+                {deleteBusy ? 'Restoring…' : 'Restore database'}
+              </Button>
+            )}
+          </div>
+        </Panel>
+      )}
       {!database.backupConfigured && (
         <div
           className="border-l-2 border-[var(--color-warn)] bg-[var(--color-ink-900)] p-5"
@@ -346,14 +411,16 @@ function DatabaseDetailContent({
           </p>
         </div>
       )}
-      <DatabaseTargetAssignment
-        fleetId={fleetId}
-        project={project}
-        databaseId={databaseId}
-        targetId={database.backupTargetId}
-        canManage={canManageAccess}
-        onUpdated={result.refetch}
-      />
+      {!database.deletedAt && (
+        <DatabaseTargetAssignment
+          fleetId={fleetId}
+          project={project}
+          databaseId={databaseId}
+          targetId={database.backupTargetId}
+          canManage={canManageAccess}
+          onUpdated={result.refetch}
+        />
+      )}
       <Panel title="Database backups">
         <div className="space-y-4 p-5">
           <ErrorNote error={backupsResult.error} />
@@ -416,6 +483,39 @@ function DatabaseDetailContent({
             >
               {backupBusy ? 'Starting…' : 'Create backup'}
             </Button>
+          )}
+          {canManageAccess && !database.deletedAt && ['running', 'stopped'].includes(database.status) && (
+            <div className="grid gap-3 border-t border-[var(--color-line)] pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
+              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                Recent verified final backup
+                <select
+                  aria-label="Final backup for deletion"
+                  value={deleteBackupId}
+                  onChange={(event) => setDeleteBackupId(event.target.value)}
+                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                >
+                  <option value="">Choose a backup created in the last 15 minutes</option>
+                  {finalBackups.map((backup) => (
+                    <option key={backup.id} value={backup.id}>
+                      {backup.kind} · {backup.id.slice(0, 8)}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[var(--color-fg-dim)]">
+                  Deletion removes the runtime but retains its data volume for seven days.
+                </span>
+              </label>
+              <Button
+                variant="danger"
+                disabled={deleteBusy || active || !available || !finalBackups.some((backup) => backup.id === deleteBackupId)}
+                onClick={() => {
+                  setDeleteConfirmBackupId(deleteBackupId)
+                  setConfirm('delete')
+                }}
+              >
+                Delete database
+              </Button>
+            </div>
           )}
           {!backupsResult.data?.backups.length ? (
             <p className="text-sm text-[var(--color-fg-muted)]">
@@ -513,7 +613,7 @@ function DatabaseDetailContent({
           </ul>
         </Panel>
       )}
-      <Panel title="Linked services">
+      {!database.deletedAt && <Panel title="Linked services">
         <div className="space-y-4 p-5">
           {linkNotice && (
             <p role="status" className="text-sm text-[var(--color-warn)]">
@@ -621,7 +721,7 @@ function DatabaseDetailContent({
             </form>
           )}
         </div>
-      </Panel>
+      </Panel>}
       <Panel
         title="Operations"
         right={
@@ -688,26 +788,32 @@ function DatabaseDetailContent({
       <ConfirmDialog
         open={confirm !== null}
         title={
-          confirm === 'stop'
+          confirm === 'delete'
+            ? `Delete ${database.name}?`
+            : confirm === 'stop'
             ? `Stop ${database.name}?`
             : `Restart ${database.name}?`
         }
         body={
           <div className="space-y-3">
             <p>
-              {confirm === 'stop'
+              {confirm === 'delete'
+                ? 'The database runtime will be removed after the final backup is verified. You can recover the retained data volume for seven days.'
+                : confirm === 'stop'
                 ? 'Connections will close and linked applications may fail until this database starts again.'
                 : 'Connections will close briefly while the database restarts cleanly on its pinned node.'}
             </p>
             <ErrorNote error={error} />
           </div>
         }
-        consequences={['The data volume stays on the same node.']}
-        confirmLabel={confirm === 'stop' ? 'Stop database' : 'Restart database'}
-        busy={busy}
+        consequences={confirm === 'delete' ? ['Runtime and config are removed; data volume remains for seven days.', 'Restore returns the database stopped; start it to resume service.'] : ['The data volume stays on the same node.']}
+        confirmPhrase={confirm === 'delete' ? database.name : undefined}
+        confirmLabel={confirm === 'delete' ? 'Delete database' : confirm === 'stop' ? 'Stop database' : 'Restart database'}
+        busy={busy || deleteBusy}
         onCancel={() => setConfirm(null)}
         onConfirm={() => {
-          if (confirm) void action(confirm)
+          if (confirm === 'delete') void deleteDatabase()
+          else if (confirm) void action(confirm)
         }}
       />
     </div>

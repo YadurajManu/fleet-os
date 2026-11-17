@@ -262,6 +262,97 @@ test('database restore targets a separate running Postgres database', async () =
   }
 })
 
+test('database deletion requires a recent verified backup and exact name, then restores by name', async () => {
+  const originalFetch = globalThis.fetch
+  const originalApi = process.env.FLEET_API
+  const originalToken = process.env.FLEET_TOKEN
+  const calls: Array<{ path: string; method: string; body?: unknown }> = []
+  let deleted = false
+  process.env.FLEET_API = 'https://control.example.test'
+  process.env.FLEET_TOKEN = 'access-token'
+  globalThis.fetch = async (input, options) => {
+    const path = String(input)
+    const method = options?.method ?? 'GET'
+    calls.push({
+      path,
+      method,
+      ...(options?.body ? { body: JSON.parse(String(options.body)) } : {}),
+    })
+    const now = Date.now()
+    const body = path.includes('/databases?')
+      ? {
+          databases: [
+            {
+              id: 'database-id',
+              project: 'production',
+              name: 'primary',
+              nodeId: 'node-id',
+              engine: 'postgres',
+              version: '17',
+              status: 'running',
+              nodeName: 'node',
+              backupConfigured: true,
+              deletedAt: deleted ? new Date().toISOString() : null,
+            },
+          ],
+          nextCursor: null,
+        }
+      : method === 'GET'
+        ? {
+            backups: [
+              {
+                id: 'verified-backup-id',
+                kind: 'logical',
+                state: 'complete',
+                createdAt: new Date(now - 60_000).toISOString(),
+                verifiedAt: new Date(now - 30_000).toISOString(),
+              },
+            ],
+          }
+        : path.endsWith('/delete')
+          ? ((deleted = true),
+            {
+              database: { name: 'primary' },
+              operation: {
+                id: 'delete-operation',
+                kind: 'delete',
+                state: 'queued',
+                progress: 0,
+                errorCode: null,
+              },
+            })
+          : { database: { name: 'primary', status: 'stopped' } }
+    return new Response(JSON.stringify(body), {
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    await databasesCommand.run(['delete', 'primary'], {
+      fleet: 'fleet-id',
+      project: 'production',
+      backup: 'verified-backup',
+      confirm: 'primary',
+      'no-wait': true,
+    })
+    const deletion = calls.find((call) => call.path.endsWith('/delete'))
+    assert.deepEqual(deletion?.body, {
+      confirmation: 'primary',
+      backupId: 'verified-backup-id',
+    })
+    await databasesCommand.run(['restore-deleted', 'primary'], {
+      fleet: 'fleet-id',
+      project: 'production',
+    })
+    assert.ok(calls.some((call) => call.path.endsWith('/restore-deleted')))
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalApi === undefined) delete process.env.FLEET_API
+    else process.env.FLEET_API = originalApi
+    if (originalToken === undefined) delete process.env.FLEET_TOKEN
+    else process.env.FLEET_TOKEN = originalToken
+  }
+})
+
 test('target creation sends credentials only in the authenticated request body', async () => {
   const originalFetch = globalThis.fetch
   const originalEnv = {

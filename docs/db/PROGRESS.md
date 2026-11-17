@@ -30,8 +30,8 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 5 | Targets, backups, restore, recover, import/export | in progress | Migrations 0045–0046, scoped target API, real Docker MinIO probe, CLI/dashboard target management and per-database selection exist. Migration 0046 adds durable backup manifests and retention-safe foreign keys. Real Docker verifies encrypted WAL archiving/fetch and base upload via WAL-G. Fleet-managed base backup scheduling/manifests, retention, restore/PITR, recovery and end-to-end import remain. |
 | 6 | Release migrations, config, exec/shell/migrate | not started | No release-gate E2E proof yet. |
 | 7 | Monitoring, alerts, tuning | in progress | `node --test --import tsx tests/database-tuning.test.ts` passes; no metrics/alert product flow yet. |
-| 8 | Complete CLI | in progress | Lifecycle list/create/actions, link/unlink, loopback `db connect`, and Redis/Postgres `db exec` are wired. Interactive database shell, backup/recovery and declarative release commands remain. |
-| 9 | Complete dashboard | in progress | Create wizard, list/detail, lifecycle controls and reconnecting SSE progress are wired. Playwright and backup/delete/link flows remain. |
+| 8 | Complete CLI | in progress | Lifecycle list/create/actions, typed delete with `--backup`/`--confirm`, grace restore, link/unlink, loopback `db connect`, and Redis/Postgres `db exec` are wired. Interactive database shell, backup/recovery and declarative release commands remain. |
+| 9 | Complete dashboard | in progress | Create wizard, list/detail, lifecycle controls, typed delete with recent verified backup selection, grace restore and reconnecting SSE progress are wired. Playwright and remaining backup/recovery flows remain. |
 | 10 | Security, E2E, docs, release prep, V1 PR | not started | No V1 acceptance gate or PR yet. |
 
 ## V1 acceptance scenarios (REQUEST.md §10)
@@ -244,3 +244,10 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 - Real Docker/API/worker/agent/MinIO coverage verified the final backup gate, idempotent delete replay, container removal, data-volume retention, grace restore and restart, then queried a row written before deletion. The first run exposed a timestamp precision race; the atomic restore predicate now checks status, non-null deletion time and the database-side grace deadline.
 - Verification: `node control-plane/scripts/test-databases.mjs --worker-only --backup` passed the real two-agent tunnel/backup/delete/restore test and WAL-G/MinIO PITR test. `node control-plane/scripts/test-databases.mjs --unit-only` passed **726/726**, Prettier, Oxlint, TypeScript typecheck/build and `go test ./...`. Graphify refreshed to 4,574 nodes / 11,954 edges.
 - Automatic grace-period purge, dashboard/CLI delete controls, and Playwright acceptance remain open. No production access or Raunak data was used; PR #36 remains unmerged.
+
+## 2026-11-17 — CLI and dashboard soft delete controls
+
+- Added `fleet db delete <database> --backup <id> --confirm <name>` and `fleet db restore-deleted <database>`. CLI deletion resolves a unique verified backup of the correct engine, requires its creation and verification timestamps within 15 minutes, and submits the exact database name. The recovery command restores the row stopped so the normal `fleet db start` can resume it.
+- Database detail now offers deletion only to owners/admins, only while stopped/running and online, and only after selecting a matching recent verified backup. Confirmation requires typing the database name. During the seven-day period, the dashboard hides runtime mutation and link controls and offers a recovery action with the deadline.
+- CLI Prettier, TypeScript typecheck and **234/234 tests** passed. Dashboard Prettier, TypeScript typecheck, **34/34 tests** and production build passed (existing Vite large-chunk warning). No Playwright browser flow was run.
+- Automatic grace-period purge and broader V1 UI acceptance remain open. PR #36 remains unmerged; no production access or Raunak data was used.
