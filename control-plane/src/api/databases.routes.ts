@@ -32,6 +32,7 @@ import {
 } from '../databases/backup-targets.js'
 import {
   createDatabaseBackup,
+  createDatabaseRestore,
   downloadDatabaseBackup,
   listDatabaseBackups,
 } from '../databases/backups.js'
@@ -224,6 +225,33 @@ export async function databaseRoutes(app: FastifyInstance) {
         { orgId: request.orgId!, userId: request.userId! },
       )
       return reply.code(202).send(result)
+    },
+  )
+  app.post(
+    base + '/:databaseId/backups/:backupId/restore',
+    { preHandler: requireFleetPermission('database.backup') },
+    async (request, reply) => {
+      const { fleetId, project, databaseId, backupId } = parseRequest(
+        detail.extend({ backupId: z.string().uuid() }),
+        request.params,
+      )
+      const body = parseRequest(
+        z.object({ targetDatabaseId: z.string().uuid() }).strict(),
+        request.body,
+      )
+      const operation = await createDatabaseRestore(
+        ctx,
+        { fleetId, project, databaseId },
+        body.targetDatabaseId,
+        backupId,
+        key(request),
+        { orgId: request.orgId!, userId: request.userId! },
+      )
+      return reply.code(202).send({
+        operationId: operation.id,
+        databaseId: operation.databaseId,
+        state: operation.state,
+      })
     },
   )
   app.get(

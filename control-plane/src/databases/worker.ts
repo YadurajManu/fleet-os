@@ -13,7 +13,7 @@ import {
   type OperationClaim,
 } from './operations.js'
 import { DatabaseTunnel, type DatabaseOperation } from './tunnel.js'
-import { runDatabaseBackup } from './backups.js'
+import { runDatabaseBackup, runDatabaseRestore } from './backups.js'
 
 const command = z.object({
   command: z.array(z.string()).min(1).max(128),
@@ -30,6 +30,9 @@ const identity = z.object({
 const intent = z
   .object({
     backupId: z.string().uuid().optional(),
+    sourceDatabaseId: z.string().uuid().optional(),
+    actorOrgId: z.string().uuid().optional(),
+    actorUserId: z.string().uuid().optional(),
     identity,
     requestHash: z
       .string()
@@ -125,6 +128,7 @@ export class DatabaseWorker {
       'stop',
       'restart',
       'backup',
+      'restore',
     ])
     if (!claim) return false
     await this.execute(claim)
@@ -252,6 +256,55 @@ export class DatabaseWorker {
           await finishDatabaseOperation(this.ctx, operation.id, token)
         return
       }
+      if (operation.kind === 'restore') {
+        requireDatabaseCapabilities(node?.capabilities, ['database.exec.v1'])
+        if (
+          !parsed.data.backupId ||
+          !parsed.data.sourceDatabaseId ||
+          !parsed.data.actorOrgId ||
+          !parsed.data.actorUserId
+        )
+          throw new Error('restore_intent_invalid')
+        let restoreProgress = Math.max(operation.progress, 20)
+        await checkpointDatabaseOperation(
+          this.ctx,
+          operation.id,
+          token,
+          { step: 'execute' },
+          restoreProgress,
+        )
+        await runDatabaseRestore(
+          this.ctx,
+          this.tunnel,
+          parsed.data.sourceDatabaseId,
+          parsed.data.backupId,
+          database,
+          parsed.data.identity,
+          {
+            orgId: parsed.data.actorOrgId,
+            userId: parsed.data.actorUserId,
+          },
+          abort.signal,
+          async (step, progress) => {
+            restoreProgress = Math.max(restoreProgress, Math.min(progress, 99))
+            await checkpointDatabaseOperation(
+              this.ctx,
+              operation.id,
+              token,
+              { step: step === 'verify' ? 'verify' : 'execute' },
+              restoreProgress,
+            )
+          },
+        )
+        if (!leaseLost && !abort.signal.aborted)
+          await commitDatabaseLifecycleOperation(
+            this.ctx,
+            operation.id,
+            token,
+            'running',
+          )
+        return
+      }
       await checkpointDatabaseOperation(
         this.ctx,
         operation.id,
@@ -284,7 +337,18 @@ export class DatabaseWorker {
         token,
         status,
       )
-    } catch {
+    } catch (error) {
+      if (
+        operation.kind === 'restore' &&
+        error instanceof Error &&
+        error.message === 'restore_target_not_empty'
+      )
+        await finishDatabaseOperation(
+          this.ctx,
+          operation.id,
+          token,
+          'runtime_failed',
+        )
       if (operation.kind === 'backup') {
         const parsedInput = intent.safeParse(claim.input)
         const backupId = parsedInput.success ? parsedInput.data.backupId : null

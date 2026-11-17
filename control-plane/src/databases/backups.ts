@@ -32,6 +32,7 @@ import {
 } from '../db/schema.js'
 import { recordAudit } from '../lib/audit.js'
 import { openSecret, sealSecret } from '../lib/crypto.js'
+import { enqueueDatabaseOperation } from './operations.js'
 import type { EngineCommand } from './engines.js'
 import type { DatabaseIdentity, DatabaseTunnel } from './tunnel.js'
 
@@ -281,11 +282,99 @@ export async function listDatabaseBackups(
     .orderBy(asc(databaseBackups.createdAt))
 }
 
+export async function createDatabaseRestore(
+  ctx: AppContext,
+  scope: { fleetId: string; project: string; databaseId: string },
+  targetDatabaseId: string,
+  backupId: string,
+  key: string,
+  actor: { orgId: string; userId: string },
+) {
+  const [source] = await ctx.db
+    .select()
+    .from(tenantDatabases)
+    .where(
+      and(
+        eq(tenantDatabases.id, scope.databaseId),
+        eq(tenantDatabases.fleetId, scope.fleetId),
+        eq(tenantDatabases.project, scope.project),
+      ),
+    )
+  if (!source) throw ApiError.notFound('Database')
+  if (source.id === targetDatabaseId)
+    throw ApiError.badRequest(
+      'restore_target_must_be_new',
+      'Restore into a different database. In-place restore is not available through this operation.',
+    )
+  const [backup] = await ctx.db
+    .select()
+    .from(databaseBackups)
+    .where(
+      and(
+        eq(databaseBackups.id, backupId),
+        eq(databaseBackups.databaseId, source.id),
+      ),
+    )
+  if (
+    !backup ||
+    backup.engine !== 'postgres' ||
+    backup.kind !== 'logical' ||
+    backup.state !== 'complete' ||
+    !backup.verifiedAt
+  )
+    throw ApiError.conflict(
+      'database_backup_unverified',
+      'Choose a verified logical PostgreSQL backup to restore.',
+    )
+  const [target] = await ctx.db
+    .select()
+    .from(tenantDatabases)
+    .where(
+      and(
+        eq(tenantDatabases.id, targetDatabaseId),
+        eq(tenantDatabases.fleetId, scope.fleetId),
+        eq(tenantDatabases.project, scope.project),
+      ),
+    )
+  if (!target) throw ApiError.notFound('Restore target database')
+  if (target.engine !== 'postgres')
+    throw ApiError.badRequest(
+      'restore_engine_mismatch',
+      'Restore the PostgreSQL backup into a PostgreSQL database.',
+    )
+  if (target.status !== 'running' || !target.nodeId)
+    throw ApiError.conflict(
+      'database_unavailable',
+      'Start the target database and wait until it is running before restoring.',
+    )
+  return enqueueDatabaseOperation(
+    ctx,
+    { fleetId: scope.fleetId, project: scope.project, databaseId: target.id },
+    'restore',
+    key,
+    {
+      sourceDatabaseId: source.id,
+      backupId,
+      actorOrgId: actor.orgId,
+      actorUserId: actor.userId,
+      identity: {
+        id: target.id,
+        fleetId: target.fleetId,
+        project: target.project,
+        nodeId: target.nodeId,
+        generation: target.generation,
+      },
+    },
+    'restoring',
+  )
+}
+
 export async function downloadDatabaseBackup(
   ctx: AppContext,
   scope: { fleetId: string; project: string; databaseId: string },
   backupId: string,
   actor: { orgId: string; userId: string },
+  action = 'database.backup.downloaded',
 ) {
   const [backup] = await ctx.db
     .select()
@@ -363,7 +452,7 @@ export async function downloadDatabaseBackup(
   await recordAudit(ctx.db, {
     orgId: actor.orgId,
     actorUserId: actor.userId,
-    action: 'database.backup.downloaded',
+    action,
     targetType: 'database',
     targetId: scope.databaseId,
     metadata: { backupId, project: scope.project },
@@ -440,6 +529,138 @@ export async function downloadDatabaseBackup(
     stream: Readable.from(body()),
     filename: `fleet-database-${backup.id}.dump`,
   }
+}
+
+export async function runDatabaseRestore(
+  ctx: AppContext,
+  tunnel: DatabaseTunnel,
+  sourceDatabaseId: string,
+  backupId: string,
+  target: typeof tenantDatabases.$inferSelect,
+  identity: DatabaseIdentity,
+  actor: { orgId: string; userId: string },
+  signal: AbortSignal,
+  progress: (step: string, value: number) => Promise<void>,
+) {
+  const [source] = await ctx.db
+    .select()
+    .from(tenantDatabases)
+    .where(
+      and(
+        eq(tenantDatabases.id, sourceDatabaseId),
+        eq(tenantDatabases.fleetId, target.fleetId),
+        eq(tenantDatabases.project, target.project),
+      ),
+    )
+  const [backup] = await ctx.db
+    .select()
+    .from(databaseBackups)
+    .where(
+      and(
+        eq(databaseBackups.id, backupId),
+        eq(databaseBackups.databaseId, sourceDatabaseId),
+      ),
+    )
+  if (
+    !source ||
+    source.engine !== 'postgres' ||
+    target.engine !== 'postgres' ||
+    source.id === target.id ||
+    target.status !== 'restoring' ||
+    !backup ||
+    backup.engine !== 'postgres' ||
+    backup.kind !== 'logical' ||
+    backup.state !== 'complete' ||
+    !backup.verifiedAt
+  )
+    throw new Error('restore_identity_changed')
+
+  const [role] = await ctx.db
+    .select()
+    .from(databaseCredentials)
+    .where(
+      and(
+        eq(databaseCredentials.databaseId, target.id),
+        eq(databaseCredentials.generation, target.generation),
+        eq(databaseCredentials.role, 'owner'),
+      ),
+    )
+  if (!role) throw new Error('restore_credentials_missing')
+  const credentials = JSON.parse(
+    openSecret(role.encryptedValue, ctx.config.SECRETS_MASTER_KEY),
+  ) as { username: string; password: string }
+  const databaseName = target.name.replaceAll('-', '_')
+  const command = (args: string[]) => ({
+    command: args,
+    env: { PGPASSWORD: credentials.password },
+  })
+  const emptyCheck = tunnel.open(
+    {
+      identity,
+      role: 'database',
+      timeoutMs: 60 * 60 * 1000,
+      command: command([
+        'psql',
+        '-X',
+        '-A',
+        '-t',
+        '-v',
+        'ON_ERROR_STOP=1',
+        '-h',
+        '127.0.0.1',
+        '-U',
+        credentials.username,
+        '-d',
+        databaseName,
+        '-c',
+        "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND c.relkind IN ('r','p','v','m','S','f') AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype='e');",
+      ]),
+    },
+    signal,
+  )
+  let checkExit: number | undefined
+  emptyCheck.once('exit', (code: number) => (checkExit = code))
+  const checkOutput: Buffer[] = []
+  for await (const chunk of emptyCheck) checkOutput.push(Buffer.from(chunk))
+  if (checkExit !== 0 || Buffer.concat(checkOutput).toString().trim() !== '0')
+    throw new Error('restore_target_not_empty')
+
+  await progress('execute', 30)
+  const { stream } = await downloadDatabaseBackup(
+    ctx,
+    { fleetId: source.fleetId, project: source.project, databaseId: source.id },
+    backupId,
+    actor,
+    'database.backup.restored',
+  )
+  const restore = tunnel.open(
+    {
+      identity,
+      role: 'database',
+      timeoutMs: 60 * 60 * 1000,
+      command: command([
+        'pg_restore',
+        '--dbname',
+        databaseName,
+        '--exit-on-error',
+        '--no-owner',
+        '--no-acl',
+        '--single-transaction',
+        '--host=127.0.0.1',
+        '--port=5432',
+        `--username=${credentials.username}`,
+      ]),
+    },
+    signal,
+  )
+  await new Promise<void>((resolve, reject) => {
+    restore.once('ready', resolve)
+    restore.once('error', reject)
+  })
+  const exited = new Promise<number>((resolve) => restore.once('exit', resolve))
+  await pipeline(stream, restore, { signal })
+  if ((await exited) !== 0) throw new Error('restore_command_failed')
+  await progress('verify', 95)
 }
 
 export async function runDatabaseBackup(
