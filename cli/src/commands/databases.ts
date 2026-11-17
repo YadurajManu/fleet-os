@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { createServer } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
 import WebSocket from 'ws'
@@ -223,6 +224,20 @@ export const databasesCommand = {
       await connectDatabase(fleet, database, portValue)
       return
     }
+    if (action === 'exec') {
+      if (!project)
+        throw new CliError(
+          'usage: fleet db exec <database> -c SQL | -f FILE | -- REDIS-COMMAND [ARGS…]',
+          EXIT.usage,
+        )
+      const database = await findDatabase(fleet, project, flags)
+      if (database.status !== 'running' || !database.nodeId)
+        throw new CliError(
+          `Database ${database.name} must be running before executing a command.`,
+        )
+      await execDatabase(fleet, database, args.slice(2), flags)
+      return
+    }
     if (['start', 'stop', 'restart'].includes(action ?? '')) {
       if (!project || !nameOrId)
         throw new CliError(
@@ -247,10 +262,159 @@ export const databasesCommand = {
       return
     }
     throw new CliError(
-      'usage: fleet databases list|create|start|stop|restart|link|unlink|connect …',
+      'usage: fleet db list|create|start|stop|restart|link|unlink|connect|exec …',
       EXIT.usage,
     )
   },
+}
+
+async function execDatabase(
+  fleet: string,
+  database: Database,
+  trailing: string[],
+  flags: Flags,
+) {
+  const role = typeof flags.role === 'string' ? flags.role : 'app'
+  if (role !== 'app' && role !== 'readonly')
+    throw new CliError('--role must be app or readonly.', EXIT.usage)
+  const sql = typeof flags.c === 'string' ? flags.c : undefined
+  const file = typeof flags.f === 'string' ? flags.f : undefined
+  const command = trailing[0] === '--' ? trailing.slice(1) : []
+  const sqlMode = sql !== undefined || file !== undefined
+  if (
+    Number(sql !== undefined) +
+      Number(file !== undefined) +
+      Number(command.length > 0) !==
+    1
+  )
+    throw new CliError(
+      'Choose exactly one of -c SQL, -f FILE, or -- REDIS-COMMAND.',
+      EXIT.usage,
+    )
+  if (database.engine === 'postgres' && !sqlMode)
+    throw new CliError('Postgres exec requires -c SQL or -f FILE.', EXIT.usage)
+  if (database.engine === 'redis' && (sqlMode || command.length === 0))
+    throw new CliError(
+      'Redis exec requires -- REDIS-COMMAND [ARGS…].',
+      EXIT.usage,
+    )
+
+  const profile = await loadProfile()
+  if (!profile.api || !profile.accessToken)
+    throw new CliError(
+      'Sign in before executing a database command.',
+      EXIT.usage,
+    )
+  const endpoint = new URL(profile.api)
+  endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
+  endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}${base(fleet, database.project)}/${database.id}/exec`
+  const socket = new WebSocket(endpoint, {
+    headers: { authorization: `Bearer ${profile.accessToken}` },
+    maxPayload: 1_048_576,
+  })
+  const payload =
+    database.engine === 'postgres'
+      ? { mode: 'sql', role }
+      : { mode: 'redis', role, command }
+
+  await new Promise<void>((resolve, reject) => {
+    let completed = false
+    const finish = (error?: Error) => {
+      if (completed) return
+      completed = true
+      if (error && socket.readyState === WebSocket.OPEN) socket.close()
+      error ? reject(error) : resolve()
+    }
+    const rawSocket = () =>
+      (socket as WebSocket & { _socket: import('node:stream').Duplex | null })
+        ._socket
+    socket.once('unexpected-response', (_request, response) => {
+      response.resume()
+      finish(
+        new CliError(`Database exec was rejected (${response.statusCode}).`),
+      )
+    })
+    socket.once('error', () =>
+      finish(new CliError('Database exec connection failed.')),
+    )
+    socket.once('open', () => socket.send(JSON.stringify(payload)))
+    socket.on('message', (data, binary) => {
+      if (binary) {
+        const chunk = data as Buffer
+        if (!process.stdout.write(chunk)) rawSocket()?.pause()
+        return
+      }
+      let message: { type?: string; data?: string; code?: number }
+      try {
+        message = JSON.parse(data.toString()) as typeof message
+      } catch {
+        return finish(
+          new CliError('Database exec returned an invalid response.'),
+        )
+      }
+      if (message.type === 'ready') {
+        void sendInput(socket, sql, file, database.engine).catch(() =>
+          finish(new CliError('Could not send database command input.')),
+        )
+        return
+      }
+      if (message.type === 'stderr' && message.data) {
+        if (!process.stderr.write(Buffer.from(message.data, 'base64')))
+          rawSocket()?.pause()
+        return
+      }
+      if (message.type === 'exit') {
+        socket.close()
+        finish(
+          message.code === 0
+            ? undefined
+            : new CliError(
+                `Database command exited with status ${message.code ?? 1}.`,
+              ),
+        )
+      }
+    })
+    process.stdout.on('drain', () => rawSocket()?.resume())
+    socket.once('close', (code, reason) => {
+      process.stdout.off('drain', onOutputDrain)
+      process.stderr.off('drain', onOutputDrain)
+      if (!completed)
+        finish(
+          new CliError(
+            `Database exec session ended before completion (${code}${reason.length ? `: ${reason.toString()}` : ''}).`,
+          ),
+        )
+    })
+    const onOutputDrain = () => rawSocket()?.resume()
+    process.stdout.on('drain', onOutputDrain)
+    process.stderr.on('drain', onOutputDrain)
+  })
+}
+
+async function sendInput(
+  socket: WebSocket,
+  sql: string | undefined,
+  file: string | undefined,
+  engine: string,
+) {
+  const send = (data: Buffer) =>
+    new Promise<void>((resolve, reject) => {
+      socket.send(data, { binary: true }, (error) =>
+        error ? reject(error) : resolve(),
+      )
+    })
+  if (engine === 'postgres') {
+    if (sql !== undefined) await send(Buffer.from(sql))
+    else if (file) {
+      for await (const chunk of createReadStream(file))
+        await send(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    }
+  }
+  await new Promise<void>((resolve, reject) => {
+    socket.send(JSON.stringify({ type: 'eof' }), (error) =>
+      error ? reject(error) : resolve(),
+    )
+  })
 }
 
 async function connectDatabase(

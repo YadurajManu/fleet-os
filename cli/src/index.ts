@@ -86,6 +86,7 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
       ['db link <database> <service>', 'Inject a private database URL into a project service'],
       ['db unlink <database> <service>', 'Remove a database link from a project service'],
       ['db connect <database>', 'Forward a local TCP port to a running private database'],
+      ['db exec <database>', 'Run a Redis command or Postgres SQL through the private tunnel'],
       ['databases start|stop|restart <project> <database-id>', 'Operate a managed database and follow its durable operation'],
       ['backups <service>', 'List backups, newest first'],
       ['restore <service> [id]', 'Write a backup back into the volume; service must be stopped'],
@@ -111,8 +112,10 @@ const OPTIONS: Array<[string, string]> = [
   // both have a "backend", and picking the first match silently acts on
   // somebody else's.
   ['--project <name>', 'Disambiguate when two projects have a service of the same name'],
-  ['--role <app|readonly>', 'Choose the database credentials injected by db link'],
+  ['--role <app|readonly>', 'Choose the database credentials used by db link or db exec'],
   ['--port <number>', 'Choose the local port for db connect (default: 15432)'],
+  ['-c <SQL>', 'Run one Postgres statement with db exec'],
+  ['-f <file>', 'Run a Postgres SQL file with db exec'],
   ['--api <url>', 'Control plane URL (default: hosted Fleet, or saved profile)'],
   ['--json', 'Machine-readable output on stdout'],
   ['--plan, --dry-run', 'Show the deploy placement plan without changing anything'],

@@ -60,7 +60,7 @@ export const KNOWN_FLAGS = new Set([
   'name', 'node', 'only', 'out', 'password', 'project', 'secret', 'service', 'sha', 'message',
   'since', 'terminal', 'to', 'token', 'url',
   'target', 'shell', 'timeout', 'port', 'no-animation', 'color', 'ascii',
-  'engine', 'mode', 'version',
+  'engine', 'mode', 'version', 'c',
   'watch', 'services', 'nodes', 'failures', 'no-color',
   'role',
 ])
