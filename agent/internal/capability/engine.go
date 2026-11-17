@@ -144,7 +144,7 @@ func ApplyBuilder(ctx context.Context, report *Report, dir string, config Builde
 	report.BuildDiskBytes = config.DiskBytes
 	report.BuildMemoryBytes = config.MemoryBytes
 	report.CanBuild = false
-	if !config.Builder {
+	if !config.Builder && len(report.DatabaseCapabilities) == 0 {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -155,6 +155,9 @@ func ApplyBuilder(ctx context.Context, report *Report, dir string, config Builde
 	}
 	report.BuildCacheFreeBytes = space.Free
 	report.BuildDiskReserveBytes = space.Reserve
+	if !config.Builder {
+		return nil
+	}
 	if err = space.Preflight(config.DiskBytes); err != nil {
 		return err
 	}

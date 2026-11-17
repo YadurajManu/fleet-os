@@ -12,6 +12,11 @@ export type NodeSnapshot = {
   effectiveMemBytes?: number | null
   reliabilityScore?: number
   committedCpu?: number
+  committedDiskMb?: number
+  freeDiskMb?: number
+  databaseCapabilities?: string[]
+  uptimeSec?: number
+  outagesLast30Days?: number
 
   id: string
   name: string
@@ -36,6 +41,8 @@ export type ServiceSpec = {
 
   id: string
   name: string
+  workloadClass?: 'stateless' | 'stateful'
+  preferredNodeIds?: string[]
   placementPolicy: PlacementPolicy
   pinnedNodeId?: string | null
   requestRamMb: number
@@ -64,6 +71,9 @@ export type Placements = Record<string, string | undefined>
 export type AntiAffinityIndex = Record<string, string[] | undefined>
 
 export type RejectionCode =
+  | 'agent_upgrade_required'
+  | 'disk_unknown'
+  | 'insufficient_disk'
   | 'offline'
   | 'cordoned'
   | 'draining'
@@ -93,6 +103,8 @@ export type Candidate = {
   score: number
   breakdown: { headroom: number; reliability: number; load: number }
   freeRamMb: number
+  freeDiskMb?: number
+  reason?: string
 }
 
 export type Decision =

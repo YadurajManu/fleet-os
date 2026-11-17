@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fleet-os/fleet-os/agent/internal/capability"
 	"github.com/fleet-os/fleet-os/agent/internal/database"
 	"github.com/fleet-os/fleet-os/agent/internal/docker"
 )
@@ -26,6 +27,21 @@ func TestDatabaseTunnelPeer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
+	root := t.TempDir()
+	report, err := capability.DetectEngine(ctx, "database-fixture")
+	if err != nil {
+		t.Fatal("cannot detect fixture engine")
+	}
+	builderConfig, err := capability.LoadBuilderConfig(root)
+	if err != nil {
+		t.Fatal("cannot load fixture builder settings")
+	}
+	if err := capability.ApplyBuilder(ctx, &report, root, builderConfig); err != nil {
+		t.Fatal("database disk probe failed")
+	}
+	if report.CanBuild || report.BuildCacheFreeBytes <= 0 || report.BuildDiskReserveBytes <= 0 {
+		t.Fatal("non-builder did not report safe database disk headroom")
+	}
 	client := New(config.URL, config.Token, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	client.NodeID = config.NodeID
 	client.Databases = &database.Handler{Runtime: &docker.DatabaseRuntime{Docker: docker.New(""), NodeID: config.NodeID, FleetID: config.FleetID, Dir: t.TempDir()}, Send: client.SendDatabase}

@@ -344,6 +344,7 @@ export async function agentRoutes(app: FastifyInstance) {
       meshConnected: hb.mesh_connected,
       agentVersion: hb.agent_version,
       tunnelRttMs: hb.tunnel_rtt_ms,
+      uptimeSec: hb.uptime_sec,
       runtime: {
         dockerAvailable: hb.runtime.docker_available,
         dockerVersion: hb.runtime.docker_version,
