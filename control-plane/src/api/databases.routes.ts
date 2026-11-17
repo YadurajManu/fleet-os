@@ -27,6 +27,7 @@ import {
   createBackupTarget,
   deleteBackupTarget,
   listBackupTargets,
+  testBackupTarget,
 } from '../databases/backup-targets.js'
 
 const scope = z.object({
@@ -143,6 +144,21 @@ export async function databaseRoutes(app: FastifyInstance) {
         request.params,
       )
       return deleteBackupTarget(ctx, fleetId, project, targetId, {
+        orgId: request.orgId!,
+        userId: request.userId!,
+      })
+    },
+  )
+  app.post(
+    targets + '/:targetId/test',
+    { preHandler: requireFleetPermission('database.target') },
+    async (request) => {
+      const { fleetId, project } = parseRequest(scope, request.params)
+      const { targetId } = parseRequest(
+        z.object({ targetId: z.string().uuid() }),
+        request.params,
+      )
+      return testBackupTarget(ctx, fleetId, project, targetId, {
         orgId: request.orgId!,
         userId: request.userId!,
       })

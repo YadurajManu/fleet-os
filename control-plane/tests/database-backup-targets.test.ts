@@ -110,6 +110,14 @@ test('backup targets are project scoped, encrypted, audited and safely removable
     ),
     credentials,
   )
+  const failedProbe = await app.inject({
+    method: 'POST',
+    url: `${url}/${firstTarget.id}/test`,
+    headers: auth,
+  })
+  assert.equal(failedProbe.statusCode, 503)
+  assert.equal(failedProbe.body.includes(accessKeyId), false)
+  assert.equal(failedProbe.body.includes(secretAccessKey), false)
 
   const second = await app.inject({
     method: 'POST',
