@@ -81,7 +81,8 @@ try {
   ]
   if (
     process.argv.includes('--target') ||
-    process.argv.includes('--target-only')
+    process.argv.includes('--target-only') ||
+    process.argv.includes('--backup')
   ) {
     await buildMinioImage()
     dependencies.push(['minio', minioImage, 9000])
@@ -145,7 +146,9 @@ try {
   assert.match(pg, /^127\.0\.0\.1:[0-9]+$/)
   assert.match(redis, /^127\.0\.0\.1:[0-9]+$/)
   const minio =
-    process.argv.includes('--target') || process.argv.includes('--target-only')
+    process.argv.includes('--target') ||
+    process.argv.includes('--target-only') ||
+    process.argv.includes('--backup')
       ? await run('docker', ['port', `${prefix}-minio`, '9000/tcp'], {
           capture: true,
         })
@@ -214,7 +217,13 @@ try {
       ['--test', '--import', 'tsx', 'tests/database-tunnel.docker.ts'],
       {
         cwd: resolve(root, 'control-plane'),
-        env: { ...env, FLEET_DB_WORKER_TEST: '1' },
+        env: {
+          ...env,
+          FLEET_DB_WORKER_TEST: '1',
+          ...(process.argv.includes('--backup')
+            ? { FLEET_DB_BACKUP_TEST: '1' }
+            : {}),
+        },
       },
     )
   } else if (

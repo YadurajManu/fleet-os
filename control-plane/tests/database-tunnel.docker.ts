@@ -8,6 +8,8 @@ import {
   nodes,
   tenantDatabases,
   databaseCredentials,
+  databaseBackups,
+  databaseBackupTargets,
   databaseOperations,
   orgMembers,
   users,
@@ -25,7 +27,13 @@ import { streamDatabaseProgress } from '../src/databases/progress.js'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
-import { randomBytes, randomUUID, createHash } from 'node:crypto'
+import {
+  randomBytes,
+  randomUUID,
+  createHash,
+  createDecipheriv,
+  hkdfSync,
+} from 'node:crypto'
 import { createServer } from 'node:http'
 import { createConnection, createServer as createTCPServer } from 'node:net'
 import { once } from 'node:events'
@@ -38,6 +46,13 @@ import { DatabaseTunnel } from '../src/databases/tunnel.js'
 import { postgresEngine, redisEngine } from '../src/databases/engines.js'
 import { sealSecret } from '../src/lib/crypto.js'
 import type { AppContext } from '../src/api/context.js'
+import {
+  CreateBucketCommand,
+  DeleteBucketCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3'
 
 const workerMode = process.env.FLEET_DB_WORKER_TEST === '1'
 const docker = (args: string[]) =>
@@ -60,6 +75,24 @@ function resp(parts: Buffer[]) {
       part,
       Buffer.from('\r\n'),
     ]),
+  ])
+}
+function decryptBackup(context: AppContext, backupId: string, object: Buffer) {
+  assert.equal(object.subarray(0, 8).toString(), 'FLEETDB1')
+  const key = Buffer.from(
+    hkdfSync(
+      'sha256',
+      Buffer.from(context.config.SECRETS_MASTER_KEY, 'base64'),
+      Buffer.from(backupId),
+      Buffer.from('fleet-database-backup-v1'),
+      32,
+    ),
+  )
+  const decipher = createDecipheriv('aes-256-gcm', key, object.subarray(8, 20))
+  decipher.setAuthTag(object.subarray(-16))
+  return Buffer.concat([
+    decipher.update(object.subarray(20, -16)),
+    decipher.final(),
   ])
 }
 
@@ -135,6 +168,9 @@ test(
     let connectAccount:
       | { user: { id: string }; org: { id: string }; accessToken: string }
       | undefined
+    let backupS3: S3Client | undefined
+    let backupBucket = ''
+    const backupObjectKeys: string[] = []
     const credentials = redisEngine.credentials()
     const auth = resp([
       Buffer.from('AUTH'),
@@ -249,7 +285,7 @@ test(
             .update(token + '-db')
             .digest('hex'),
           arch: process.arch,
-          databaseCapabilities: ['database.runtime.v1'],
+          databaseCapabilities: ['database.runtime.v1', 'database.exec.v1'],
         })
         await workerContext.db.insert(tenantDatabases).values({
           id,
@@ -265,15 +301,17 @@ test(
           cpu: 0.5,
           diskMb: 10240,
         })
-        await workerContext.db.insert(databaseCredentials).values({
-          databaseId: id,
-          role: 'app',
-          generation: 1,
-          encryptedValue: sealSecret(
-            JSON.stringify(credentials.app),
-            workerContext.config.SECRETS_MASTER_KEY,
-          ),
-        })
+        await workerContext.db.insert(databaseCredentials).values(
+          (['owner', 'app'] as const).map((role) => ({
+            databaseId: id,
+            role,
+            generation: 1,
+            encryptedValue: sealSecret(
+              JSON.stringify(credentials[role]),
+              workerContext.config.SECRETS_MASTER_KEY,
+            ),
+          })),
+        )
         await workerContext.db.insert(tenantDatabases).values({
           id: postgresId,
           fleetId,
@@ -298,15 +336,17 @@ test(
             )!.image,
           },
         })
-        await workerContext.db.insert(databaseCredentials).values({
-          databaseId: postgresId,
-          role: 'app',
-          generation: 1,
-          encryptedValue: sealSecret(
-            JSON.stringify(postgresCredentials.app),
-            workerContext.config.SECRETS_MASTER_KEY,
-          ),
-        })
+        await workerContext.db.insert(databaseCredentials).values(
+          (['owner', 'app'] as const).map((role) => ({
+            databaseId: postgresId,
+            role,
+            generation: 1,
+            encryptedValue: sealSecret(
+              JSON.stringify(postgresCredentials[role]),
+              workerContext.config.SECRETS_MASTER_KEY,
+            ),
+          })),
+        )
         await relay.runOperation(
           {
             id: randomUUID(),
@@ -368,6 +408,133 @@ test(
           userId: account.user.id,
           role: 'admin',
         })
+        if (process.env.FLEET_DB_BACKUP_TEST === '1') {
+          const endpoint = process.env.FLEET_DB_MINIO_ENDPOINT!
+          const accessKeyId = process.env.FLEET_DB_MINIO_ACCESS_KEY!
+          const secretAccessKey = process.env.FLEET_DB_MINIO_SECRET_KEY!
+          backupBucket = `fleet-db-backup-${randomUUID()}`
+          backupS3 = new S3Client({
+            endpoint,
+            forcePathStyle: true,
+            region: 'us-east-1',
+            credentials: { accessKeyId, secretAccessKey },
+            maxAttempts: 1,
+          })
+          await backupS3.send(new CreateBucketCommand({ Bucket: backupBucket }))
+          const targets = `/fleets/${fleetId}/projects/${identity.project}/backup-targets`
+          const targetResponse = await api.inject({
+            method: 'POST',
+            url: targets,
+            headers: { authorization: `Bearer ${account.accessToken}` },
+            payload: {
+              name: 'docker-backup',
+              endpoint,
+              bucket: backupBucket,
+              prefix: 'e2e',
+              credentials: { accessKeyId, secretAccessKey },
+              isDefault: true,
+            },
+          })
+          assert.equal(targetResponse.statusCode, 201, targetResponse.body)
+          const targetId = targetResponse.json().id as string
+          const assigned = await api.inject({
+            method: 'PUT',
+            url: `${targets.replace('/backup-targets', '')}/databases/${postgresId}/backup-target`,
+            headers: { authorization: `Bearer ${account.accessToken}` },
+            payload: { targetId },
+          })
+          assert.equal(assigned.statusCode, 200, assigned.body)
+          const backupUrl = `${targets.replace('/backup-targets', '')}/databases/${postgresId}/backups`
+          const queued = await api.inject({
+            method: 'POST',
+            url: backupUrl,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+          })
+          assert.equal(queued.statusCode, 202, queued.body)
+          assert.equal(await worker.tick(), true)
+          const backupId = queued.json().backupId as string
+          backupObjectKeys.push(
+            `e2e/databases/${postgresId}/${backupId}/data.enc`,
+          )
+          const [backup] = await workerContext.db
+            .select()
+            .from(databaseBackups)
+            .where(eq(databaseBackups.id, backupId))
+          assert.equal(
+            backup!.state,
+            'complete',
+            `backup failed with ${backup!.errorCode ?? 'no error code'}`,
+          )
+          assert.ok(backup!.verifiedAt)
+          const object = await backupS3.send(
+            new GetObjectCommand({
+              Bucket: backupBucket,
+              Key: backup!.manifest[0]!.key,
+            }),
+          )
+          const sealed = Buffer.from(await object.Body!.transformToByteArray())
+          const dump = decryptBackup(workerContext, backupId, sealed)
+          assert.equal(dump.subarray(0, 5).toString(), 'PGDMP')
+          assert.equal(sealed.length, backup!.sizeBytes)
+
+          const redisAssignment = await api.inject({
+            method: 'PUT',
+            url: `${targets.replace('/backup-targets', '')}/databases/${id}/backup-target`,
+            headers: { authorization: `Bearer ${account.accessToken}` },
+            payload: { targetId },
+          })
+          assert.equal(redisAssignment.statusCode, 200, redisAssignment.body)
+          const redisQueued = await api.inject({
+            method: 'POST',
+            url: `${targets.replace('/backup-targets', '')}/databases/${id}/backups`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+          })
+          assert.equal(redisQueued.statusCode, 202, redisQueued.body)
+          assert.equal(await worker.tick(), true)
+          const redisBackupId = redisQueued.json().backupId as string
+          const [redisBackup] = await workerContext.db
+            .select()
+            .from(databaseBackups)
+            .where(eq(databaseBackups.id, redisBackupId))
+          assert.equal(
+            redisBackup!.state,
+            'complete',
+            `Redis backup failed with ${redisBackup!.errorCode ?? 'no error code'}`,
+          )
+          const redisObject = await backupS3.send(
+            new GetObjectCommand({
+              Bucket: backupBucket,
+              Key: redisBackup!.manifest[0]!.key,
+            }),
+          )
+          const rdb = decryptBackup(
+            workerContext,
+            redisBackupId,
+            Buffer.from(await redisObject.Body!.transformToByteArray()),
+          )
+          assert.equal(rdb.subarray(0, 5).toString(), 'REDIS')
+          assert.equal(
+            docker([
+              'exec',
+              `fleet-db-${id}-database`,
+              'sh',
+              '-c',
+              'find /tmp -maxdepth 1 -name "fleet-db-backup-*.rdb" -print',
+            ]),
+            '',
+          )
+          backupObjectKeys.push(`e2e/databases/${id}/${redisBackupId}/data.enc`)
+          t.diagnostic('encrypted Redis RDB uploaded and verified in MinIO')
+          t.diagnostic(
+            'encrypted PostgreSQL dump uploaded and verified in MinIO',
+          )
+        }
         const apiUrl = await api.listen({ port: 0, host: '127.0.0.1' })
         const connectUrl = new URL(
           `/fleets/${fleetId}/projects/${identity.project}/databases/${id}/connect`,
@@ -803,6 +970,17 @@ test(
       await until(() => registry.has(nodeId))
       await transfer()
     } finally {
+      if (backupS3) {
+        for (const key of backupObjectKeys)
+          await backupS3
+            .send(new DeleteObjectCommand({ Bucket: backupBucket, Key: key }))
+            .catch(() => {})
+        if (backupBucket)
+          await backupS3
+            .send(new DeleteBucketCommand({ Bucket: backupBucket }))
+            .catch(() => {})
+        backupS3.destroy()
+      }
       cliProcess?.kill('SIGTERM')
       postgresCliProcess?.kill('SIGTERM')
       if (api) await api.close()
@@ -839,6 +1017,12 @@ test(
         docker(['network', 'rm', plan.network])
       } catch {}
       if (workerContext) {
+        await workerContext.db
+          .delete(databaseBackups)
+          .where(sql`${databaseBackups.databaseId} in (${id}, ${postgresId})`)
+        await workerContext.db
+          .delete(databaseBackupTargets)
+          .where(eq(databaseBackupTargets.fleetId, fleetId))
         await workerContext.db
           .delete(tenantDatabases)
           .where(sql`${tenantDatabases.id} in (${id}, ${postgresId})`)
