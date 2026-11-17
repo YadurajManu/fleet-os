@@ -207,6 +207,7 @@ fleet db connect <db> [--port] [--role]     (local tunnel; works with psql, Tabl
 fleet db shell <db>  |  fleet db exec <db> -c "SQL" | -f file.sql
 fleet db migrate <db> [--dry-run] [--command]
 fleet db backup <db> [--label]  |  fleet db backups <db>
+fleet db backup download <db> <backup-id> <file>
 fleet db restore <db> [--backup id | --to <timestamp|latest|pre-migration>] [--into-new <name> | --in-place]
 fleet db recover <db> [--node]
 fleet db dump <db> [-o file]  |  fleet db import <db|new> --from <url|file>

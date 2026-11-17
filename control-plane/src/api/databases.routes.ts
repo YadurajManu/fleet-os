@@ -32,6 +32,7 @@ import {
 } from '../databases/backup-targets.js'
 import {
   createDatabaseBackup,
+  downloadDatabaseBackup,
   listDatabaseBackups,
 } from '../databases/backups.js'
 
@@ -223,6 +224,26 @@ export async function databaseRoutes(app: FastifyInstance) {
         { orgId: request.orgId!, userId: request.userId! },
       )
       return reply.code(202).send(result)
+    },
+  )
+  app.get(
+    base + '/:databaseId/backups/:backupId/download',
+    { preHandler: requireFleetPermission('database.backup') },
+    async (request, reply) => {
+      const { fleetId, project, databaseId, backupId } = parseRequest(
+        detail.extend({ backupId: z.string().uuid() }),
+        request.params,
+      )
+      const { stream, filename } = await downloadDatabaseBackup(
+        ctx,
+        { fleetId, project, databaseId },
+        backupId,
+        { orgId: request.orgId!, userId: request.userId! },
+      )
+      return reply
+        .type('application/octet-stream')
+        .header('content-disposition', `attachment; filename="${filename}"`)
+        .send(stream)
     },
   )
   app.get(

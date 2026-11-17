@@ -4,6 +4,9 @@ import {
   databasesCommand,
   selectBackupTarget,
 } from '../src/commands/databases.js'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const targets = [
   { id: '11111111-1111-4111-8111-111111111111', name: 'primary' },
@@ -108,6 +111,75 @@ test('database backup creates an idempotent operation and lists its manifest', a
     else process.env.FLEET_API = originalApi
     if (originalToken === undefined) delete process.env.FLEET_TOKEN
     else process.env.FLEET_TOKEN = originalToken
+  }
+})
+
+test('database backup download writes verified bytes with private permissions', async () => {
+  const originalFetch = globalThis.fetch
+  const originalApi = process.env.FLEET_API
+  const originalToken = process.env.FLEET_TOKEN
+  const root = await mkdtemp(join(tmpdir(), 'fleet-db-backup-download-'))
+  const path = join(root, 'backup.dump')
+  const calls: string[] = []
+  process.env.FLEET_API = 'https://control.example.test'
+  process.env.FLEET_TOKEN = 'access-token'
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    calls.push(url)
+    if (url.includes('/databases?'))
+      return new Response(
+        JSON.stringify({
+          databases: [
+            {
+              id: 'database-id',
+              project: 'production',
+              name: 'primary',
+              nodeId: 'node-id',
+              engine: 'postgres',
+              version: '17',
+              status: 'running',
+              nodeName: 'node',
+              backupConfigured: true,
+            },
+          ],
+          nextCursor: null,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    if (url.endsWith('/download'))
+      return new Response(Buffer.from('PGDMP test'))
+    return new Response(
+      JSON.stringify({
+        backups: [
+          {
+            id: 'backup-id',
+            kind: 'logical',
+            state: 'complete',
+            sizeBytes: 10,
+            errorCode: null,
+            createdAt: '2026-11-17T00:00:00Z',
+            verifiedAt: '2026-11-17T00:01:00Z',
+          },
+        ],
+      }),
+      { headers: { 'content-type': 'application/json' } },
+    )
+  }
+  try {
+    await databasesCommand.run(
+      ['backup', 'download', 'primary', 'backup-id', path],
+      { fleet: 'fleet-id', project: 'production' },
+    )
+    assert.deepEqual(await readFile(path), Buffer.from('PGDMP test'))
+    assert.equal((await stat(path)).mode & 0o777, 0o600)
+    assert.ok(calls.some((url) => url.endsWith('/backup-id/download')))
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalApi === undefined) delete process.env.FLEET_API
+    else process.env.FLEET_API = originalApi
+    if (originalToken === undefined) delete process.env.FLEET_TOKEN
+    else process.env.FLEET_TOKEN = originalToken
+    await rm(root, { recursive: true, force: true })
   }
 })
 

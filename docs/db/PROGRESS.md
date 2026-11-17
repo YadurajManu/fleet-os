@@ -207,3 +207,9 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 - The real two-agent Docker test assigns a target, restarts the database through the API/worker/agent, verifies active WAL-G Postgres settings and all three secret files at mode 0600, then completes encrypted Postgres/Redis backup and MinIO checks. It passed with the operation asserted successful; the 2 MiB transfer at 100 ms RTT completed in about 2.84 s versus 12.8 s stop-and-wait minimum.
 - Verification: full control-plane suite **726/726**, formatter, Oxlint, TypeScript typecheck/build, `go test ./...`, and `node scripts/test-databases.mjs --worker-only --backup` passed. Graphify refreshed to 4,553 nodes / 11,866 edges.
 - Archive settings take effect after restart. Fleet-managed base/WAL manifests, PITR and restore/recover remain open; no product acceptance is claimed for those flows. No production or Raunak data was used, and PR #36 remains unmerged.
+
+## 2026-11-17 — Download verified logical backups
+
+- Added an owner/admin-only API download that streams the encrypted S3 object through AES-GCM decryption, checks the stored size and SHA-256 manifest and authenticates the GCM tag before the stream completes. Downloads are audited. `fleet db backup download <db> <backup-id> <file>` writes an exclusive mode-0600 file and removes partial output on transfer errors.
+- Real Docker/API/MinIO validation downloaded a Postgres backup and compared the result byte-for-byte with direct decryption of the encrypted object. CLI tests verify the file bytes and mode. This downloads logical/RDB artifacts; Fleet restore, point-in-time recovery, import and target-independent access after target deletion remain outstanding.
+- Verification: control-plane **726/726**, Prettier/Oxlint, typecheck/build, `go test ./...`, real tunnel + MinIO backup/download/WAL-G Docker tests, and CLI **232/232** with typecheck passed. Graphify refreshed to 4,554 nodes / 11,875 edges.

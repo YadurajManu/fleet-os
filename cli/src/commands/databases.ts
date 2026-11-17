@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { unlink } from 'node:fs/promises'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { createServer } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
 import WebSocket from 'ws'
@@ -265,6 +267,56 @@ export const databasesCommand = {
       )
     }
     if (action === 'backup' || action === 'backups') {
+      if (action === 'backup' && project === 'download') {
+        const [databaseName, backupId, outputPath] = args.slice(2)
+        if (!databaseName || !backupId || !outputPath)
+          throw new CliError(
+            'usage: fleet db backup download <database> <backup-id> <output-file>',
+            EXIT.usage,
+          )
+        const database = await findDatabase(fleet, databaseName, flags)
+        const { body } = await request<{ backups: DatabaseBackup[] }>(
+          'GET',
+          `${base(fleet, database.project)}/${database.id}/backups`,
+        )
+        const backup = body.backups.find((item) => item.id === backupId)
+        if (!backup || backup.state !== 'complete' || !backup.verifiedAt)
+          throw new CliError('Choose a completed, verified database backup.')
+        const profile = await loadProfile()
+        if (!profile.api || !profile.accessToken)
+          throw new CliError(
+            'Sign in before downloading a database backup.',
+            EXIT.usage,
+          )
+        const response = await fetch(
+          `${profile.api.replace(/\/+$/, '')}${base(fleet, database.project)}/${database.id}/backups/${backup.id}/download`,
+          {
+            headers: { authorization: `Bearer ${profile.accessToken}` },
+            signal: AbortSignal.timeout(20 * 60_000),
+          },
+        )
+        if (!response.ok || !response.body)
+          throw new CliError(
+            `Database backup download was rejected (${response.status}).`,
+          )
+        const output = createWriteStream(outputPath, {
+          flags: 'wx',
+          mode: 0o600,
+        })
+        let outputCreated = false
+        output.once('open', () => (outputCreated = true))
+        try {
+          await pipeline(Readable.fromWeb(response.body), output)
+        } catch (error) {
+          output.destroy()
+          if (outputCreated) await unlink(outputPath).catch(() => {})
+          throw new CliError(
+            `Database backup download failed: ${error instanceof Error ? error.message : 'stream error'}`,
+          )
+        }
+        console.log(`Verified database backup saved to ${outputPath}.`)
+        return
+      }
       if (!project)
         throw new CliError(
           `usage: fleet db ${action} <database> [--project PROJECT]`,

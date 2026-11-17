@@ -1,5 +1,5 @@
 import test from 'node:test'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { createContext, closeContext } from '../src/api/context.js'
 import { loadConfig } from '../src/config.js'
 import {
@@ -531,6 +531,32 @@ test(
           const dump = decryptBackup(workerContext, backupId, sealed)
           assert.equal(dump.subarray(0, 5).toString(), 'PGDMP')
           assert.equal(sealed.length, backup!.sizeBytes)
+          const downloaded = await api.inject({
+            method: 'GET',
+            url: `${backupUrl}/${backupId}/download`,
+            headers: { authorization: `Bearer ${account.accessToken}` },
+          })
+          assert.equal(downloaded.statusCode, 200, downloaded.body)
+          assert.equal(
+            downloaded.headers['content-type'],
+            'application/octet-stream',
+          )
+          assert.match(
+            downloaded.headers['content-disposition']!,
+            new RegExp(`${backupId}\\.dump`),
+          )
+          assert.deepEqual(downloaded.rawPayload, dump)
+          const [downloadAudit] = await workerContext.db
+            .select()
+            .from(auditLog)
+            .where(
+              and(
+                eq(auditLog.action, 'database.backup.downloaded'),
+                eq(auditLog.targetId, postgresId),
+              ),
+            )
+          assert.equal(downloadAudit!.actorUserId, account.user.id)
+          assert.equal(downloadAudit!.metadata?.backupId, backupId)
 
           const redisAssignment = await api.inject({
             method: 'PUT',
