@@ -61,7 +61,7 @@ const intent = z
             role: z.enum(['database', 'pooler']),
             image: z
               .string()
-              .regex(/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/),
+              .regex(/^(?:[a-z0-9][a-z0-9./:_-]*@)?sha256:[a-f0-9]{64}$/),
             command: z.array(z.string()),
             env: z.record(z.string(), z.string()),
             files: z.array(

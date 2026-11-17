@@ -151,6 +151,14 @@ func databaseFiles(files []DatabaseFile) ([]byte, error) {
 	return archive.Bytes(), nil
 }
 
+func databaseContainerConfigHash(spec DatabaseContainerSpec) string {
+	fingerprint := spec
+	fingerprint.Initialize = false
+	encoded, _ := json.Marshal(fingerprint)
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
 func (c *Client) installDatabaseFiles(ctx context.Context, spec DatabaseContainerSpec, configVolume string, archive []byte) error {
 	name := DatabaseContainerName(spec.Identity.ID, spec.Container.Role+"-config-writer")
 	if existing, err := c.Inspect(ctx, name); err == nil {
@@ -204,11 +212,7 @@ func (c *Client) EnsureDatabaseContainer(ctx context.Context, spec DatabaseConta
 	if err != nil {
 		return "", err
 	}
-	fingerprint := spec
-	fingerprint.Initialize = false
-	encoded, _ := json.Marshal(fingerprint)
-	digest := sha256.Sum256(encoded)
-	configHash := hex.EncodeToString(digest[:])
+	configHash := databaseContainerConfigHash(spec)
 	name := DatabaseContainerName(identity.ID, container.Role)
 	if existing, err := c.Inspect(ctx, name); err == nil {
 		if !ownedDatabase(existing.Labels, identity, container.Role, true) || existing.Labels[databaseConfigLabel] != configHash {
@@ -221,7 +225,7 @@ func (c *Client) EnsureDatabaseContainer(ctx context.Context, spec DatabaseConta
 	if err := c.ensureDatabaseNetwork(ctx, identity, spec.Network); err != nil {
 		return "", err
 	}
-	configVolume := spec.Volume + "-" + container.Role + "-config"
+	configVolume := spec.Volume + "-" + container.Role + "-config-" + configHash[:12]
 	if err := c.ensureDatabaseVolume(ctx, configVolume, identity, "config-"+container.Role, true); err != nil {
 		return "", err
 	}
@@ -259,6 +263,58 @@ func (c *Client) EnsureDatabaseContainer(ctx context.Context, spec DatabaseConta
 		return "", databaseFailure("container creation")
 	}
 	return created.ID, nil
+}
+
+// ReconfigureDatabaseContainer only replaces an owned stopped container; its data volume is preserved.
+func (c *Client) ReconfigureDatabaseContainer(ctx context.Context, spec DatabaseContainerSpec) error {
+	name := DatabaseContainerName(spec.Identity.ID, spec.Container.Role)
+	state, err := c.Inspect(ctx, name)
+	if IsNotFound(err) {
+		_, err = c.EnsureDatabaseContainer(ctx, spec)
+		return err
+	}
+	if err != nil || !ownedDatabase(state.Labels, spec.Identity, spec.Container.Role, true) || state.Running {
+		return databaseFailure("reconfiguration ownership or stopped-state check")
+	}
+	configHash := databaseContainerConfigHash(spec)
+	oldHash := state.Labels[databaseConfigLabel]
+	if oldHash == configHash {
+		return nil
+	}
+	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(oldHash) {
+		return databaseFailure("old container configuration identity check")
+	}
+	if c.Remove(ctx, state.ID) != nil {
+		return databaseFailure("old container removal for reconfiguration")
+	}
+	for _, oldVolume := range []string{
+		spec.Volume + "-" + spec.Container.Role + "-config-" + oldHash[:12],
+		spec.Volume + "-" + spec.Container.Role + "-config",
+	} {
+		if err := c.removeDatabaseConfigVolume(ctx, oldVolume, spec.Identity, spec.Container.Role); err != nil {
+			return err
+		}
+	}
+	_, err = c.EnsureDatabaseContainer(ctx, spec)
+	return err
+}
+
+func (c *Client) removeDatabaseConfigVolume(ctx context.Context, name string, identity DatabaseIdentity, role string) error {
+	var volume struct {
+		Labels map[string]string `json:"Labels"`
+	}
+	err := c.do(ctx, http.MethodGet, "/"+c.api(ctx)+"/volumes/"+url.PathEscape(name), nil, &volume)
+	if IsNotFound(err) {
+		return nil
+	}
+	if err != nil || !ownedDatabase(volume.Labels, identity, "config-"+role, false) {
+		return databaseFailure("old configuration volume ownership check")
+	}
+	err = c.do(ctx, http.MethodDelete, "/"+c.api(ctx)+"/volumes/"+url.PathEscape(name), nil, nil)
+	if err != nil && !IsNotFound(err) {
+		return databaseFailure("old configuration volume cleanup")
+	}
+	return nil
 }
 
 // StopDatabaseContainer waits for a clean engine exit; unlike app Stop it never escalates to SIGKILL.

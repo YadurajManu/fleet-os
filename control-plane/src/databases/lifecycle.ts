@@ -183,6 +183,7 @@ export async function runtimeIntent(
   images: { primary: string; pooler?: string },
   credentials: EngineCredentials,
   provision: boolean,
+  configure = provision,
 ) {
   const [node] = await ctx.db
     .select()
@@ -284,11 +285,10 @@ export async function runtimeIntent(
   return {
     identity,
     readiness: plan.readiness,
-    ...(provision
+    ...(configure
       ? {
-          bootstrap: plan.bootstrap,
           containers: plan.containers.map((container) => ({
-            initialize: true,
+            initialize: provision,
             identity,
             network: plan.network,
             volume: database.volumeName,
@@ -297,6 +297,11 @@ export async function runtimeIntent(
             cpu: database.cpu,
             container,
           })),
+        }
+      : {}),
+    ...(provision
+      ? {
+          bootstrap: plan.bootstrap,
           registryAuth: registryAuth(ctx),
           reserveBytes: Math.max(1073741824, node.buildDiskReserveBytes),
           images: plan.containers.map((container) => ({
@@ -594,6 +599,7 @@ export async function actOnDatabase(
     { primary: database.images.primary, pooler: database.images.pooler },
     credentials,
     false,
+    action !== 'stop',
   )
   const operation = await enqueueDatabaseOperation(
     ctx,

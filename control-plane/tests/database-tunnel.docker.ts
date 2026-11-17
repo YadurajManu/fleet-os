@@ -303,7 +303,7 @@ test(
           diskMb: 10240,
         })
         await workerContext.db.insert(databaseCredentials).values(
-          (['owner', 'app'] as const).map((role) => ({
+          (['owner', 'app', 'readonly'] as const).map((role) => ({
             databaseId: id,
             role,
             generation: 1,
@@ -338,7 +338,7 @@ test(
           },
         })
         await workerContext.db.insert(databaseCredentials).values(
-          (['owner', 'app'] as const).map((role) => ({
+          (['owner', 'app', 'readonly'] as const).map((role) => ({
             databaseId: postgresId,
             role,
             generation: 1,
@@ -445,6 +445,57 @@ test(
             payload: { targetId },
           })
           assert.equal(assigned.statusCode, 200, assigned.body)
+          const restart = await api.inject({
+            method: 'POST',
+            url: `${targets.replace('/backup-targets', '')}/databases/${postgresId}/actions`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+            payload: { action: 'restart' },
+          })
+          assert.equal(restart.statusCode, 202, restart.body)
+          assert.equal(await worker.tick(), true)
+          const [restartOperation] = await workerContext.db
+            .select({
+              state: databaseOperations.state,
+              errorCode: databaseOperations.errorCode,
+            })
+            .from(databaseOperations)
+            .where(eq(databaseOperations.id, restart.json().operation.id))
+          assert.equal(
+            restartOperation!.state,
+            'succeeded',
+            JSON.stringify(restartOperation),
+          )
+          const archiveConfig = docker([
+            'exec',
+            `fleet-db-${postgresId}-database`,
+            'cat',
+            '/etc/fleet/postgresql.conf',
+          ])
+          assert.match(archiveConfig, /archive_mode = on/)
+          assert.match(archiveConfig, /archive_command = 'wal-g wal-push %p'/)
+          assert.match(
+            archiveConfig,
+            /restore_command = 'wal-g wal-fetch %f %p'/,
+          )
+          for (const path of [
+            '/etc/fleet/walg-key',
+            '/etc/fleet/aws-credentials',
+            '/etc/fleet/walg.pgpass',
+          ])
+            assert.equal(
+              docker([
+                'exec',
+                `fleet-db-${postgresId}-database`,
+                'stat',
+                '-c',
+                '%a',
+                path,
+              ]),
+              '600',
+            )
           const backupUrl = `${targets.replace('/backup-targets', '')}/databases/${postgresId}/backups`
           const queued = await api.inject({
             method: 'POST',

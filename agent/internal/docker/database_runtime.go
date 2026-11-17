@@ -193,6 +193,13 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 			return nil, err
 		}
 	}
+	if operation.Action == "start" || operation.Action == "restart" {
+		for _, spec := range operation.Containers {
+			if err := r.Docker.ReconfigureDatabaseContainer(ctx, spec); err != nil {
+				return nil, err
+			}
+		}
+	}
 	for _, role := range receipt.Roles {
 		name := DatabaseContainerName(identity.ID, role)
 		state, err := r.Docker.Inspect(ctx, name)
