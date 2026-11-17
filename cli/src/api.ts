@@ -27,6 +27,7 @@ export async function request<T = any>(
     auth?: boolean
     profile?: Profile
     timeoutMs?: number
+    idempotencyKey?: string
   } = {}
 ): Promise<ApiResult<T>> {
   const profile = opts.profile ?? (await loadProfile())
@@ -56,6 +57,7 @@ export async function request<T = any>(
       method,
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(opts.idempotencyKey ? { 'idempotency-key': opts.idempotencyKey } : {}),
         ...(opts.raw
           ? { 'content-type': opts.raw.contentType }
           : payload !== undefined

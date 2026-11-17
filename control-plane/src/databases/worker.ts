@@ -29,6 +29,22 @@ const identity = z.object({
 const intent = z
   .object({
     identity,
+    requestHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    images: z
+      .array(
+        z.object({
+          reference: z.string(),
+          platform: z.enum(['linux/arm64', 'linux/amd64']),
+          required_bytes: z.number().int().min(67108864).max(8589934592),
+        }),
+      )
+      .max(8)
+      .optional(),
+    registryAuth: z.string().max(16384).optional(),
+    reserveBytes: z.number().int().min(1073741824).optional(),
     containers: z
       .array(
         z.object({

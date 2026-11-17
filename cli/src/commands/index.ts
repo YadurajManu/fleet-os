@@ -1,5 +1,6 @@
 import type { Flags } from '../args.js'
 import { authCommand } from './auth.js'
+import { databasesCommand } from './databases.js'
 import { nodesCommand } from './nodes.js'
 import { statusCommand, eventsCommand } from './status.js'
 import { alertsCommand } from './alerts.js'
@@ -49,6 +50,7 @@ export const commands: Record<string, Command> = {
   down: downCommand,
   rm: removeServiceCommand,
   auth: authCommand,
+  databases: databasesCommand,
   config: configCommand,
   use: useCommand,
   doctor: doctorCommand,

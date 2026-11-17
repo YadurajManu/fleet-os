@@ -12,6 +12,13 @@ export type DatabaseIdentity = {
   generation: number
 }
 export type DatabaseOperation = {
+  images?: Array<{
+    reference: string
+    platform: string
+    required_bytes: number
+  }>
+  registryAuth?: string
+  reserveBytes?: number
   id: string
   action: 'provision' | 'start' | 'stop' | 'restart'
   identity: DatabaseIdentity

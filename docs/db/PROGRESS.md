@@ -6,7 +6,7 @@ Foundations PR #35 is merged on explicit user instruction. This does not mark V1
 
 ## Current work
 
-Continuation milestone 1 is verified: engine contract, maintained images, private registry resolution and agent image pre-pull. Milestone 2 is in progress: durable stateful runtime, exec/PTY and TCP tunnel handlers. Runtime/TCP/exec tunnel handlers are verified and enabled on Linux arm64/amd64 engines; backup/metrics capabilities remain disabled.
+Continuation milestone 1 is verified: engine contract, maintained images, private registry resolution and agent image pre-pull. The worker and scheduler component gates are verified. Lifecycle API/CLI/dashboard work is in progress: catalog, placement, create, list/detail, start/stop/restart and durable progress are wired. Runtime/TCP/exec tunnel handlers are enabled on Linux arm64/amd64 engines; backup/metrics capabilities remain disabled.
 
 Milestone 1 gate: `node control-plane/scripts/test-databases.mjs` completed with **703/703 control-plane tests**, typecheck, build, `go test ./...`, and **8/8 real Docker checks** passing. The Docker checks cover official engine tuning (4), maintained engine/Go resource lifecycle/roles/pooler/extensions/metrics/export (3), and authenticated dual-architecture registry resolution plus real Go pre-pull/cache/disk guards (1). Disposable test dependencies and registry resources were removed.
 
@@ -21,13 +21,13 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 0 | Understand and design | verified | docs/db/00-understanding.md and 01-design.md committed before feature code at ed4a38e; source review recorded in BUILD-NOTES.md. |
 | 1 | Schema, engine contract, operations, negotiation | in progress | 0042 generated/applied; `node --test --import tsx tests/database-operations.test.ts tests/database-agent-capabilities.test.ts tests/migrations.test.ts` with disposable test config passed. Engine contract and actual execution still required. |
 | 2 | Agent stateful runtime, TCP/exec/PTY, disk, images | in progress | Image/runtime implementation underway. No complete runtime verification yet. |
-| 3 | Postgres lifecycle, placement, networking, links, pooler | not started | No product E2E proof yet. |
+| 3 | Postgres lifecycle, placement, networking, links, pooler | in progress | Create/catalog/placement/list/detail/start/stop/restart API, CLI and dashboard are wired with route and component coverage. Still missing full lifecycle API-to-agent Docker proof, delete/recover, connect/shell/exec and links/env injection. |
 | 4 | Redis engine | in progress | `node --test --import tsx tests/database-engines.docker.ts` proves configuration behavior only; lifecycle/link API+CLI+UI are absent. |
 | 5 | Targets, backups, restore, recover, import/export | not started | No engine-consistent recovery E2E proof yet. |
 | 6 | Release migrations, config, exec/shell/migrate | not started | No release-gate E2E proof yet. |
 | 7 | Monitoring, alerts, tuning | in progress | `node --test --import tsx tests/database-tuning.test.ts` passes; no metrics/alert product flow yet. |
-| 8 | Complete CLI | not started | No Fleet Databases CLI E2E proof yet. |
-| 9 | Complete dashboard | not started | No Fleet Databases Playwright proof yet. |
+| 8 | Complete CLI | in progress | Lifecycle list/create/actions commands are wired; database connect/shell/exec, backup/recovery and declarative release commands remain. |
+| 9 | Complete dashboard | in progress | Create wizard, list/detail, lifecycle controls and reconnecting SSE progress are wired. Playwright and backup/delete/link flows remain. |
 | 10 | Security, E2E, docs, release prep, V1 PR | not started | No V1 acceptance gate or PR yet. |
 
 ## V1 acceptance scenarios (REQUEST.md §10)
@@ -133,3 +133,10 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 - Non-builder agents now run the existing safe disk probe too, so database eligibility does not require opting into builds. The real two-agent fixture verifies non-builder disk reporting while leaving build capability disabled.
 - `node control-plane/scripts/test-databases.mjs --worker`: **717/717 control-plane tests**, formatter/lint, typecheck/build, Go tests and the real two-agent worker/tunnel test passed. Pure scheduler and legacy scheduler checks passed **33/33**. Real Postgres/Redis fixture proves stopped reservations, uptime/outage observations and offline pin preservation. Product offline/recovery acceptance remains pending full lifecycle, alerts and backup recovery.
 - Next: lifecycle API, CLI and dashboard wizard using these recommendations and leased jobs. No production resources or Raunak data were used.
+
+## 2026-11-17 — Lifecycle API, CLI and dashboard work in progress
+
+- Added project-scoped catalog and placement endpoints, fleet database pagination, create with server-side placement revalidation, pinned digest image identities, encrypted role credentials, lifecycle actions, detail/history and authenticated cursor-resumable progress SSE. Validation failures at route trust boundaries return stable 4xx errors. Database errors/progress projections omit operation secrets.
+- Added the dashboard create wizard, capacity recommendation review, resource list/detail, start/stop/restart controls and reconnecting progress stream. Added `fleet databases list|create|start|stop|restart`; action/create commands carry an idempotency key and follow durable operation state unless `--no-wait` or `--json` is used.
+- Added migration 0043 for pinned image references. CLI and dashboard formats/builds and API route tests are included. `node control-plane/scripts/test-databases.mjs --worker` passed: **719/719 control-plane tests**, formatter/lint, typecheck/build, `go test ./...`, and the real delayed two-agent Docker tunnel test (2 MiB at 100 ms RTT: 2.83 s versus a 12.8 s stop-and-wait lower bound). Dashboard typecheck, **31/31 tests** and build passed. CLI typecheck and **223/223 tests** passed.
+- This is component/API coverage, not a full create-through-authenticated-API-to-live-agent acceptance run. Delete/final backup, recover, links/env injection, connection clients and browser E2E remain unimplemented; do not mark a product scenario verified. No PR merge, publishing, production access or Raunak data use.

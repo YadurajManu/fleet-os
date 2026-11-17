@@ -67,7 +67,7 @@ async function refreshAccessToken(): Promise<string | null> {
 
 export async function api<T = unknown>(
   path: string,
-  opts: { method?: string; body?: unknown; auth?: boolean; signal?: AbortSignal } = {}
+  opts: { method?: string; body?: unknown; auth?: boolean; signal?: AbortSignal; idempotencyKey?: string } = {}
 ): Promise<T> {
   const send = async (token?: string) =>
     fetch(BASE + path, {
@@ -76,6 +76,7 @@ export async function api<T = unknown>(
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...(opts.body ? { 'content-type': 'application/json' } : {}),
+        ...(opts.idempotencyKey ? { 'idempotency-key': opts.idempotencyKey } : {}),
       },
       body: opts.body ? JSON.stringify(opts.body) : undefined,
       signal: opts.signal,
@@ -320,4 +321,26 @@ export type AuditEntry = {
 export type AuditPage = {
   entries: AuditEntry[]
   nextCursor: { before: string; beforeId: string } | null
+}
+
+
+/** Authenticated SSE uses the same session and shared refresh attempt as JSON requests. */
+export async function apiStream(path: string, signal: AbortSignal): Promise<Response> {
+  const send = (token?: string) => fetch(BASE + path, {
+    credentials: 'include',
+    signal,
+    headers: { accept: 'text/event-stream', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  })
+  let response = await send(session.get()?.accessToken)
+  if (response.status === 401) {
+    const fresh = await refreshAccessToken()
+    if (fresh) response = await send(fresh)
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null
+    throw new ApiError(response.status, body?.error?.code ?? 'stream_failed', body?.error?.message ?? `Progress stream failed (${response.status})`)
+  }
+  if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream'))
+    throw new Error('Server returned an invalid progress stream.')
+  return response
 }

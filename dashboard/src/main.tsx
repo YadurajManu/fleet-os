@@ -8,6 +8,8 @@ import Overview from './pages/Overview'
 import Nodes from './pages/Nodes'
 import NodeDetail from './pages/NodeDetail'
 import Services from './pages/Services'
+import Databases from './pages/Databases'
+import DatabaseDetail from './pages/DatabaseDetail'
 import ServiceDetail from './pages/ServiceDetail'
 import Events from './pages/Events'
 import Alerts from './pages/Alerts'
@@ -99,6 +101,8 @@ function Gate() {
         <Route index element={<Overview />} />
         <Route path="nodes" element={<Nodes />} />
         <Route path="nodes/:nodeId" element={<NodeDetail />} />
+        <Route path="databases" element={<Databases />} />
+        <Route path="databases/:project/:databaseId" element={<DatabaseDetail />} />
         <Route path="services" element={<Services />} />
         <Route path="services/:serviceId" element={<ServiceDetail />} />
         <Route path="events" element={<Events />} />
