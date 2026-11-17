@@ -845,6 +845,12 @@ export const databaseStatus = pgEnum('database_status', [
 export const databaseOperationState = pgEnum('database_operation_state', [
   'queued', 'running', 'reconciling', 'succeeded', 'failed', 'cancelled',
 ])
+export const databaseBackupState = pgEnum('database_backup_state', [
+  'pending', 'running', 'complete', 'failed',
+])
+export const databaseBackupKind = pgEnum('database_backup_kind', [
+  'base', 'wal', 'rdb', 'logical',
+])
 export const databaseOperationKind = pgEnum('database_operation_kind', [
   'create', 'start', 'stop', 'restart', 'delete', 'purge', 'backup', 'restore', 'recover',
   'import', 'dump', 'migrate', 'exec', 'tune', 'extension', 'rotate', 'link', 'unlink',
@@ -969,4 +975,35 @@ export const databaseOperationEvents = pgTable('database_operation_events', {
 }, t => [
   index('database_operation_events_cursor_idx').on(t.operationId, t.id),
   check('database_operation_events_progress_check', sql`${t.progress} between 0 and 100`),
+])
+
+export const databaseBackups = pgTable('database_backups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  databaseId: uuid('database_id').notNull().references(() => tenantDatabases.id, { onDelete: 'restrict' }),
+  targetId: uuid('target_id').references(() => databaseBackupTargets.id, { onDelete: 'set null' }),
+  operationId: uuid('operation_id').references(() => databaseOperations.id, { onDelete: 'set null' }),
+  nodeId: uuid('node_id').references(() => nodes.id, { onDelete: 'set null' }),
+  generation: integer('generation').notNull(),
+  engine: databaseEngine('engine').notNull(),
+  engineVersion: text('engine_version').notNull(),
+  kind: databaseBackupKind('kind').notNull(),
+  state: databaseBackupState('state').notNull().default('pending'),
+  objectPrefix: text('object_prefix').notNull(),
+  manifest: jsonb('manifest').$type<Array<{ key: string; sizeBytes: number; checksumSha256: string }>>().notNull().default([]),
+  sizeBytes: bigint('size_bytes', { mode: 'number' }),
+  checksumSha256: text('checksum_sha256'),
+  recoveryPoint: jsonb('recovery_point').$type<Record<string, string | number | null>>().notNull().default({}),
+  label: text('label'),
+  errorCode: text('error_code'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }),
+}, t => [
+  index('database_backups_database_idx').on(t.databaseId, t.createdAt),
+  index('database_backups_target_idx').on(t.targetId, t.state),
+  uniqueIndex('database_backups_operation_idx').on(t.operationId),
+  check('database_backups_generation_check', sql`${t.generation} > 0`),
+  check('database_backups_size_check', sql`${t.sizeBytes} is null or ${t.sizeBytes} >= 0`),
+  check('database_backups_checksum_check', sql`${t.checksumSha256} is null or ${t.checksumSha256} ~ '^[a-f0-9]{64}$'`),
 ])
