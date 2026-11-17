@@ -1,10 +1,17 @@
 import { and, asc, eq } from 'drizzle-orm'
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3'
 import type { AppContext } from '../api/context.js'
 import { ApiError } from '../api/errors.js'
 import { databaseBackupTargets } from '../db/schema.js'
 import { recordAudit } from '../lib/audit.js'
-import { sealSecret } from '../lib/crypto.js'
+import { openSecret, sealSecret } from '../lib/crypto.js'
 
 const endpoint = z
   .string()
@@ -158,4 +165,104 @@ export async function deleteBackupTarget(
     })
     return target
   })
+}
+
+export async function testBackupTarget(
+  ctx: AppContext,
+  fleetId: string,
+  project: string,
+  targetId: string,
+  actor: { orgId: string; userId: string },
+) {
+  const [target] = await ctx.db
+    .select()
+    .from(databaseBackupTargets)
+    .where(
+      and(
+        eq(databaseBackupTargets.id, targetId),
+        eq(databaseBackupTargets.fleetId, fleetId),
+        eq(databaseBackupTargets.project, project),
+      ),
+    )
+    .limit(1)
+  if (!target) throw ApiError.notFound('Backup target')
+
+  const credentials = z
+    .object({
+      accessKeyId: z.string().min(1),
+      secretAccessKey: z.string().min(1),
+      sessionToken: z.string().optional(),
+    })
+    .parse(
+      JSON.parse(
+        openSecret(target.encryptedCredentials, ctx.config.SECRETS_MASTER_KEY),
+      ),
+    )
+  const client = new S3Client({
+    endpoint: target.endpoint,
+    forcePathStyle: true,
+    region: target.region,
+    credentials,
+    maxAttempts: 1,
+  })
+  const key = `${target.prefix ? `${target.prefix}/` : ''}.fleet-test/${randomUUID()}`
+  const body = Buffer.from(randomUUID())
+  let uploaded = false
+  try {
+    await client.send(
+      new PutObjectCommand({ Bucket: target.bucket, Key: key, Body: body }),
+      { abortSignal: AbortSignal.timeout(10000) },
+    )
+    uploaded = true
+    const object = await client.send(
+      new GetObjectCommand({ Bucket: target.bucket, Key: key }),
+      { abortSignal: AbortSignal.timeout(10000) },
+    )
+    const downloaded = Buffer.from(await object.Body!.transformToByteArray())
+    if (!downloaded.equals(body))
+      throw new Error('Backup target test object did not match')
+    await client.send(
+      new DeleteObjectCommand({ Bucket: target.bucket, Key: key }),
+      { abortSignal: AbortSignal.timeout(10000) },
+    )
+    uploaded = false
+  } catch {
+    throw ApiError.unavailable(
+      'backup_target_test_failed',
+      'Could not write, read, verify, and remove a test object. Check the target endpoint and bucket permissions.',
+    )
+  } finally {
+    if (uploaded) {
+      await client
+        .send(new DeleteObjectCommand({ Bucket: target.bucket, Key: key }), {
+          abortSignal: AbortSignal.timeout(5000),
+        })
+        .catch(() => {})
+    }
+    client.destroy()
+  }
+  const testedAt = new Date()
+  await ctx.db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(databaseBackupTargets)
+      .set({ lastTestedAt: testedAt })
+      .where(
+        and(
+          eq(databaseBackupTargets.id, target.id),
+          eq(databaseBackupTargets.fleetId, fleetId),
+          eq(databaseBackupTargets.project, project),
+        ),
+      )
+      .returning({ id: databaseBackupTargets.id })
+    if (!updated) throw ApiError.notFound('Backup target')
+    await recordAudit(tx, {
+      orgId: actor.orgId,
+      actorUserId: actor.userId,
+      action: 'database.backup_target.tested',
+      targetType: 'database_backup_target',
+      targetId: target.id,
+      metadata: { name: target.name, project },
+    })
+  })
+  return { ok: true as const, testedAt }
 }

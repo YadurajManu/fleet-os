@@ -20,6 +20,7 @@
     "db:lint": "npx --yes oxlint@1.57.0 --deny-warnings src/databases/ src/api/databases.routes.ts tests/database-*.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1170.0",
     "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^11.3.0",
     "@fastify/jwt": "^10.2.2",

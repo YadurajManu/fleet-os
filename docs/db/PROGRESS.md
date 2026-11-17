@@ -25,7 +25,7 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 2 | Agent stateful runtime, TCP/exec/PTY, disk, images | in progress | Image/runtime implementation underway. No complete runtime verification yet. |
 | 3 | Postgres lifecycle, placement, networking, links, pooler | in progress | Create/catalog/placement/list/detail/start/stop/restart and link/unlink API, CLI and dashboard are wired. Link tests verify encrypted role URLs and cleanup; real Docker verifies an agent-created service can query Postgres through a same-node private project network. Still missing a complete lifecycle API-to-app rollout proof, cross-node application TCP connector, delete/recover, connect/shell/exec and browser acceptance. |
 | 4 | Redis engine | in progress | `node --test --import tsx tests/database-engines.docker.ts` proves configuration behavior only; lifecycle/link API+CLI+UI are absent. |
-| 5 | Targets, backups, restore, recover, import/export | in progress | Migration 0045 and project-scoped target list/create/delete API exist. `tests/database-backup-targets.test.ts` verifies envelope encryption, response/log redaction paths, project isolation, default replacement, loopback-only HTTP and deletion detachment. CLI/UI, MinIO connectivity/streaming, backup operations, restore and import/export remain unimplemented. No engine-consistent recovery E2E proof yet. |
+| 5 | Targets, backups, restore, recover, import/export | in progress | Migration 0045, project-scoped target list/create/delete/test API and real Docker MinIO write/read/verify/delete probe exist. Unit coverage verifies encryption, redaction, isolation, defaults and detach behavior. CLI/UI, backup streaming/operations, restore and import/export remain. No engine-consistent recovery E2E proof yet. |
 | 6 | Release migrations, config, exec/shell/migrate | not started | No release-gate E2E proof yet. |
 | 7 | Monitoring, alerts, tuning | in progress | `node --test --import tsx tests/database-tuning.test.ts` passes; no metrics/alert product flow yet. |
 | 8 | Complete CLI | in progress | Lifecycle list/create/actions, link/unlink, loopback `db connect`, and Redis/Postgres `db exec` are wired. Interactive database shell, backup/recovery and declarative release commands remain. |
@@ -56,7 +56,13 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 ## 2026-11-17 — Backup target API slice
 
 - Added authenticated project-scoped list/create/delete routes. Target credentials are encrypted before persistence, excluded from API projections and audit metadata, and redacted from request logs. Defaults are replaced transactionally; plain HTTP is accepted only for loopback MinIO development endpoints. Delete detaches database target references without deleting database data.
-- `node control-plane/scripts/test-databases.mjs --unit-only` passed: **724/724** control-plane tests, including the new target API integration test; formatter/Oxlint, TypeScript typecheck/build and `go test ./...` passed. CLI/UI and real MinIO connectivity/streaming remain outstanding; no backup acceptance scenario is verified.
+- `node control-plane/scripts/test-databases.mjs --unit-only` passed: **724/724** control-plane tests, including the new target API integration test; formatter/Oxlint, TypeScript typecheck/build and `go test ./...` passed. CLI/UI and backup streaming remain outstanding; no backup acceptance scenario is verified.
+
+## 2026-11-17 — Backup target connectivity probe
+
+- Added the authenticated target test route. It writes a random object below the configured prefix, reads and compares it, then removes only that object. `lastTestedAt` and sanitized audit metadata update only after success; failures return a generic message without endpoint credentials.
+- `node control-plane/scripts/test-databases.mjs --target-only` passed against MinIO running in Docker: write/read/compare/delete succeeded, the probe prefix was empty afterward, an unrelated object remained intact, and `lastTestedAt` was set. The runner builds pinned MinIO source into a disposable local image because the previous `minio/minio` image is unavailable.
+- The combined `--target` run passed 724/724 control-plane tests, formatter/Oxlint, typecheck/build and `go test ./...`; engine/registry integrations reached 7/8 before the existing private-registry transfer check failed (`Isolated registry image transfer failed`), so the combined command did not reach the MinIO test. The isolated MinIO test passed separately. CLI/UI, backup streaming, backup/restore/PITR/recover and import/export remain unimplemented; no backup acceptance scenario is marked complete.
 
 ## V2 work and acceptance gate
 
