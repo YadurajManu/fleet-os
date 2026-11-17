@@ -4,7 +4,7 @@ import { isEngineImage } from '../manifest/databases.js'
 import { publishLog } from './log-stream.js'
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
-import { nodes, fleets, pairingTokens, deployments, services } from '../db/schema.js'
+import { nodes, fleets, pairingTokens, deployments, services, databaseLinks, tenantDatabases } from '../db/schema.js'
 import { hashToken, newAgentToken, isPairingToken } from '../lib/tokens.js'
 import { recordAudit } from '../lib/audit.js'
 import { ApiError } from './errors.js'
@@ -18,6 +18,7 @@ import { buildEnv } from '../secrets/store.js'
 import { invalidateRoutesForService } from '../ingress/routes.js'
 import { recordCanaryHealthy, evaluateCanaryHealth } from '../heartbeat/watchdog.js'
 import { databaseCapabilities } from '../databases/capabilities.js'
+import { projectDatabaseNetwork } from '../databases/engines.js'
 
 /** The capability report an agent sends at registration (tech doc §7). */
 const engineCapability = {
@@ -549,6 +550,17 @@ export async function agentRoutes(app: FastifyInstance) {
               .set({ observedRamPeakMb: null, observedRamSince: new Date() })
               .where(eq(services.id, row.serviceId))
 
+            const linkedDatabases = await tx
+              .select({ id: databaseLinks.id, generation: tenantDatabases.generation })
+              .from(databaseLinks)
+              .innerJoin(tenantDatabases, eq(tenantDatabases.id, databaseLinks.databaseId))
+              .where(eq(databaseLinks.serviceId, row.serviceId))
+            for (const link of linkedDatabases) {
+              await tx.update(databaseLinks)
+                .set({ appliedGeneration: link.generation, restartRequired: false })
+                .where(eq(databaseLinks.id, link.id))
+            }
+
             await tx
               .update(deployments)
               .set({ status: 'superseded', finishedAt: new Date() })
@@ -753,6 +765,21 @@ export async function agentRoutes(app: FastifyInstance) {
         )
       )
 
+    const linked = rows.length
+      ? await db
+          .select({ serviceId: databaseLinks.serviceId, project: tenantDatabases.project })
+          .from(databaseLinks)
+          .innerJoin(tenantDatabases, eq(tenantDatabases.id, databaseLinks.databaseId))
+          .where(and(eq(tenantDatabases.fleetId, fleetId), eq(tenantDatabases.nodeId, nodeId), inArray(databaseLinks.serviceId, rows.map((row) => row.serviceId))))
+      : []
+    const databaseNetworks = new Map<string, string[]>()
+    for (const link of linked) {
+      const networks = databaseNetworks.get(link.serviceId) ?? []
+      const network = projectDatabaseNetwork(fleetId, link.project)
+      if (!networks.includes(network)) networks.push(network)
+      databaseNetworks.set(link.serviceId, networks)
+    }
+
     // This is the only place a secret is decrypted, and the only place one
     // leaves the control plane. It is safe here for two reasons that must both
     // stay true: the response is scoped to services already placed on the
@@ -774,7 +801,7 @@ export async function agentRoutes(app: FastifyInstance) {
             'desired state omits secrets that are not set'
           )
         }
-        return { row: r, env }
+        return { row: r, env, databaseNetworks: databaseNetworks.get(r.serviceId) ?? [] }
       })
     )
 
@@ -806,7 +833,7 @@ export async function agentRoutes(app: FastifyInstance) {
       // credentials, and the node cannot pull without them. Sent on the same
       // terms as a secret: over TLS, to a caller that proved it is this node.
       registry_auth: registryAuth(app.ctx.config),
-      services: withEnv.map(({ row: r, env }) => ({
+      services: withEnv.map(({ row: r, env, databaseNetworks }) => ({
         service_id: r.serviceId,
         name: r.service,
         deployment_id: r.deploymentId,
@@ -829,6 +856,7 @@ export async function agentRoutes(app: FastifyInstance) {
         memory_mb: r.requestRamMb,
         replicas: r.replicas,
         env,
+        database_networks: databaseNetworks,
       })),
     }
   })

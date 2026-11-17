@@ -181,7 +181,8 @@ type DesiredService struct {
 	// Plain manifest values merged with resolved secrets. This is the only
 	// field on the wire that carries credentials, which is why the agent never
 	// logs a DesiredService whole — see the redaction in reconcile.
-	Env map[string]string `json:"env"`
+	Env              map[string]string `json:"env"`
+	DatabaseNetworks []string          `json:"database_networks,omitempty"`
 }
 
 type DesiredState struct {

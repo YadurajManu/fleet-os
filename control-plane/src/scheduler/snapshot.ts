@@ -111,7 +111,7 @@ export async function fleetSnapshot(
 export function toServiceSpec(
   row: typeof services.$inferSelect,
   volumeNodeId?: string | null,
-  preferredNodeIds: string[] = []
+  preferredNodeIds: string[] = row.preferredNodeIds ?? []
 ): ServiceSpec {
   return {
     id: row.id,
