@@ -19,6 +19,22 @@ import { affectedServices, fleetHealth, renderStatus, type StatusSnapshot } from
 import { dockerCleanupMessage, namedVolumes, stateDirs } from '../src/commands/uninstall.js'
 import { suggest } from '../src/suggestions.js'
 import { nodeVersionLine } from '../src/commands/updates.js'
+import { commands } from '../src/commands/index.js'
+import { selectDatabase } from '../src/commands/databases.js'
+
+test('db is an alias for the managed database commands', () => {
+  assert.equal(commands.db, commands.databases)
+})
+
+test('database link selection requires a project only when a name is ambiguous', () => {
+  const rows = [
+    { id: 'db-a', project: 'alpha', name: 'primary' },
+    { id: 'db-b', project: 'beta', name: 'primary' },
+  ] as Parameters<typeof selectDatabase>[0]
+  assert.equal(selectDatabase(rows, 'db-a').project, 'alpha')
+  assert.equal(selectDatabase(rows, 'primary', 'beta').id, 'db-b')
+  assert.throws(() => selectDatabase(rows, 'primary'), /pass --project/)
+})
 
 test('updates never presents an offline node version as current', () => {
   assert.deepEqual(nodeVersionLine({ name: 'laptop', agentVersion: 'v0.2.4', live: false, agentAutoUpgrade: false }),

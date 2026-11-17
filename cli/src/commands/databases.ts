@@ -21,6 +21,7 @@ type Operation = {
   progress: number
   errorCode: string | null
 }
+type DatabaseLink = { serviceId: string; serviceName: string }
 const base = (fleet: string, project: string) =>
   `/fleets/${encodeURIComponent(fleet)}/projects/${encodeURIComponent(project)}/databases`
 
@@ -128,11 +129,21 @@ export const databasesCommand = {
       return
     }
     if (action === 'link') {
-      const serviceId = args[3]
-      if (!project || !nameOrId || !serviceId)
+      if (!project || !nameOrId)
         throw new CliError(
-          'usage: fleet databases link <project> <database-id> <service-id> [--role app|readonly] [--as PREFIX]',
+          'usage: fleet db link <database> <service> [--project PROJECT] [--role app|readonly] [--as PREFIX]',
           EXIT.usage,
+        )
+      const database = await findDatabase(fleet, nameOrId, flags)
+      const { body: linkInfo } = await request<{
+        services: { id: string; name: string }[]
+      }>('GET', `${base(fleet, database.project)}/${database.id}/links`)
+      const service = linkInfo.services.find(
+        (item) => item.id === project || item.name === project,
+      )
+      if (!service)
+        throw new CliError(
+          `Service "${project}" was not found in project ${database.project}.`,
         )
       const role = typeof flags.role === 'string' ? flags.role : 'app'
       if (role !== 'app' && role !== 'readonly')
@@ -144,9 +155,9 @@ export const databasesCommand = {
           envKeys: Record<string, string>
           restartRequired: boolean
         }
-      }>('POST', `${base(fleet, project)}/${nameOrId}/links`, {
+      }>('POST', `${base(fleet, database.project)}/${database.id}/links`, {
         body: {
-          serviceId,
+          serviceId: service.id,
           role,
           ...(typeof flags.as === 'string' ? { as: flags.as } : {}),
         },
@@ -160,18 +171,32 @@ export const databasesCommand = {
       return
     }
     if (action === 'unlink') {
-      const serviceId = args[3]
-      if (!project || !nameOrId || !serviceId)
+      if (!project || !nameOrId)
         throw new CliError(
-          'usage: fleet databases unlink <project> <database-id> <service-id>',
+          'usage: fleet db unlink <database> <service> [--project PROJECT]',
           EXIT.usage,
+        )
+      const database = await findDatabase(fleet, nameOrId, flags)
+      const { body: linkInfo } = await request<{ links: DatabaseLink[] }>(
+        'GET',
+        `${base(fleet, database.project)}/${database.id}/links`,
+      )
+      const link = linkInfo.links.find(
+        (item) => item.serviceId === project || item.serviceName === project,
+      )
+      if (!link)
+        throw new CliError(
+          `Service "${project}" is not linked to ${database.name}.`,
         )
       const { body } = await request<{
         serviceId: string
         restartRequired: boolean
-      }>('DELETE', `${base(fleet, project)}/${nameOrId}/links/${serviceId}`)
+      }>(
+        'DELETE',
+        `${base(fleet, database.project)}/${database.id}/links/${link.serviceId}`,
+      )
       if (flags.json) return console.log(JSON.stringify(body, null, 2))
-      console.log(`Service ${serviceId} unlinked.`)
+      console.log(`Service ${link.serviceName} unlinked.`)
       if (body.restartRequired)
         console.log('Redeploy the service to remove the database connection.')
       return
@@ -204,4 +229,46 @@ export const databasesCommand = {
       EXIT.usage,
     )
   },
+}
+
+async function findDatabase(fleet: string, nameOrId: string, flags: Flags) {
+  const databases: Database[] = []
+  let after: string | undefined
+  do {
+    const query = new URLSearchParams({ limit: '100' })
+    if (typeof flags.project === 'string') query.set('project', flags.project)
+    if (after) query.set('after', after)
+    const { body } = await request<{
+      databases: Database[]
+      nextCursor: string | null
+    }>('GET', `/fleets/${fleet}/databases?${query}`)
+    databases.push(...body.databases)
+    after = body.nextCursor ?? undefined
+  } while (after)
+  return selectDatabase(
+    databases,
+    nameOrId,
+    typeof flags.project === 'string' ? flags.project : undefined,
+  )
+}
+
+export function selectDatabase(
+  databases: Database[],
+  nameOrId: string,
+  project?: string,
+) {
+  const matches = databases.filter(
+    (database) =>
+      (database.id === nameOrId || database.name === nameOrId) &&
+      (!project || database.project === project),
+  )
+  if (matches.length === 0)
+    throw new CliError(
+      `Database "${nameOrId}" was not found${typeof project === 'string' ? ` in project ${project}` : ''}.`,
+    )
+  if (matches.length > 1)
+    throw new CliError(
+      `Database name "${nameOrId}" is used by multiple projects; pass --project.`,
+    )
+  return matches[0]!
 }
