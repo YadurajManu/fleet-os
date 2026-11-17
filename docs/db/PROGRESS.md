@@ -213,3 +213,8 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 - Added an owner/admin-only API download that streams the encrypted S3 object through AES-GCM decryption, checks the stored size and SHA-256 manifest and authenticates the GCM tag before the stream completes. Downloads are audited. `fleet db backup download <db> <backup-id> <file>` writes an exclusive mode-0600 file and removes partial output on transfer errors.
 - Real Docker/API/MinIO validation downloaded a Postgres backup and compared the result byte-for-byte with direct decryption of the encrypted object. CLI tests verify the file bytes and mode. This downloads logical/RDB artifacts; Fleet restore, point-in-time recovery, import and target-independent access after target deletion remain outstanding.
 - Verification: control-plane **726/726**, Prettier/Oxlint, typecheck/build, `go test ./...`, real tunnel + MinIO backup/download/WAL-G Docker tests, and CLI **232/232** with typecheck passed. Graphify refreshed to 4,554 nodes / 11,875 edges.
+
+## 2026-11-17 — Real WAL-G point-in-time restore proof
+
+- Extended the disposable Docker/MinIO test to execute the Postgres engine's restore plan: fetch an encrypted base into a new volume, replay encrypted WAL to a timestamp, promote, and verify a row inserted before the target exists while a later deletion does not. The archive segment and encrypted WAL were fetched and validated with `pg_waldump`.
+- `node scripts/test-databases.mjs --worker-only --backup` passed the real two-agent transfer/backup scenario and the WAL-G/PITR restore. This proves the engine-level WAL-G path only; no Fleet restore/recover operation, new-database lifecycle, in-place safety copy, CLI/UI wizard, or restore progress workflow is claimed yet.
