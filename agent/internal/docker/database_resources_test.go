@@ -172,3 +172,71 @@ func TestDatabaseStopNeverEscalatesToKill(t *testing.T) {
 		t.Fatal("clean shutdown not requested")
 	}
 }
+
+func TestDatabaseDeleteRemovesOwnedContainerAndConfigButPreservesData(t *testing.T) {
+	spec := databaseTestSpec()
+	configHash := databaseContainerConfigHash(spec)
+	containerName := DatabaseContainerName(spec.Identity.ID, "database")
+	configVolume := spec.Volume + "-database-config-" + configHash[:12]
+	volumes := map[string]map[string]string{
+		spec.Volume:                    databaseLabels(spec.Identity, "data"),
+		configVolume:                   databaseLabels(spec.Identity, "config-database"),
+		spec.Volume + "-pooler-config": databaseLabels(spec.Identity, "config-pooler"),
+	}
+	labels := databaseLabels(spec.Identity, "database")
+	labels[databaseConfigLabel] = configHash
+	running := true
+	containerPresent := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimPrefix(r.URL.Path, "/v1.44/")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(p, "containers/"):
+			if !containerPresent {
+				http.Error(w, `{"message":"missing"}`, http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"Id":     containerName,
+				"Config": map[string]any{"Labels": labels},
+				"State":  map[string]bool{"Running": running},
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(p, "volumes/"):
+			volumeLabels, ok := volumes[strings.TrimPrefix(p, "volumes/")]
+			if !ok {
+				http.Error(w, `{"message":"missing"}`, http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"Labels": volumeLabels})
+		case r.Method == http.MethodPost && strings.HasSuffix(p, "/stop"):
+			running = false
+		case r.Method == http.MethodDelete && strings.HasPrefix(p, "containers/"):
+			if r.URL.Query().Get("v") != "false" {
+				t.Fatal("delete removed container volumes")
+			}
+			containerPresent = false
+		case r.Method == http.MethodDelete && strings.HasPrefix(p, "volumes/"):
+			name := strings.TrimPrefix(p, "volumes/")
+			if name == spec.Volume {
+				t.Fatal("delete removed the database data volume")
+			}
+			delete(volumes, name)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		}
+	}))
+	defer server.Close()
+	target, _ := url.Parse(server.URL)
+	c := &Client{apiVersion: "v1.44", http: &http.Client{Transport: digestTestTransport{target: target}}}
+	if err := c.RemoveDatabaseContainer(t.Context(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if containerPresent || running {
+		t.Fatal("owned database container remained after delete")
+	}
+	if _, ok := volumes[spec.Volume]; !ok {
+		t.Fatal("database data volume was removed")
+	}
+	if _, ok := volumes[configVolume]; ok {
+		t.Fatal("owned config volume was not removed")
+	}
+}

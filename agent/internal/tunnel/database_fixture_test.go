@@ -24,7 +24,7 @@ func TestDatabaseTunnelPeer(t *testing.T) {
 	if json.Unmarshal([]byte(input), &config) != nil {
 		t.Fatal("invalid tunnel fixture")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	go func() { _, _ = io.Copy(io.Discard, os.Stdin); cancel() }()
 	root := t.TempDir()

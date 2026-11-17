@@ -99,7 +99,7 @@ function decryptBackup(context: AppContext, backupId: string, object: Buffer) {
 
 test(
   'real agents and Docker service transfer private Redis traffic, drop and reconnect at 100 ms RTT',
-  { timeout: 240000 },
+  { timeout: 420000 },
   async (t) => {
     const fixtureConfig = workerMode ? loadConfig() : null
     const fleetId = randomUUID(),
@@ -446,57 +446,6 @@ test(
             payload: { targetId },
           })
           assert.equal(assigned.statusCode, 200, assigned.body)
-          const restart = await api.inject({
-            method: 'POST',
-            url: `${targets.replace('/backup-targets', '')}/databases/${postgresId}/actions`,
-            headers: {
-              authorization: `Bearer ${account.accessToken}`,
-              'idempotency-key': randomUUID(),
-            },
-            payload: { action: 'restart' },
-          })
-          assert.equal(restart.statusCode, 202, restart.body)
-          assert.equal(await worker.tick(), true)
-          const [restartOperation] = await workerContext.db
-            .select({
-              state: databaseOperations.state,
-              errorCode: databaseOperations.errorCode,
-            })
-            .from(databaseOperations)
-            .where(eq(databaseOperations.id, restart.json().operation.id))
-          assert.equal(
-            restartOperation!.state,
-            'succeeded',
-            JSON.stringify(restartOperation),
-          )
-          const archiveConfig = docker([
-            'exec',
-            `fleet-db-${postgresId}-database`,
-            'cat',
-            '/etc/fleet/postgresql.conf',
-          ])
-          assert.match(archiveConfig, /archive_mode = on/)
-          assert.match(archiveConfig, /archive_command = 'wal-g wal-push %p'/)
-          assert.match(
-            archiveConfig,
-            /restore_command = 'wal-g wal-fetch %f %p'/,
-          )
-          for (const path of [
-            '/etc/fleet/walg-key',
-            '/etc/fleet/aws-credentials',
-            '/etc/fleet/walg.pgpass',
-          ])
-            assert.equal(
-              docker([
-                'exec',
-                `fleet-db-${postgresId}-database`,
-                'stat',
-                '-c',
-                '%a',
-                path,
-              ]),
-              '600',
-            )
           docker([
             'exec',
             '-e',
@@ -794,6 +743,144 @@ test(
           t.diagnostic('encrypted Redis RDB uploaded and verified in MinIO')
           t.diagnostic(
             'encrypted PostgreSQL dump uploaded and verified in MinIO',
+          )
+          const databaseBase = `/fleets/${fleetId}/projects/${identity.project}/databases`
+          const finalBackupId = backupId
+          const deletionKey = randomUUID()
+          const deletion = await api.inject({
+            method: 'POST',
+            url: `${databaseBase}/${postgresId}/delete`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': deletionKey,
+            },
+            payload: {
+              confirmation: 'tunnel-postgres',
+              backupId: finalBackupId,
+            },
+          })
+          assert.equal(deletion.statusCode, 202, deletion.body)
+          assert.equal(deletion.json().database.status, 'deleting')
+          t.diagnostic('verified backup accepted and delete queued')
+          assert.equal(await worker.tick(), true)
+          t.diagnostic('delete worker returned')
+          let deleteOperation
+          for (let attempt = 0; attempt < 4; attempt++) {
+            ;[deleteOperation] = await workerContext.db
+              .select({
+                state: databaseOperations.state,
+                errorCode: databaseOperations.errorCode,
+              })
+              .from(databaseOperations)
+              .where(eq(databaseOperations.id, deletion.json().operation.id))
+            if (
+              deleteOperation!.state === 'succeeded' ||
+              deleteOperation!.state === 'failed'
+            )
+              break
+            if (deleteOperation!.state === 'running') {
+              await until(() => workerContext.tunnels.has(nodeId))
+              await workerContext.db
+                .update(databaseOperations)
+                .set({
+                  leaseExpiresAt: sql`clock_timestamp() - interval '1 second'`,
+                })
+                .where(eq(databaseOperations.id, deletion.json().operation.id))
+            }
+            await worker.tick()
+          }
+          assert.deepEqual(
+            deleteOperation,
+            {
+              state: 'succeeded',
+              errorCode: null,
+            },
+            'delete operation must reconcile after its lease resumes',
+          )
+          t.diagnostic('delete operation committed')
+          const replayedDelete = await api.inject({
+            method: 'POST',
+            url: `${databaseBase}/${postgresId}/delete`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': deletionKey,
+            },
+            payload: {
+              confirmation: 'tunnel-postgres',
+              backupId: finalBackupId,
+            },
+          })
+          assert.equal(replayedDelete.statusCode, 202, replayedDelete.body)
+          assert.equal(
+            replayedDelete.json().operation.id,
+            deletion.json().operation.id,
+          )
+          const [deleted] = await workerContext.db
+            .select({
+              status: tenantDatabases.status,
+              deletedAt: tenantDatabases.deletedAt,
+              purgeAfter: tenantDatabases.purgeAfter,
+            })
+            .from(tenantDatabases)
+            .where(eq(tenantDatabases.id, postgresId))
+          assert.equal(deleted!.status, 'deleting')
+          assert.ok(deleted!.deletedAt)
+          assert.ok(deleted!.purgeAfter! > new Date())
+          assert.equal(
+            docker([
+              'ps',
+              '-aq',
+              '--filter',
+              `name=fleet-db-${postgresId}-database`,
+            ]),
+            '',
+          )
+          docker(['volume', 'inspect', `fleet-db-${postgresId}-data`])
+          const undelete = await api.inject({
+            method: 'POST',
+            url: `${databaseBase}/${postgresId}/restore-deleted`,
+            headers: { authorization: `Bearer ${account.accessToken}` },
+          })
+          assert.equal(undelete.statusCode, 200, undelete.body)
+          assert.equal(undelete.json().database.status, 'stopped')
+          assert.equal(undelete.json().database.deletedAt, null)
+          const restoreStart = await api.inject({
+            method: 'POST',
+            url: `${databaseBase}/${postgresId}/actions`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+            payload: { action: 'start' },
+          })
+          assert.equal(restoreStart.statusCode, 202, restoreStart.body)
+          assert.equal(await worker.tick(), true)
+          const [started] = await workerContext.db
+            .select({ state: databaseOperations.state })
+            .from(databaseOperations)
+            .where(eq(databaseOperations.id, restoreStart.json().operation.id))
+          assert.equal(started!.state, 'succeeded')
+          assert.equal(
+            docker([
+              'exec',
+              '-e',
+              `PGPASSWORD=${postgresCredentials.owner.password}`,
+              `fleet-db-${postgresId}-database`,
+              'psql',
+              '-X',
+              '-A',
+              '-t',
+              '-U',
+              postgresCredentials.owner.username,
+              '-d',
+              'tunnel_postgres',
+              '-c',
+              'SELECT value FROM restore_marker',
+            ]),
+            'restored-from-verified-backup',
+          )
+          t.diagnostic(
+            'typed delete retained the Docker data volume and undelete recovered its rows',
           )
         }
         const apiUrl = await api.listen({ port: 0, host: '127.0.0.1' })

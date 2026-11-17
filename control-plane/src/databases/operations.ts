@@ -90,7 +90,7 @@ export async function enqueueDatabaseOperation(
   kind: OperationKind,
   key: string,
   input: unknown,
-  status?: 'restoring',
+  status?: 'restoring' | 'deleting',
 ): Promise<Operation> {
   if (!idempotencyKey.safeParse(key).success)
     throw ApiError.badRequest(
@@ -116,11 +116,6 @@ export async function enqueueDatabaseOperation(
       .where(scopedDatabase(scope))
       .for('update')
     if (!database) throw ApiError.notFound('Database')
-    if (status && database.status !== 'running')
-      throw ApiError.conflict(
-        'database_unavailable',
-        'Start the target database and wait until it is running before restoring.',
-      )
     const [existing] = await tx
       .select()
       .from(operations)
@@ -138,6 +133,17 @@ export async function enqueueDatabaseOperation(
         )
       return existing
     }
+    if (
+      (status === 'restoring' && database.status !== 'running') ||
+      (status === 'deleting' &&
+        !['running', 'stopped'].includes(database.status))
+    )
+      throw ApiError.conflict(
+        'database_unavailable',
+        status === 'restoring'
+          ? 'Start the target database and wait until it is running before restoring.'
+          : 'Wait for the database to finish its current lifecycle transition before deleting it.',
+      )
     const [busy] = await tx
       .select({ id: operations.id })
       .from(operations)
@@ -234,12 +240,14 @@ export async function claimDatabaseOperation(
         code: errorCode,
         progress: operation.progress,
       })
-      if (operation.kind === 'restore')
+      if (operation.kind === 'restore' || operation.kind === 'delete')
         await tx
           .update(tenantDatabases)
           .set({
-            status: 'running',
-            desiredState: 'running',
+            status: operation.kind === 'restore' ? 'running' : 'failed',
+            ...(operation.kind === 'restore'
+              ? { desiredState: 'running' }
+              : {}),
             updatedAt: sql`clock_timestamp()`,
           })
           .where(eq(tenantDatabases.id, operation.databaseId))
@@ -401,6 +409,45 @@ export async function finishDatabaseOperation(
           updatedAt: sql`clock_timestamp()`,
         })
         .where(eq(tenantDatabases.id, row.databaseId))
+    if (errorCode && row.kind === 'delete')
+      await tx
+        .update(tenantDatabases)
+        .set({ status: 'failed', updatedAt: sql`clock_timestamp()` })
+        .where(eq(tenantDatabases.id, row.databaseId))
+  })
+}
+
+export async function commitDatabaseDeleteOperation(
+  ctx: Context,
+  id: string,
+  token: string,
+): Promise<void> {
+  await ctx.db.transaction(async (tx) => {
+    const [operation] = await tx
+      .update(operations)
+      .set({
+        state: 'succeeded',
+        progress: 100,
+        errorCode: null,
+        finishedAt: sql`clock_timestamp()`,
+        leaseToken: null,
+        leaseExpiresAt: null,
+      })
+      .where(ownedLease(id, token))
+      .returning({ databaseId: operations.databaseId })
+    assertOwned(operation)
+    await tx
+      .update(tenantDatabases)
+      .set({
+        status: 'deleting',
+        deletedAt: sql`clock_timestamp()`,
+        purgeAfter: sql`clock_timestamp() + interval '7 days'`,
+        updatedAt: sql`clock_timestamp()`,
+      })
+      .where(eq(tenantDatabases.id, operation.databaseId))
+    await tx
+      .insert(events)
+      .values({ operationId: id, code: 'succeeded', progress: 100 })
   })
 }
 

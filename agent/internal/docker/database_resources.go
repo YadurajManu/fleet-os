@@ -338,3 +338,39 @@ func (c *Client) StopDatabaseContainer(ctx context.Context, identity DatabaseIde
 	}
 	return nil
 }
+
+// RemoveDatabaseContainer removes only an owned runtime container and its config volume; data and network volumes survive the grace period.
+func (c *Client) RemoveDatabaseContainer(ctx context.Context, spec DatabaseContainerSpec) error {
+	identity, role := spec.Identity, spec.Container.Role
+	if !identity.valid() || (role != "database" && role != "pooler") || spec.Volume != "fleet-db-"+identity.ID+"-data" {
+		return databaseFailure("delete validation")
+	}
+	name := DatabaseContainerName(identity.ID, role)
+	state, err := c.Inspect(ctx, name)
+	if err != nil && !IsNotFound(err) {
+		return databaseFailure("delete ownership check")
+	}
+	if err == nil && !ownedDatabase(state.Labels, identity, role, true) {
+		return databaseFailure("delete ownership check")
+	}
+	if err == nil && state.Running {
+		if err := c.StopDatabaseContainer(ctx, identity, role); err != nil {
+			return err
+		}
+	}
+	if err == nil {
+		if err := c.Remove(ctx, state.ID); err != nil && !IsNotFound(err) {
+			return databaseFailure("container removal")
+		}
+	}
+	configHash := ""
+	if err == nil {
+		configHash = state.Labels[databaseConfigLabel]
+	}
+	if regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(configHash) {
+		if err := c.removeDatabaseConfigVolume(ctx, spec.Volume+"-"+role+"-config-"+configHash[:12], identity, role); err != nil {
+			return err
+		}
+	}
+	return c.removeDatabaseConfigVolume(ctx, spec.Volume+"-"+role+"-config", identity, role)
+}

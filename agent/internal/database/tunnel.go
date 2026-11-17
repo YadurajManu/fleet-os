@@ -111,7 +111,7 @@ func (h *Handler) Handle(ctx context.Context, body []byte) {
 	switch message.Type {
 	case "db.operation":
 		if message.Operation == nil || h.operations[message.ID] != nil || h.streams[message.ID] != nil || len(h.operations) >= 2 {
-			h.fail(ctx, message.ID, "operation_rejected")
+			h.emit(ctx, Event{Type: "db.result", ID: message.ID, ErrorCode: "operation_rejected"})
 			return
 		}
 		work, cancel := context.WithTimeout(ctx, 10*time.Minute)

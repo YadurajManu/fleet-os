@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, gt, isNotNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { AppContext } from '../api/context.js'
 import { ApiError } from '../api/errors.js'
 import {
   databaseCredentials,
+  databaseBackups,
   databaseBackupTargets,
   databaseOperations,
   nodes,
@@ -624,5 +625,178 @@ export async function actOnDatabase(
     .select(operationProjection)
     .from(databaseOperations)
     .where(eq(databaseOperations.id, operation.id))
-  return { database: await databaseView(ctx, database), operation: safe! }
+  return {
+    database: await databaseView(
+      ctx,
+      await loadDatabase(ctx, database.fleetId, database.project, database.id),
+    ),
+    operation: safe!,
+  }
+}
+
+export async function deleteDatabase(
+  ctx: AppContext,
+  database: typeof tenantDatabases.$inferSelect,
+  confirmation: string,
+  backupId: string,
+  key: string,
+  actor: { orgId: string; userId: string },
+) {
+  const [replay] = await ctx.db
+    .select()
+    .from(databaseOperations)
+    .where(
+      and(
+        eq(databaseOperations.databaseId, database.id),
+        eq(databaseOperations.idempotencyKey, key),
+      ),
+    )
+  if (replay) {
+    let priorBackupId: string | undefined
+    try {
+      priorBackupId = JSON.parse(
+        openSecret(replay.encryptedInput, ctx.config.SECRETS_MASTER_KEY),
+      ).finalBackupId
+    } catch {
+      throw ApiError.conflict(
+        'idempotency_conflict',
+        'This key belongs to a different operation. Use a new key to delete this database.',
+      )
+    }
+    if (replay.kind !== 'delete' || priorBackupId !== backupId)
+      throw ApiError.conflict(
+        'idempotency_conflict',
+        'This key belongs to a different operation. Use a new key to delete this database.',
+      )
+    const [safe] = await ctx.db
+      .select(operationProjection)
+      .from(databaseOperations)
+      .where(eq(databaseOperations.id, replay.id))
+    return { database: await databaseView(ctx, database), operation: safe! }
+  }
+  if (confirmation !== database.name)
+    throw ApiError.badRequest(
+      'database_name_confirmation',
+      'Type the exact database name to confirm deletion.',
+    )
+  if (database.deletedAt || !['running', 'stopped'].includes(database.status))
+    throw ApiError.conflict(
+      'database_unavailable',
+      'Wait until the database is running or stopped before deleting it.',
+    )
+  if (!database.nodeId || !database.images.primary)
+    throw ApiError.conflict(
+      'database_identity_missing',
+      'The database runtime identity is incomplete. Inspect it before deleting.',
+    )
+  const [backup] = await ctx.db
+    .select({ id: databaseBackups.id })
+    .from(databaseBackups)
+    .where(
+      and(
+        eq(databaseBackups.id, backupId),
+        eq(databaseBackups.databaseId, database.id),
+        eq(databaseBackups.engine, database.engine),
+        eq(databaseBackups.state, 'complete'),
+        gt(databaseBackups.createdAt, new Date(Date.now() - 15 * 60 * 1000)),
+        isNotNull(databaseBackups.verifiedAt),
+        database.engine === 'postgres'
+          ? eq(databaseBackups.kind, 'logical')
+          : eq(databaseBackups.kind, 'rdb'),
+      ),
+    )
+  if (!backup)
+    throw ApiError.conflict(
+      'database_final_backup_required',
+      'Create and verify a final backup within the last 15 minutes before deleting this database.',
+    )
+  const credentials = await storedCredentials(ctx, database)
+  const intent = await runtimeIntent(
+    ctx,
+    database,
+    { primary: database.images.primary!, pooler: database.images.pooler },
+    credentials,
+    false,
+    true,
+  )
+  const operation = await enqueueDatabaseOperation(
+    ctx,
+    {
+      fleetId: database.fleetId,
+      project: database.project,
+      databaseId: database.id,
+    },
+    'delete',
+    key,
+    { ...intent, finalBackupId: backup.id },
+    'deleting',
+  )
+  await recordAudit(ctx.db, {
+    orgId: actor.orgId,
+    actorUserId: actor.userId,
+    action: 'database.delete',
+    targetType: 'database',
+    targetId: database.id,
+    metadata: { operationId: operation.id, backupId: backup.id },
+  })
+  const [safe] = await ctx.db
+    .select(operationProjection)
+    .from(databaseOperations)
+    .where(eq(databaseOperations.id, operation.id))
+  return {
+    database: await databaseView(
+      ctx,
+      await loadDatabase(ctx, database.fleetId, database.project, database.id),
+    ),
+    operation: safe!,
+  }
+}
+
+export async function restoreDeletedDatabase(
+  ctx: AppContext,
+  database: typeof tenantDatabases.$inferSelect,
+  actor: { orgId: string; userId: string },
+) {
+  if (
+    !database.deletedAt ||
+    !database.purgeAfter ||
+    database.purgeAfter <= new Date() ||
+    database.status !== 'deleting'
+  )
+    throw ApiError.conflict(
+      'database_grace_period_expired',
+      'This database is not inside its deletion grace period.',
+    )
+  const [restored] = await ctx.db
+    .update(tenantDatabases)
+    .set({
+      status: 'stopped',
+      desiredState: 'stopped',
+      deletedAt: null,
+      purgeAfter: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(tenantDatabases.id, database.id),
+        eq(tenantDatabases.status, 'deleting'),
+        isNotNull(tenantDatabases.deletedAt),
+        gt(tenantDatabases.purgeAfter, sql`clock_timestamp()`),
+      ),
+    )
+    .returning()
+  if (!restored)
+    throw ApiError.conflict(
+      'database_restore_raced',
+      'Database deletion changed while restoring. Refresh the database and retry.',
+    )
+  await recordAudit(ctx.db, {
+    orgId: actor.orgId,
+    actorUserId: actor.userId,
+    action: 'database.restored_from_deleted',
+    targetType: 'database',
+    targetId: database.id,
+    metadata: { project: database.project },
+  })
+  return { database: await databaseView(ctx, restored) }
 }

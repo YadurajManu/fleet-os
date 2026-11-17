@@ -95,7 +95,7 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 	if r.Docker == nil || r.Dir == "" || !identity.valid() || identity.NodeID != r.NodeID || identity.FleetID != r.FleetID || !databaseUUID.MatchString(operation.ID) {
 		return nil, databaseFailure("operation scope validation")
 	}
-	if operation.Action != "provision" && operation.Action != "start" && operation.Action != "stop" && operation.Action != "restart" {
+	if operation.Action != "provision" && operation.Action != "start" && operation.Action != "stop" && operation.Action != "restart" && operation.Action != "delete" {
 		return nil, databaseFailure("operation action validation")
 	}
 	if len(operation.Containers) > 2 {
@@ -166,6 +166,17 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 		}
 		if operation.Action == "stop" {
 			receipt.Complete = true
+			return receipt, r.save(receipt)
+		}
+	}
+	if operation.Action == "delete" {
+		if receipt.Phase == "prepare" {
+			for i := len(operation.Containers) - 1; i >= 0; i-- {
+				if err := r.Docker.RemoveDatabaseContainer(ctx, operation.Containers[i]); err != nil {
+					return nil, err
+				}
+			}
+			receipt.Phase, receipt.Complete = "stopped", true
 			return receipt, r.save(receipt)
 		}
 	}

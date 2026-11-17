@@ -8,6 +8,7 @@ import {
   checkpointDatabaseOperation,
   claimDatabaseOperation,
   commitDatabaseLifecycleOperation,
+  commitDatabaseDeleteOperation,
   finishDatabaseOperation,
   renewDatabaseOperation,
   type OperationClaim,
@@ -30,6 +31,7 @@ const identity = z.object({
 const intent = z
   .object({
     backupId: z.string().uuid().optional(),
+    finalBackupId: z.string().uuid().optional(),
     sourceDatabaseId: z.string().uuid().optional(),
     actorOrgId: z.string().uuid().optional(),
     actorUserId: z.string().uuid().optional(),
@@ -129,6 +131,7 @@ export class DatabaseWorker {
       'restart',
       'backup',
       'restore',
+      'delete',
     ])
     if (!claim) return false
     await this.execute(claim)
@@ -303,6 +306,59 @@ export class DatabaseWorker {
             token,
             'running',
           )
+        return
+      }
+      if (operation.kind === 'delete') {
+        const [finalBackup] = parsed.data.finalBackupId
+          ? await this.ctx.db
+              .select({
+                id: databaseBackups.id,
+                engine: databaseBackups.engine,
+                kind: databaseBackups.kind,
+                createdAt: databaseBackups.createdAt,
+                verifiedAt: databaseBackups.verifiedAt,
+              })
+              .from(databaseBackups)
+              .where(
+                and(
+                  eq(databaseBackups.id, parsed.data.finalBackupId),
+                  eq(databaseBackups.databaseId, database.id),
+                  eq(databaseBackups.state, 'complete'),
+                ),
+              )
+          : []
+        const expectedKind = database.engine === 'postgres' ? 'logical' : 'rdb'
+        if (
+          !finalBackup?.verifiedAt ||
+          finalBackup.engine !== database.engine ||
+          finalBackup.kind !== expectedKind ||
+          Date.now() - finalBackup.createdAt.getTime() > 15 * 60 * 1000 ||
+          Date.now() - finalBackup.verifiedAt.getTime() > 15 * 60 * 1000
+        )
+          throw new Error('final_backup_unavailable')
+        const runtime: DatabaseOperation = {
+          ...parsed.data,
+          id: operation.id,
+          action: 'delete',
+        }
+        await checkpointDatabaseOperation(
+          this.ctx,
+          operation.id,
+          token,
+          { step: 'execute' },
+          Math.max(operation.progress, 20),
+        )
+        const receipt = await this.tunnel.runOperation(runtime, abort.signal)
+        if (leaseLost || abort.signal.aborted) return
+        if (receipt.phase !== 'stopped') return
+        await checkpointDatabaseOperation(
+          this.ctx,
+          operation.id,
+          token,
+          { step: 'verify', completed: true },
+          Math.max(operation.progress, 90),
+        )
+        await commitDatabaseDeleteOperation(this.ctx, operation.id, token)
         return
       }
       await checkpointDatabaseOperation(

@@ -8,6 +8,8 @@ import { ApiError } from './errors.js'
 import {
   createDatabase,
   actOnDatabase,
+  deleteDatabase,
+  restoreDeletedDatabase,
   loadDatabase,
   databaseView,
   operationProjection,
@@ -422,6 +424,53 @@ export async function databaseRoutes(app: FastifyInstance) {
           userId: request.userId!,
         }),
       )
+    },
+  )
+  app.post(
+    base + '/:databaseId/delete',
+    { preHandler: requireFleetPermission('database.delete') },
+    async (request, reply) => {
+      const { fleetId, project, databaseId } = parseRequest(
+        detail,
+        request.params,
+      )
+      const body = parseRequest(
+        z
+          .object({
+            confirmation: z.string().min(1).max(128),
+            backupId: z.string().uuid(),
+          })
+          .strict(),
+        request.body,
+      )
+      const database = await loadDatabase(ctx, fleetId, project, databaseId)
+      return reply
+        .code(202)
+        .send(
+          await deleteDatabase(
+            ctx,
+            database,
+            body.confirmation,
+            body.backupId,
+            key(request),
+            { orgId: request.orgId!, userId: request.userId! },
+          ),
+        )
+    },
+  )
+  app.post(
+    base + '/:databaseId/restore-deleted',
+    { preHandler: requireFleetPermission('database.restore') },
+    async (request) => {
+      const { fleetId, project, databaseId } = parseRequest(
+        detail,
+        request.params,
+      )
+      const database = await loadDatabase(ctx, fleetId, project, databaseId)
+      return restoreDeletedDatabase(ctx, database, {
+        orgId: request.orgId!,
+        userId: request.userId!,
+      })
     },
   )
   app.get(
