@@ -16,6 +16,7 @@ import {
 import {
   databaseBackupPrefix,
   postgresEngine,
+  type EngineOptions,
 } from '../src/databases/engines.js'
 
 const dockerExec = promisify(execFile)
@@ -39,6 +40,8 @@ test(
     const bucket = 'fleet-backups'
     const fleetId = randomUUID()
     const prefix = databaseBackupPrefix('walg-test', fleetId, id, 1)
+    const restoreName = `${name}-restore`
+    const restoreVolume = `${restoreName}-data`
     const client = new S3Client({
       endpoint,
       forcePathStyle: true,
@@ -47,6 +50,7 @@ test(
       maxAttempts: 1,
     })
     let sql: ReturnType<typeof postgres> | undefined
+    let restoreSql: ReturnType<typeof postgres> | undefined
     try {
       await run('network', 'create', network)
       await run(
@@ -80,7 +84,8 @@ test(
         credentials,
         encryptionKey: randomBytes(32).toString('hex'),
       }
-      const plan = postgresEngine.plan({
+      const engineCredentials = postgresEngine.credentials()
+      const engineOptions: EngineOptions = {
         id,
         fleetId,
         project: 'walg-test',
@@ -88,13 +93,14 @@ test(
         version: '17',
         mode: 'standard',
         allocation: { memoryMb: 512, diskMb: 10240, storage: 'ssd' },
-        credentials: postgresEngine.credentials(),
+        credentials: engineCredentials,
         images: {
           primary: postgresImage,
           pooler: poolerImage,
         },
         backupTarget: target,
-      })
+      }
+      const plan = postgresEngine.plan(engineOptions)
       const database = plan.containers.find(
         (container) => container.role === 'database',
       )!
@@ -189,6 +195,25 @@ test(
         ],
         { maxBuffer: 1024 * 1024, timeout: 180000 },
       )
+      await sql`insert into wal_probe values ('point-in-time marker')`
+      const [{ pointTime }] = (await sql`
+        select to_char(clock_timestamp(), 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as "pointTime"
+      `) as [{ pointTime: string }]
+      await sql`delete from wal_probe where value = 'point-in-time marker'`
+      const [{ recoveryWal }] = (await sql`
+        select pg_walfile_name(pg_current_wal_lsn()) as "recoveryWal"
+      `) as [{ recoveryWal: string }]
+      await sql`select pg_switch_wal()`
+      const walDeadline = Date.now() + 90000
+      while (true) {
+        const [status] = await sql`
+          select last_archived_wal from pg_stat_archiver
+        `
+        if (status!.last_archived_wal === recoveryWal) break
+        if (Date.now() > walDeadline)
+          throw new Error('Postgres did not archive the PITR test WAL segment')
+        await delay(500)
+      }
       assert.match(walName!, /^[A-F0-9]{24}$/)
       await dockerExec('docker', [
         'exec',
@@ -203,6 +228,107 @@ test(
         new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix }),
       )
       assert.ok((listed.Contents?.length ?? 0) >= 2)
+      const restore = postgresEngine.restore(engineOptions, {
+        backup: 'LATEST',
+        to: {
+          type: 'time',
+          value: pointTime!.replace(/([+-]\d{2})$/, '$1:00'),
+        },
+      })
+      assert.equal(restore.type, 'wal-g')
+      if (restore.type !== 'wal-g')
+        throw new Error('expected WAL-G restore plan')
+      await run('volume', 'create', restoreVolume)
+      await run(
+        'run',
+        '--rm',
+        '--user',
+        '999:999',
+        '--entrypoint',
+        'wal-g',
+        '--network',
+        network,
+        '--mount',
+        `type=volume,src=${restoreVolume},dst=/var/lib/postgresql/data`,
+        '--mount',
+        `type=volume,src=${volume},dst=/etc/fleet,readonly`,
+        ...Object.entries(database.env).flatMap(([key, value]) => [
+          '--env',
+          `${key}=${value}`,
+        ]),
+        postgresImage,
+        ...restore.command.command.slice(1),
+      )
+      const recoveryConfig = Object.entries(restore.recovery)
+        .map(([key, value]) => `${key} = '${value.replaceAll("'", "''")}'`)
+        .join('\n')
+      const recoveryConfigBase64 =
+        Buffer.from(recoveryConfig).toString('base64')
+      await run(
+        'run',
+        '--rm',
+        '--mount',
+        `type=volume,src=${restoreVolume},dst=/var/lib/postgresql/data`,
+        postgresImage,
+        'sh',
+        '-ec',
+        `printf '%s' '${recoveryConfigBase64}' | base64 -d >> /var/lib/postgresql/data/pgdata/postgresql.auto.conf && touch /var/lib/postgresql/data/pgdata/recovery.signal && chown -R 999:999 /var/lib/postgresql/data/pgdata`,
+      )
+      await run(
+        'run',
+        '-d',
+        '--name',
+        restoreName,
+        '--network',
+        network,
+        '--mount',
+        `type=volume,src=${volume},dst=/etc/fleet,readonly`,
+        '--mount',
+        `type=volume,src=${restoreVolume},dst=/var/lib/postgresql/data`,
+        '-p',
+        '127.0.0.1::5432',
+        ...Object.entries(database.env).flatMap(([key, value]) => [
+          '--env',
+          `${key}=${value}`,
+        ]),
+        postgresImage,
+        ...database.command,
+      )
+      const restorePort = Number(
+        (await run('port', restoreName, '5432/tcp')).split(':').at(-1),
+      )
+      restoreSql = postgres({
+        host: '127.0.0.1',
+        port: restorePort,
+        username: database.env.POSTGRES_USER,
+        password: database.files.find((file) =>
+          file.path.endsWith('owner-password'),
+        )!.content,
+        database: plan.database,
+        max: 1,
+        connect_timeout: 2,
+        onnotice: () => {},
+      })
+      const restoreDeadline = Date.now() + 90000
+      while (true) {
+        try {
+          const [{ inRecovery }] = (await restoreSql`
+            select pg_is_in_recovery() as "inRecovery"
+          `) as [{ inRecovery: boolean }]
+          if (!inRecovery) break
+        } catch (error) {
+          if (Date.now() > restoreDeadline) throw error
+        }
+        if (Date.now() > restoreDeadline)
+          throw new Error('Restored Postgres did not finish PITR promotion')
+        await delay(500)
+      }
+      const recovered =
+        await restoreSql`select value from wal_probe order by value`
+      assert.deepEqual(
+        recovered.map((row) => row.value),
+        ['encrypted wal marker', 'point-in-time marker'],
+      )
       const status = await run(
         'exec',
         name,
@@ -212,10 +338,19 @@ test(
       )
       assert.equal(status, '')
     } finally {
+      await restoreSql?.end({ timeout: 1 }).catch(() => {})
       await sql?.end({ timeout: 1 }).catch(() => {})
       client.destroy()
+      await run('rm', '-f', restoreName).catch(() => {})
       await run('rm', '-f', name).catch(() => {})
-      await run('volume', 'rm', '-f', volume, `${name}-data`).catch(() => {})
+      await run(
+        'volume',
+        'rm',
+        '-f',
+        volume,
+        `${name}-data`,
+        restoreVolume,
+      ).catch(() => {})
       await run(
         'network',
         'disconnect',
