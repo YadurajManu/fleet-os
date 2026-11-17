@@ -850,6 +850,26 @@ export const databaseOperationKind = pgEnum('database_operation_kind', [
   'import', 'dump', 'migrate', 'exec', 'tune', 'extension', 'rotate', 'link', 'unlink',
 ])
 
+export const databaseBackupTargets = pgTable('database_backup_targets', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  fleetId: uuid('fleet_id').notNull().references(() => fleets.id, { onDelete: 'restrict' }),
+  project: text('project').notNull(),
+  name: text('name').notNull(),
+  endpoint: text('endpoint').notNull(),
+  bucket: text('bucket').notNull(),
+  prefix: text('prefix').notNull().default(''),
+  region: text('region').notNull().default('us-east-1'),
+  encryptedCredentials: jsonb('encrypted_credentials').$type<SealedSecret>().notNull(),
+  isDefault: boolean('is_default').notNull().default(false),
+  lastTestedAt: timestamp('last_tested_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [
+  uniqueIndex('database_backup_targets_name_idx').on(t.fleetId, t.project, t.name),
+  uniqueIndex('database_backup_targets_default_idx').on(t.fleetId, t.project).where(sql`${t.isDefault}`),
+  check('database_backup_targets_project_check', sql`length(${t.project}) between 1 and 128`),
+  check('database_backup_targets_name_check', sql`length(${t.name}) between 1 and 128`),
+])
+
 export const tenantDatabases = pgTable('tenant_databases', {
   id: uuid('id').primaryKey().defaultRandom(),
   // Removing fleet metadata must never silently discard the identity of a live volume.
@@ -866,6 +886,7 @@ export const tenantDatabases = pgTable('tenant_databases', {
   memoryMb: integer('memory_mb').notNull(),
   cpu: real('cpu').notNull(),
   diskMb: integer('disk_mb').notNull(),
+  backupTargetId: uuid('backup_target_id').references(() => databaseBackupTargets.id, { onDelete: 'set null' }),
   profile: text('profile').$type<'dev' | 'standard' | 'performance'>().notNull().default('standard'),
   config: jsonb('config').$type<Record<string, string | number>>().notNull().default({}),
   images: jsonb('images').$type<{ primary?: string; pooler?: string }>().notNull().default({}),

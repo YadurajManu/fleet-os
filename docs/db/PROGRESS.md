@@ -25,7 +25,7 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 2 | Agent stateful runtime, TCP/exec/PTY, disk, images | in progress | Image/runtime implementation underway. No complete runtime verification yet. |
 | 3 | Postgres lifecycle, placement, networking, links, pooler | in progress | Create/catalog/placement/list/detail/start/stop/restart and link/unlink API, CLI and dashboard are wired. Link tests verify encrypted role URLs and cleanup; real Docker verifies an agent-created service can query Postgres through a same-node private project network. Still missing a complete lifecycle API-to-app rollout proof, cross-node application TCP connector, delete/recover, connect/shell/exec and browser acceptance. |
 | 4 | Redis engine | in progress | `node --test --import tsx tests/database-engines.docker.ts` proves configuration behavior only; lifecycle/link API+CLI+UI are absent. |
-| 5 | Targets, backups, restore, recover, import/export | not started | No engine-consistent recovery E2E proof yet. |
+| 5 | Targets, backups, restore, recover, import/export | in progress | Migration 0045 adds project-scoped S3-compatible target metadata and an optional tenant database target reference. API, MinIO connectivity/streaming, backup operations, restore and import/export remain unimplemented. No engine-consistent recovery E2E proof yet. |
 | 6 | Release migrations, config, exec/shell/migrate | not started | No release-gate E2E proof yet. |
 | 7 | Monitoring, alerts, tuning | in progress | `node --test --import tsx tests/database-tuning.test.ts` passes; no metrics/alert product flow yet. |
 | 8 | Complete CLI | in progress | Lifecycle list/create/actions, link/unlink, loopback `db connect`, and Redis/Postgres `db exec` are wired. Interactive database shell, backup/recovery and declarative release commands remain. |
@@ -47,6 +47,11 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 9 | Old agent runs services; DB action gives upgrade-required | in progress | `node --test --import tsx tests/database-agent-capabilities.test.ts tests/database-operations.test.ts` passes old HTTP registration/heartbeat + helper refusal; old-binary service/DB E2E missing. |
 | 10 | No secrets in logs/errors/API/process args except authorized reveal | in progress | Operation input/history tests pass; complete runtime/backup/CLI/UI leak checks missing. |
 | 11 | Playwright create, backup, both restores, link, delete | not started | No browser flow proof. |
+
+## 2026-11-17 — Backup target schema foundation
+
+- Generated migration 0045 adds project-scoped S3-compatible target metadata, stores credentials only as an encrypted envelope, permits one default target per fleet/project, and adds an optional target reference to tenant databases. A database can still be created without a target, matching the design's explicit no-off-node-backup state.
+- `node control-plane/scripts/test-databases.mjs --worker` passed: migration applied, **723/723** control-plane tests, Prettier/Oxlint, TypeScript typecheck/build, `go test ./...`, and the real two-agent Docker tunnel/worker check **1/1**. The Docker transfer completed 2 MiB at 100 ms RTT in 2.87 seconds versus the 12.8-second stop-and-wait lower bound. Backup-target API/CLI/UI, MinIO connectivity and object streaming are not implemented or verified; no backup acceptance scenario is marked complete.
 
 ## V2 work and acceptance gate
 
