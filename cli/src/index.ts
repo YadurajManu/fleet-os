@@ -93,6 +93,10 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
         'db backups <database>',
         'List database backup manifests and verification state',
       ],
+      [
+        'db dump <database> <file>',
+        'Export a portable Postgres archive or Redis RDB',
+      ],
       ['db target add <project> <name>', 'Configure an encrypted S3-compatible backup target'],
       ['db target assign|test|remove <project> …', 'Assign, verify, or remove a project backup target'],
       ['databases start|stop|restart <project> <database-id>', 'Operate a managed database and follow its durable operation'],

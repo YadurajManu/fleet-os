@@ -13,6 +13,7 @@ import {
   databaseOperations,
   orgMembers,
   users,
+  auditLog,
 } from '../src/db/schema.js'
 import { buildServer } from '../src/server.js'
 import type { FastifyInstance } from 'fastify'
@@ -25,7 +26,7 @@ import {
 import { streamDatabaseProgress } from '../src/databases/progress.js'
 
 import { resolve } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import {
   randomBytes,
@@ -710,6 +711,83 @@ test(
         assert.match(Buffer.concat(postgresOutput).toString(), /1/)
         t.diagnostic(
           'authenticated CLI db exec completed Postgres SELECT 1 over the tunnel',
+        )
+        const runDump = async (databaseName: string, outputPath: string) => {
+          const dumpProcess = spawn(
+            'node',
+            [
+              '--import',
+              'tsx',
+              'src/index.ts',
+              'db',
+              'dump',
+              databaseName,
+              outputPath,
+              '--project',
+              identity.project,
+            ],
+            {
+              cwd: '../cli',
+              env: {
+                ...process.env,
+                FLEET_API: apiUrl,
+                FLEET_TOKEN: account.accessToken,
+                FLEET_ID: fleetId,
+                FLEET_CONFIG: `/tmp/fleet-db-dump-${id}-${databaseName}.json`,
+              },
+              stdio: ['ignore', 'pipe', 'pipe'],
+            },
+          )
+          const stdout: Buffer[] = []
+          const stderr: Buffer[] = []
+          dumpProcess.stdout?.on('data', (chunk) =>
+            stdout.push(Buffer.from(chunk)),
+          )
+          dumpProcess.stderr?.on('data', (chunk) =>
+            stderr.push(Buffer.from(chunk)),
+          )
+          const [exitCode] = await once(dumpProcess, 'exit')
+          return {
+            exitCode,
+            stdout: Buffer.concat(stdout),
+            stderr: Buffer.concat(stderr),
+          }
+        }
+        const dump = async (databaseName: string, extension: string) => {
+          const outputPath = `/tmp/fleet-db-${id}-${databaseName}.${extension}`
+          const result = await runDump(databaseName, outputPath)
+          assert.equal(result.exitCode, 0, result.stderr.toString())
+          assert.match(result.stdout.toString(), /Database dump saved/)
+          const mode = statSync(outputPath).mode & 0o777
+          assert.equal(mode, 0o600)
+          const data = readFileSync(outputPath)
+          unlinkSync(outputPath)
+          return data
+        }
+        const pgDump = await dump('tunnel-postgres', 'dump')
+        assert.equal(pgDump.subarray(0, 5).toString(), 'PGDMP')
+        const redisDump = await dump('tunnel', 'rdb')
+        assert.equal(redisDump.subarray(0, 5).toString(), 'REDIS')
+        const exportAudit = await workerContext!.db
+          .select()
+          .from(auditLog)
+          .where(eq(auditLog.action, 'database.export.started'))
+        assert.equal(exportAudit.length, 2)
+        assert.deepEqual(
+          exportAudit.map((entry) => entry.metadata?.format).sort(),
+          ['pg_dump_custom', 'redis_rdb'],
+        )
+        const existingPath = `/tmp/fleet-db-${id}-existing.dump`
+        writeFileSync(existingPath, 'preserve existing file')
+        const refusedDump = await runDump('tunnel-postgres', existingPath)
+        assert.notEqual(refusedDump.exitCode, 0)
+        assert.equal(
+          readFileSync(existingPath, 'utf8'),
+          'preserve existing file',
+        )
+        unlinkSync(existingPath)
+        t.diagnostic(
+          'CLI streamed real Postgres custom and Redis RDB exports to mode-0600 files',
         )
         const postgresPortProbe = createTCPServer()
         postgresPortProbe.listen(0, '127.0.0.1')
