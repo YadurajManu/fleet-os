@@ -294,6 +294,11 @@ export const postgresEngine: DatabaseEnginePlugin = {
           AWS_REGION: backup.region,
           AWS_ENDPOINT: backup.endpoint,
           AWS_S3_FORCE_PATH_STYLE: 'true',
+          PGHOST: '/var/run/postgresql',
+          PGPORT: '5432',
+          PGUSER: options.credentials.owner.username,
+          PGDATABASE: database,
+          PGPASSFILE: '/etc/fleet/walg.pgpass',
         }
       : {}
     const walGFiles = backup
@@ -304,6 +309,11 @@ export const postgresEngine: DatabaseEnginePlugin = {
             true,
           ),
           file('/etc/fleet/walg-key', backup.encryptionKey, true),
+          file(
+            '/etc/fleet/walg.pgpass',
+            `localhost:5432:${database}:${options.credentials.owner.username}:${options.credentials.owner.password}\n`,
+            true,
+          ),
         ]
       : []
     return {

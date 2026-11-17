@@ -166,6 +166,7 @@ try {
     ...(minio
       ? {
           FLEET_DB_MINIO_ENDPOINT: `http://${minio}`,
+          FLEET_DB_MINIO_CONTAINER: `${prefix}-minio`,
           FLEET_DB_MINIO_ACCESS_KEY: minioAccessKey,
           FLEET_DB_MINIO_SECRET_KEY: minioSecretKey,
         }
@@ -221,11 +222,20 @@ try {
           ...env,
           FLEET_DB_WORKER_TEST: '1',
           ...(process.argv.includes('--backup')
-            ? { FLEET_DB_BACKUP_TEST: '1' }
+            ? {
+                FLEET_DB_BACKUP_TEST: '1',
+                FLEET_DB_MINIO_CONTAINER: `${prefix}-minio`,
+              }
             : {}),
         },
       },
     )
+    if (process.argv.includes('--backup'))
+      await run(
+        'node',
+        ['--test', '--import', 'tsx', 'tests/database-walg.docker.ts'],
+        { cwd: resolve(root, 'control-plane'), env },
+      )
   } else if (
     !process.argv.includes('--unit-only') &&
     !process.argv.includes('--target-only')

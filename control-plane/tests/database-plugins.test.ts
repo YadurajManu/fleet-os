@@ -133,7 +133,11 @@ test('Postgres WAL archive plan keeps object credentials and encryption key in s
   assert.equal(database.env.AWS_ENDPOINT, input.backupTarget.endpoint)
   assert.ok(!JSON.stringify(database.env).includes('test-secret-value'))
   assert.ok(!JSON.stringify(database.command).includes('test-access'))
-  for (const path of ['/etc/fleet/aws-credentials', '/etc/fleet/walg-key']) {
+  for (const path of [
+    '/etc/fleet/aws-credentials',
+    '/etc/fleet/walg-key',
+    '/etc/fleet/walg.pgpass',
+  ]) {
     const secret = database.files.find((entry) => entry.path === path)!
     assert.equal(secret.secret, true)
     assert.equal(secret.mode, 0o600)
@@ -142,6 +146,10 @@ test('Postgres WAL archive plan keeps object credentials and encryption key in s
     database.files.find((entry) => entry.path === '/etc/fleet/aws-credentials')!
       .content,
     /aws_session_token=test-session-token/,
+  )
+  assert.equal(database.env.PGPASSFILE, '/etc/fleet/walg.pgpass')
+  assert.ok(
+    !JSON.stringify(database.env).includes(input.credentials.owner.password),
   )
   const withoutTarget = postgresEngine.plan(options('postgres')).containers[0]!
   assert.equal(withoutTarget.env.WALG_S3_PREFIX, undefined)
