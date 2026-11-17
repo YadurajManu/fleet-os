@@ -319,6 +319,10 @@ func (c *Client) ReconfigureDatabaseContainer(ctx context.Context, spec Database
 }
 
 func (c *Client) removeDatabaseConfigVolume(ctx context.Context, name string, identity DatabaseIdentity, role string) error {
+	return c.removeDatabaseVolume(ctx, name, identity, "config-"+role)
+}
+
+func (c *Client) removeDatabaseVolume(ctx context.Context, name string, identity DatabaseIdentity, role string) error {
 	var volume struct {
 		Labels map[string]string `json:"Labels"`
 	}
@@ -326,12 +330,12 @@ func (c *Client) removeDatabaseConfigVolume(ctx context.Context, name string, id
 	if IsNotFound(err) {
 		return nil
 	}
-	if err != nil || !ownedDatabase(volume.Labels, identity, "config-"+role, false) {
-		return databaseFailure("old configuration volume ownership check")
+	if err != nil || !ownedDatabase(volume.Labels, identity, role, false) {
+		return databaseFailure("database volume ownership check")
 	}
 	err = c.do(ctx, http.MethodDelete, "/"+c.api(ctx)+"/volumes/"+url.PathEscape(name), nil, nil)
 	if err != nil && !IsNotFound(err) {
-		return databaseFailure("old configuration volume cleanup")
+		return databaseFailure("database volume cleanup")
 	}
 	return nil
 }
@@ -369,7 +373,7 @@ func validateDatabaseRestore(operation DatabaseOperation) (DatabaseContainerSpec
 	return spec, nil
 }
 
-// RestoreDatabaseVolume fetches a verified WAL-G backup into an owned, stopped database volume.
+// RestoreDatabaseVolume retains the current data directory until the restored database passes readiness.
 func (c *Client) RestoreDatabaseVolume(ctx context.Context, operation DatabaseOperation) error {
 	spec, err := validateDatabaseRestore(operation)
 	if err != nil {
@@ -381,6 +385,13 @@ func (c *Client) RestoreDatabaseVolume(ctx context.Context, operation DatabaseOp
 		return databaseFailure("restore container ownership or stopped-state check")
 	}
 	if err := c.ensureDatabaseVolume(ctx, spec.Volume, spec.Identity, "data", false); err != nil {
+		return err
+	}
+	backupVolume := spec.Volume + "-restore-backup-" + operation.ID[:12]
+	if err := c.ensureDatabaseVolume(ctx, backupVolume, spec.Identity, "restore-backup", true); err != nil {
+		return err
+	}
+	if err := c.prepareRestoreBackupVolume(ctx, spec, backupVolume, operation.ID[:12]); err != nil {
 		return err
 	}
 
@@ -411,14 +422,17 @@ func (c *Client) RestoreDatabaseVolume(ctx context.Context, operation DatabaseOp
 		settings += "recovery_target_name = '" + restore.TargetName + "'\n"
 	}
 	encodedSettings := base64.StdEncoding.EncodeToString([]byte(settings))
-	script := "rm -rf /var/lib/postgresql/data/pgdata && wal-g backup-fetch /var/lib/postgresql/data/pgdata " + restore.BackupName +
-		" && printf '%s' '" + encodedSettings + "' | base64 -d >> /var/lib/postgresql/data/pgdata/postgresql.auto.conf && touch /var/lib/postgresql/data/pgdata/recovery.signal"
+	script := "if [ ! -f /restore/original/PG_VERSION ]; then rm -rf /restore/.pending && mkdir -p /restore/.pending && cp -a /var/lib/postgresql/data/pgdata/. /restore/.pending/ && test -f /restore/.pending/PG_VERSION && mv /restore/.pending /restore/original; fi; " +
+		"rm -rf /var/lib/postgresql/data/pgdata && mkdir -p /var/lib/postgresql/data/pgdata; " +
+		"if wal-g backup-fetch /var/lib/postgresql/data/pgdata " + restore.BackupName +
+		"; then printf '%s' '" + encodedSettings + "' | base64 -d >> /var/lib/postgresql/data/pgdata/postgresql.auto.conf && touch /var/lib/postgresql/data/pgdata/recovery.signal; " +
+		"else rm -rf /var/lib/postgresql/data/pgdata && mkdir -p /var/lib/postgresql/data/pgdata && cp -a /restore/original/. /var/lib/postgresql/data/pgdata/ && exit 1; fi"
 	name := DatabaseContainerName(spec.Identity.ID, "restore-"+operation.ID[:12])
 	labels := databaseLabels(spec.Identity, "restore")
 	var created createResponse
 	if err := c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/create?name="+url.QueryEscape(name)+"&platform="+url.QueryEscape(spec.Platform), map[string]any{
 		"Image": spec.Container.Image, "Entrypoint": []string{"/bin/sh"}, "Cmd": []string{"-ec", script}, "Env": environment(restore.Env), "User": "999:999", "Labels": labels,
-		"HostConfig": map[string]any{"NetworkMode": spec.Network, "Mounts": []mount{{Type: "volume", Source: configVolume, Target: "/etc/fleet", ReadOnly: true}, {Type: "volume", Source: spec.Volume, Target: spec.DataPath}}},
+		"HostConfig": map[string]any{"NetworkMode": spec.Network, "Mounts": []mount{{Type: "volume", Source: configVolume, Target: "/etc/fleet", ReadOnly: true}, {Type: "volume", Source: spec.Volume, Target: spec.DataPath}, {Type: "volume", Source: backupVolume, Target: "/restore"}}},
 	}, &created); err != nil {
 		return databaseFailure("restore helper creation")
 	}
@@ -437,6 +451,96 @@ func (c *Client) RestoreDatabaseVolume(ctx context.Context, operation DatabaseOp
 		return databaseFailure("WAL-G restore")
 	}
 	return nil
+}
+
+func (c *Client) prepareRestoreBackupVolume(ctx context.Context, spec DatabaseContainerSpec, volume, suffix string) error {
+	name := DatabaseContainerName(spec.Identity.ID, "restore-volume-"+suffix)
+	if existing, err := c.Inspect(ctx, name); err == nil {
+		if existing.Running || !ownedDatabase(existing.Labels, spec.Identity, "restore-volume", true) {
+			return databaseFailure("restore volume helper ownership")
+		}
+		if err := c.Remove(ctx, existing.ID); err != nil {
+			return databaseFailure("restore volume helper cleanup")
+		}
+	} else if !IsNotFound(err) {
+		return databaseFailure("restore volume helper inspection")
+	}
+	var created createResponse
+	if err := c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/create?name="+url.QueryEscape(name)+"&platform="+url.QueryEscape(spec.Platform), map[string]any{
+		"Image": spec.Container.Image, "Entrypoint": []string{"/bin/sh"}, "Cmd": []string{"-ec", "chown 999:999 /restore"}, "Labels": databaseLabels(spec.Identity, "restore-volume"),
+		"HostConfig": map[string]any{"NetworkMode": "none", "Mounts": []mount{{Type: "volume", Source: volume, Target: "/restore"}}},
+	}, &created); err != nil {
+		return databaseFailure("restore volume helper creation")
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = c.Remove(cleanup, name)
+	}()
+	if err := c.Start(ctx, created.ID); err != nil {
+		return databaseFailure("restore volume helper start")
+	}
+	var result struct {
+		StatusCode int `json:"StatusCode"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/"+created.ID+"/wait?condition=not-running", nil, &result); err != nil || result.StatusCode != 0 {
+		return databaseFailure("restore volume permissions")
+	}
+	return nil
+}
+
+func (c *Client) RollbackDatabaseRestore(ctx context.Context, operation DatabaseOperation) error {
+	spec, err := validateDatabaseRestore(operation)
+	if err != nil {
+		return err
+	}
+	backupVolume := spec.Volume + "-restore-backup-" + operation.ID[:12]
+	if err := c.ensureDatabaseVolume(ctx, spec.Volume, spec.Identity, "data", false); err != nil {
+		return err
+	}
+	var volume struct {
+		Labels map[string]string `json:"Labels"`
+	}
+	err = c.do(ctx, http.MethodGet, "/"+c.api(ctx)+"/volumes/"+url.PathEscape(backupVolume), nil, &volume)
+	if IsNotFound(err) {
+		return nil
+	}
+	if err != nil || !ownedDatabase(volume.Labels, spec.Identity, "restore-backup", false) {
+		return databaseFailure("restore rollback volume ownership")
+	}
+	name := DatabaseContainerName(spec.Identity.ID, "restore-rollback-"+operation.ID[:12])
+	script := "if [ ! -f /restore/original/PG_VERSION ]; then exit 0; fi; rm -rf /data/pgdata && mkdir -p /data/pgdata && cp -a /restore/original/. /data/pgdata/"
+	var created createResponse
+	if err := c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/create?name="+url.QueryEscape(name)+"&platform="+url.QueryEscape(spec.Platform), map[string]any{
+		"Image": spec.Container.Image, "Entrypoint": []string{"/bin/sh"}, "Cmd": []string{"-ec", script}, "User": "999:999", "Labels": databaseLabels(spec.Identity, "restore"),
+		"HostConfig": map[string]any{"NetworkMode": "none", "Mounts": []mount{{Type: "volume", Source: spec.Volume, Target: "/data"}, {Type: "volume", Source: backupVolume, Target: "/restore", ReadOnly: true}}},
+	}, &created); err != nil {
+		return databaseFailure("restore rollback helper creation")
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = c.Remove(cleanup, name)
+	}()
+	if err := c.Start(ctx, created.ID); err != nil {
+		return databaseFailure("restore rollback helper start")
+	}
+	var result struct {
+		StatusCode int `json:"StatusCode"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/"+created.ID+"/wait?condition=not-running", nil, &result); err != nil || result.StatusCode != 0 {
+		return databaseFailure("restore rollback")
+	}
+	return nil
+}
+
+func (c *Client) CommitDatabaseRestore(ctx context.Context, operation DatabaseOperation) error {
+	spec, err := validateDatabaseRestore(operation)
+	if err != nil {
+		return err
+	}
+	backupVolume := spec.Volume + "-restore-backup-" + operation.ID[:12]
+	return c.removeDatabaseVolume(ctx, backupVolume, spec.Identity, "restore-backup")
 }
 
 func environment(values map[string]string) []string {

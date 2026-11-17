@@ -65,7 +65,7 @@ const workerMode = process.env.FLEET_DB_WORKER_TEST === '1'
 const docker = (args: string[]) =>
   execFileSync('docker', args, {
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim()
 async function until(check: () => boolean) {
   const end = Date.now() + 30000
@@ -696,6 +696,81 @@ test(
               "SELECT count(*) FROM pg_class WHERE relname = 'pitr_marker'",
             ]),
             '0',
+          )
+          docker([
+            'exec',
+            '-e',
+            `PGPASSWORD=${postgresCredentials.owner.password}`,
+            `fleet-db-${postgresId}-database`,
+            'psql',
+            '-X',
+            '-v',
+            'ON_ERROR_STOP=1',
+            '-U',
+            postgresCredentials.owner.username,
+            '-d',
+            'tunnel_postgres',
+            '-c',
+            "CREATE TABLE restore_rollback_marker (value text); INSERT INTO restore_rollback_marker VALUES ('keep-current-data');",
+          ])
+          await workerContext.db
+            .update(databaseBackups)
+            .set({
+              recoveryPoint: {
+                ...baseBackup!.recoveryPoint,
+                backupName: 'base_missing_restore_rollback_test',
+              },
+            })
+            .where(eq(databaseBackups.id, baseBackupId))
+          const failedPitr = await api.inject({
+            method: 'POST',
+            url: `${backupUrl}/${baseBackupId}/restore`,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+            payload: {
+              targetDatabaseId: postgresId,
+              confirmation: 'tunnel-postgres',
+            },
+          })
+          assert.equal(failedPitr.statusCode, 202, failedPitr.body)
+          assert.equal(await worker.tick(), true)
+          const [failedPitrOperation] = await workerContext.db
+            .select({ state: databaseOperations.state })
+            .from(databaseOperations)
+            .where(eq(databaseOperations.id, failedPitr.json().operationId))
+          assert.equal(failedPitrOperation!.state, 'failed')
+          await workerContext.db
+            .update(databaseBackups)
+            .set({ recoveryPoint: baseBackup!.recoveryPoint })
+            .where(eq(databaseBackups.id, baseBackupId))
+          const [rolledBackDatabase] = await workerContext.db
+            .select({ status: tenantDatabases.status })
+            .from(tenantDatabases)
+            .where(eq(tenantDatabases.id, postgresId))
+          assert.equal(rolledBackDatabase!.status, 'running')
+          assert.equal(
+            docker([
+              'exec',
+              '-e',
+              `PGPASSWORD=${postgresCredentials.owner.password}`,
+              `fleet-db-${postgresId}-database`,
+              'psql',
+              '-X',
+              '-A',
+              '-t',
+              '-U',
+              postgresCredentials.owner.username,
+              '-d',
+              'tunnel_postgres',
+              '-c',
+              'SELECT value FROM restore_rollback_marker',
+            ]),
+            'keep-current-data',
+          )
+          t.diagnostic(
+            'failed WAL-G fetch restored the original data volume and kept the database running',
           )
           t.diagnostic(
             'verified Fleet-managed WAL-G point-in-time restore in the owned PostgreSQL volume',

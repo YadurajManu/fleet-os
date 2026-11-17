@@ -473,13 +473,18 @@ export class DatabaseWorker {
         token,
         status,
       )
-    } catch {
+    } catch (error) {
       if (operation.kind === 'restore')
         await finishDatabaseOperation(
           this.ctx,
           operation.id,
           token,
-          'runtime_failed',
+          error instanceof Error &&
+            error.message.includes(
+              '(operation_restore_failed_previous_data_was_restored)',
+            )
+            ? 'restore_rolled_back'
+            : 'runtime_failed',
         )
       if (operation.kind === 'backup') {
         const parsedInput = intent.safeParse(claim.input)

@@ -36,12 +36,14 @@ export type OperationFailure =
   | 'deadline_exceeded'
   | 'retry_limit'
   | 'generation_changed'
+  | 'restore_rolled_back'
 const failureSchema = z.enum([
   'runtime_failed',
   'agent_disconnected',
   'deadline_exceeded',
   'retry_limit',
   'generation_changed',
+  'restore_rolled_back',
 ])
 
 // Canonical JSON makes retry identity independent of object key insertion order.
@@ -404,7 +406,12 @@ export async function finishDatabaseOperation(
       await tx
         .update(tenantDatabases)
         .set({
-          status: row.progress >= 30 ? 'failed' : 'running',
+          status:
+            errorCode === 'restore_rolled_back'
+              ? 'running'
+              : row.progress >= 30
+                ? 'failed'
+                : 'running',
           desiredState: 'running',
           updatedAt: sql`clock_timestamp()`,
         })
