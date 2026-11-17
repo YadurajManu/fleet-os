@@ -22,6 +22,12 @@ import {
   listDatabaseLinks,
   unlinkDatabase,
 } from '../databases/links.js'
+import {
+  backupTargetInput,
+  createBackupTarget,
+  deleteBackupTarget,
+  listBackupTargets,
+} from '../databases/backup-targets.js'
 
 const scope = z.object({
   fleetId: z.string().uuid(),
@@ -104,6 +110,44 @@ export async function databaseRoutes(app: FastifyInstance) {
     },
   )
   const base = '/fleets/:fleetId/projects/:project/databases'
+  const targets = '/fleets/:fleetId/projects/:project/backup-targets'
+  app.get(
+    targets,
+    { preHandler: requireFleetPermission('database.read') },
+    async (request) => {
+      const { fleetId, project } = parseRequest(scope, request.params)
+      return { targets: await listBackupTargets(ctx, fleetId, project) }
+    },
+  )
+  app.post(
+    targets,
+    { preHandler: requireFleetPermission('database.target') },
+    async (request, reply) => {
+      const { fleetId, project } = parseRequest(scope, request.params)
+      const input = parseRequest(backupTargetInput, request.body)
+      return reply.code(201).send(
+        await createBackupTarget(ctx, fleetId, project, input, {
+          orgId: request.orgId!,
+          userId: request.userId!,
+        }),
+      )
+    },
+  )
+  app.delete(
+    targets + '/:targetId',
+    { preHandler: requireFleetPermission('database.target') },
+    async (request) => {
+      const { fleetId, project } = parseRequest(scope, request.params)
+      const { targetId } = parseRequest(
+        z.object({ targetId: z.string().uuid() }),
+        request.params,
+      )
+      return deleteBackupTarget(ctx, fleetId, project, targetId, {
+        orgId: request.orgId!,
+        userId: request.userId!,
+      })
+    },
+  )
   app.get(
     base + '/:databaseId/links',
     { preHandler: requireFleetPermission('database.read') },
