@@ -410,3 +410,34 @@ export async function databaseOperationHistory(
     .orderBy(asc(events.id))
     .limit(limit)
 }
+
+/** Commit physical lifecycle confirmation and operation completion in the same transaction. */
+export async function commitDatabaseLifecycleOperation(
+  ctx: Context,
+  id: string,
+  token: string,
+  status: 'running' | 'stopped',
+): Promise<void> {
+  await ctx.db.transaction(async (tx) => {
+    const [operation] = await tx
+      .update(operations)
+      .set({
+        state: 'succeeded',
+        progress: 100,
+        errorCode: null,
+        finishedAt: sql`clock_timestamp()`,
+        leaseToken: null,
+        leaseExpiresAt: null,
+      })
+      .where(ownedLease(id, token))
+      .returning({ databaseId: operations.databaseId })
+    assertOwned(operation)
+    await tx
+      .update(tenantDatabases)
+      .set({ status, desiredState: status, updatedAt: sql`clock_timestamp()` })
+      .where(eq(tenantDatabases.id, operation.databaseId))
+    await tx
+      .insert(events)
+      .values({ operationId: id, code: 'succeeded', progress: 100 })
+  })
+}

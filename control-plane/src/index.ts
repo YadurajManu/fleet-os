@@ -6,6 +6,7 @@ import { buildServer } from './server.js'
 import { startSweeper } from './heartbeat/sweeper.js'
 import { startJanitor } from './janitor.js'
 import { dispatchEvent } from './alerting/dispatch.js'
+import { DatabaseWorker } from './databases/worker.js'
 import { startIngress } from './ingress/proxy.js'
 
 const config = loadConfig()
@@ -37,6 +38,8 @@ const sweeper = startSweeper(ctx, {
 
 // Account deletions past their grace period, and expired token cleanup.
 const janitor = startJanitor(ctx, app.log)
+const databaseWorker = new DatabaseWorker(ctx)
+databaseWorker.start(app.log)
 
 // The public edge listens separately from the API: this port faces the
 // internet, and the control-plane API must not.
@@ -51,6 +54,7 @@ const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutting down')
   sweeper.stop()
   janitor.stop()
+  await databaseWorker.close()
   await ingress?.close()
   await app.close()
   await closeContext(ctx)

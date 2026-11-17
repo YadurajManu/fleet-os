@@ -1,4 +1,21 @@
 import test from 'node:test'
+import { eq, sql } from 'drizzle-orm'
+import { createContext, closeContext } from '../src/api/context.js'
+import { loadConfig } from '../src/config.js'
+import {
+  orgs,
+  fleets,
+  nodes,
+  tenantDatabases,
+  databaseOperations,
+} from '../src/db/schema.js'
+import { DatabaseWorker } from '../src/databases/worker.js'
+import {
+  enqueueDatabaseOperation,
+  claimDatabaseOperation,
+} from '../src/databases/operations.js'
+import { streamDatabaseProgress } from '../src/databases/progress.js'
+
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
@@ -14,6 +31,7 @@ import { DatabaseTunnel } from '../src/databases/tunnel.js'
 import { redisEngine } from '../src/databases/engines.js'
 import type { AppContext } from '../src/api/context.js'
 
+const workerMode = process.env.FLEET_DB_WORKER_TEST === '1'
 const docker = (args: string[]) =>
   execFileSync('docker', args, {
     encoding: 'utf8',
@@ -41,6 +59,7 @@ test(
   'real agents and Docker service transfer private Redis traffic, drop and reconnect at 100 ms RTT',
   { timeout: 240000 },
   async (t) => {
+    const fixtureConfig = workerMode ? loadConfig() : null
     const fleetId = randomUUID(),
       nodeId = randomUUID(),
       serviceNodeId = randomUUID(),
@@ -87,7 +106,7 @@ test(
       'image',
       'inspect',
       '--format',
-      '{{.Id}}',
+      '{{index .RepoDigests 0}}',
       'fleet-db-build/redis:7',
     ])
     const identity = {
@@ -97,6 +116,10 @@ test(
       project: 'tunnel-e2e',
       generation: 1,
     }
+    const workerContext = fixtureConfig ? createContext(fixtureConfig) : null
+    const orgId = randomUUID()
+    if (workerContext) workerContext.tunnels = registry
+    let worker: DatabaseWorker | undefined
     const credentials = redisEngine.credentials()
     const platform = `linux/${process.arch === 'arm64' ? 'arm64' : 'amd64'}`
     const plan = redisEngine.plan({
@@ -150,12 +173,48 @@ test(
         peers.push(child)
       }
       await until(() => registry.has(nodeId) && registry.has(serviceNodeId))
-      await relay.runOperation(
-        {
-          id: randomUUID(),
-          action: 'provision',
+      if (workerContext) {
+        const [current] = await workerContext.sql<
+          { name: string }[]
+        >`select current_database() as name`
+        assert.match(current!.name, /(?:^test_|_test$)/)
+        await workerContext.db
+          .insert(orgs)
+          .values({ id: orgId, name: 'worker-fixture' })
+        await workerContext.db
+          .insert(fleets)
+          .values({ id: fleetId, orgId, name: 'worker-fixture' })
+        await workerContext.db.insert(nodes).values({
+          id: nodeId,
+          fleetId,
+          name: 'database-node',
+          cpuCores: 2,
+          ramMb: 4096,
+          diskMb: 100000,
+          agentTokenHash: createHash('sha256')
+            .update(token + '-db')
+            .digest('hex'),
+          arch: process.arch,
+          databaseCapabilities: ['database.runtime.v1'],
+        })
+        await workerContext.db.insert(tenantDatabases).values({
+          id,
+          fleetId,
+          project: identity.project,
+          name: 'tunnel',
+          engine: 'redis',
+          version: '7',
+          mode: 'durable',
+          nodeId,
+          volumeName: `fleet-db-${id}-data`,
+          memoryMb: 512,
+          cpu: 0.5,
+          diskMb: 10240,
+        })
+        const scope = { fleetId, project: identity.project, databaseId: id }
+        const runtimeIntent = {
           identity,
-          readiness: plan.readiness,
+          readiness: { ...plan.readiness, stdin: plan.readiness.stdin ?? '' },
           containers: plan.containers.map((container) => ({
             initialize: true,
             identity,
@@ -166,9 +225,105 @@ test(
             cpu: 0.5,
             container,
           })),
-        },
-        new AbortController().signal,
-      )
+        }
+        const created = await enqueueDatabaseOperation(
+          workerContext,
+          scope,
+          'create',
+          'create',
+          runtimeIntent,
+        )
+        worker = new DatabaseWorker(workerContext)
+        assert.equal(await worker.tick(), true)
+        const [finished] = await workerContext.db
+          .select()
+          .from(databaseOperations)
+          .where(eq(databaseOperations.id, created.id))
+        assert.equal(finished!.state, 'succeeded')
+        const restartIntent = {
+          identity,
+          readiness: { ...plan.readiness, stdin: plan.readiness.stdin ?? '' },
+        }
+        const restart = await enqueueDatabaseOperation(
+          workerContext,
+          scope,
+          'restart',
+          'restart',
+          restartIntent,
+        )
+        const claimed = await claimDatabaseOperation(workerContext, ['restart'])
+        assert.equal(claimed!.operation.id, restart.id)
+        await relay.runOperation(
+          { ...restartIntent, id: restart.id, action: 'restart' },
+          new AbortController().signal,
+        )
+        const startedAt = docker([
+          'inspect',
+          '--format',
+          '{{.State.StartedAt}}',
+          `fleet-db-${id}-database`,
+        ])
+        await worker.close()
+        await workerContext.db
+          .update(databaseOperations)
+          .set({ leaseExpiresAt: sql`clock_timestamp() - interval '1 second'` })
+          .where(eq(databaseOperations.id, restart.id))
+        worker = new DatabaseWorker(workerContext)
+        assert.equal(await worker.tick(), true)
+        const [resumed] = await workerContext.db
+          .select()
+          .from(databaseOperations)
+          .where(eq(databaseOperations.id, restart.id))
+        assert.equal(resumed!.state, 'succeeded')
+        assert.equal(resumed!.attempts, 2)
+        assert.equal(
+          docker([
+            'inspect',
+            '--format',
+            '{{.State.StartedAt}}',
+            `fleet-db-${id}-database`,
+          ]),
+          startedAt,
+        )
+        const abort = new AbortController()
+        const progress = []
+        for await (const event of streamDatabaseProgress(
+          workerContext,
+          scope,
+          abort.signal,
+        )) {
+          progress.push(event)
+          if (event.operationId === restart.id && event.code === 'succeeded') {
+            abort.abort()
+            break
+          }
+        }
+        assert.ok(progress.some((event) => event.code === 'checkpoint'))
+        assert.equal(progress.at(-1)!.progress, 100)
+        assert.ok(
+          !JSON.stringify(progress).includes(credentials.owner.password),
+        )
+      } else {
+        await relay.runOperation(
+          {
+            id: randomUUID(),
+            action: 'provision',
+            identity,
+            readiness: plan.readiness,
+            containers: plan.containers.map((container) => ({
+              initialize: true,
+              identity,
+              network: plan.network,
+              volume: `fleet-db-${id}-data`,
+              dataPath: plan.dataPath,
+              platform,
+              cpu: 0.5,
+              container,
+            })),
+          },
+          new AbortController().signal,
+        )
+      }
       const auth = resp([
         Buffer.from('AUTH'),
         Buffer.from(credentials.app.username),
@@ -267,6 +422,7 @@ test(
       await until(() => registry.has(nodeId))
       await transfer()
     } finally {
+      await worker?.close()
       relay.close()
       registry.close(nodeId)
       registry.close(serviceNodeId)
@@ -296,6 +452,13 @@ test(
       try {
         docker(['network', 'rm', plan.network])
       } catch {}
+      if (workerContext) {
+        await workerContext.db
+          .delete(tenantDatabases)
+          .where(eq(tenantDatabases.id, id))
+        await workerContext.db.delete(orgs).where(eq(orgs.id, orgId))
+        await closeContext(workerContext)
+      }
     }
   },
 )

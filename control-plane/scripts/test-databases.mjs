@@ -85,6 +85,11 @@ try {
   assert.match(redis, /^127\.0\.0\.1:[0-9]+$/)
   const env = {
     ...process.env,
+    NODE_ENV: 'test',
+    JWT_SECRET: randomBytes(32).toString('base64url'),
+    SECRETS_MASTER_KEY: randomBytes(32).toString('base64'),
+    LOG_LEVEL: 'error',
+    BUILD_MODE: 'local',
     DATABASE_URL: `postgres://postgres:${password}@${pg}/fleet_databases_test`,
     REDIS_URL: `redis://${redis}/15`,
   }
@@ -102,19 +107,27 @@ try {
       await delay(250)
     }
   }
-  for (const script of [
-    'db:format:check',
-    'db:lint',
-    'test',
-    'typecheck',
-    'build',
-  ])
+  for (const script of process.argv.includes('--worker-only')
+    ? ['pretest']
+    : ['db:format:check', 'db:lint', 'test', 'typecheck', 'build'])
     await run('npm', ['run', script], {
       cwd: resolve(root, 'control-plane'),
       env,
     })
   await run('go', ['test', './...'], { cwd: resolve(root, 'agent') })
-  if (!process.argv.includes('--unit-only'))
+  if (
+    process.argv.includes('--worker') ||
+    process.argv.includes('--worker-only')
+  ) {
+    await run(
+      'node',
+      ['--test', '--import', 'tsx', 'tests/database-tunnel.docker.ts'],
+      {
+        cwd: resolve(root, 'control-plane'),
+        env: { ...env, FLEET_DB_WORKER_TEST: '1' },
+      },
+    )
+  } else if (!process.argv.includes('--unit-only'))
     await run(
       'node',
       [
