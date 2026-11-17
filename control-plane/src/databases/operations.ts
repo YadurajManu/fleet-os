@@ -218,13 +218,11 @@ export async function claimDatabaseOperation(
           leaseExpiresAt: null,
         })
         .where(eq(operations.id, operation.id))
-      await tx
-        .insert(events)
-        .values({
-          operationId: operation.id,
-          code: errorCode,
-          progress: operation.progress,
-        })
+      await tx.insert(events).values({
+        operationId: operation.id,
+        code: errorCode,
+        progress: operation.progress,
+      })
       return null
     }
     const token = randomUUID()
@@ -240,13 +238,11 @@ export async function claimDatabaseOperation(
       })
       .where(eq(operations.id, operation.id))
       .returning()
-    await tx
-      .insert(events)
-      .values({
-        operationId: operation.id,
-        code: resumed ? 'reconciling' : 'claimed',
-        progress: operation.progress,
-      })
+    await tx.insert(events).values({
+      operationId: operation.id,
+      code: resumed ? 'reconciling' : 'claimed',
+      progress: operation.progress,
+    })
     return { operation: row!, token, resumed }
   })
   if (!claimed) return null
@@ -367,13 +363,11 @@ export async function finishDatabaseOperation(
       .where(ownedLease(id, token))
       .returning({ progress: operations.progress })
     assertOwned(row)
-    await tx
-      .insert(events)
-      .values({
-        operationId: id,
-        code: errorCode ? 'failed' : 'succeeded',
-        progress: row.progress,
-      })
+    await tx.insert(events).values({
+      operationId: id,
+      code: errorCode ? 'failed' : 'succeeded',
+      progress: row.progress,
+    })
   })
 }
 

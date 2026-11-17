@@ -168,7 +168,7 @@ func (h *Handler) Handle(ctx context.Context, body []byte) {
 			return
 		}
 		data, err := base64.StdEncoding.Strict().DecodeString(message.Data)
-		if err != nil || len(data) == 0 || len(data) > frameSize || message.Seq != session.inputSeq+1 || session.inputSeq-int(session.drained.Load()) >= session.window || session.eof {
+		if err != nil || base64.StdEncoding.EncodeToString(data) != message.Data || len(data) == 0 || len(data) > frameSize || message.Seq != session.inputSeq+1 || session.inputSeq-int(session.drained.Load()) >= session.window || session.eof {
 			session.cancel()
 			return
 		}

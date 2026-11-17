@@ -102,7 +102,13 @@ try {
       await delay(250)
     }
   }
-  for (const script of ['test', 'typecheck', 'build'])
+  for (const script of [
+    'db:format:check',
+    'db:lint',
+    'test',
+    'typecheck',
+    'build',
+  ])
     await run('npm', ['run', script], {
       cwd: resolve(root, 'control-plane'),
       env,

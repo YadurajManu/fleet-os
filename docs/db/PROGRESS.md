@@ -6,13 +6,13 @@ Foundations PR #35 is merged on explicit user instruction. This does not mark V1
 
 ## Current work
 
-Continuation milestone 1 is verified: engine contract, maintained images, private registry resolution and agent image pre-pull. Milestone 2 is in progress: durable stateful runtime, exec/PTY and TCP tunnel handlers. Capabilities remain unadvertised until their real handlers pass.
+Continuation milestone 1 is verified: engine contract, maintained images, private registry resolution and agent image pre-pull. Milestone 2 is in progress: durable stateful runtime, exec/PTY and TCP tunnel handlers. Runtime/TCP/exec tunnel handlers are verified and enabled on Linux arm64/amd64 engines; backup/metrics capabilities remain disabled.
 
 Milestone 1 gate: `node control-plane/scripts/test-databases.mjs` completed with **703/703 control-plane tests**, typecheck, build, `go test ./...`, and **8/8 real Docker checks** passing. The Docker checks cover official engine tuning (4), maintained engine/Go resource lifecycle/roles/pooler/extensions/metrics/export (3), and authenticated dual-architecture registry resolution plus real Go pre-pull/cache/disk guards (1). Disposable test dependencies and registry resources were removed.
 
 Cross-platform evidence: `FLEET_DB_PLATFORMS=linux/arm64,linux/amd64 node deploy/databases/build.mjs` built all four OCI indexes. `python3 deploy/databases/verify-oci.py` verified every referenced blob/checksum and both platform configurations before local Docker import. Checked scratch archives were then removed to recover host disk space; ignored verification metadata remains. `FLEET_DB_TEST_PLATFORM=linux/amd64 node --test --test-concurrency=1 --import tsx tests/database-plugins.docker.ts` passed **3/3** under Docker Desktop emulation. Agent `CGO_ENABLED=0 GOOS=<os> GOARCH=<arch> go build ./cmd/agent` compiled Linux arm64/amd64, Windows amd64 and Darwin arm64. Native hardware is arm64 only; no native amd64 or Windows runtime coverage is claimed.
 
-Runtime helper work has begun but is not part of milestone 1 completion: private, credential-free receipts and a binary stdio/TCP helper have focused unit coverage. WSS integration, runtime Docker E2E, immediate cancellation, storage/stability reporting and capability advertisement remain pending. No product acceptance scenario is verified.
+Runtime helper work has begun but is not part of milestone 1 completion: private, credential-free receipts and a binary stdio/TCP helper have focused unit coverage. WSS/runtime Docker E2E, cancellation and runtime/TCP/exec advertisement now pass the gates recorded below. Storage/stability reporting and the database worker remain ahead. No product acceptance scenario is verified.
 
 ## Original V1 milestones
 
@@ -107,3 +107,11 @@ A fresh Docker Desktop session has no maintained runtime images. Re-running the 
 Maintained Postgres 16/17 and Redis runtime lifecycle/receipt/private TCP checks also passed. Fixture containers/volumes are identified by their database UUID; service tasks carry node/task ownership labels and are cleaned by the existing task runner. Database ports stay unpublished; the disposable test client uses a loopback-only forwarding listener. This is local logical-node coverage, not two physical machines or Windows coverage.
 
 Added reproducible `npm run db:format:check` and `npm run db:lint` commands pinned to Prettier 3.10.1 and Oxlint 1.57.0. Applied readable formatting to newly introduced database TypeScript files. Capability flags stay disabled until the final gate/commit.
+
+## 2026-11-17 — Capability gate, commit 4 of 4
+
+Enabled only `database.runtime.v1`, `database.tcp.v1` and `database.exec.v1` for supported Linux arm64/amd64 container engines. ARMv7 receives no database flags; backup/metrics flags remain off. Repeated Docker gate: **7/7 passed** (maintained engines, durable runtime, actual two-agent service/tunnel/drop/reconnect). Repeated 2 MiB upload/download at 100 ms RTT: **2.89 s** against 12.8 s stop-and-wait lower bound. Cross-compilation passed Linux arm64/amd64, Windows amd64 and Darwin arm64. See tunnel.md for the wire contract and buffer bounds.
+
+Next milestone: lease-based database worker, restart reconciliation, retries and persisted progress. No product acceptance scenario is promoted to verified by this component gate.
+
+Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Capability gate full control-plane regression: **711/711 passed**, zero failures/skips. Pinned formatting/lint checks passed.

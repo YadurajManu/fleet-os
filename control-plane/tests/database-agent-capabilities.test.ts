@@ -35,13 +35,11 @@ after(async () => {
 
 async function register(fields: Record<string, unknown>) {
   const token = newPairingToken()
-  await ctx.db
-    .insert(pairingTokens)
-    .values({
-      fleetId,
-      tokenHash: hashToken(token),
-      expiresAt: new Date(Date.now() + 60000),
-    })
+  await ctx.db.insert(pairingTokens).values({
+    fleetId,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + 60000),
+  })
   const response = await app.inject({
     method: 'POST',
     url: '/agent/register',

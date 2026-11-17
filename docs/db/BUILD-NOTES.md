@@ -107,3 +107,13 @@ A fresh Docker Desktop session has no maintained runtime images. Re-running the 
 Maintained Postgres 16/17 and Redis runtime lifecycle/receipt/private TCP checks also passed. Fixture containers/volumes are identified by their database UUID; service tasks carry node/task ownership labels and are cleaned by the existing task runner. Database ports stay unpublished; the disposable test client uses a loopback-only forwarding listener. This is local logical-node coverage, not two physical machines or Windows coverage.
 
 Added reproducible `npm run db:format:check` and `npm run db:lint` commands pinned to Prettier 3.10.1 and Oxlint 1.57.0. Applied readable formatting to newly introduced database TypeScript files. Capability flags stay disabled until the final gate/commit.
+
+## 2026-11-17 — Verified capability advertisement
+
+- The repeated real Docker gate passed 7/7 with the pinned service client image and delayed actual WebSockets. Two local agent instances use distinct node identities on one Docker host; cross-node task ownership and database ownership are checked. Transfer measured 2.89 s at 100 ms RTT. Tunnel drop cancels the session; reconnect opens a new session without replaying interrupted writes.
+- Only the three verified runtime/TCP/exec flags are enabled, and only on arm64/amd64 Linux engines for which maintained images exist. ARMv7 remains unsupported for databases. Old agent reports still default to an empty list. Backup and metrics are not advertised.
+- Agent cross-compilation passed Linux arm64/amd64, Windows amd64 and Darwin arm64. These are build checks; native runtime coverage remains local arm64 Docker Desktop.
+- Added canonical base64 validation to the agent receiver and recorded protocol details in tunnel.md. The full milestone runner now requires pinned formatter/lint checks before tests/typecheck/build; formatting inconsistencies found by that gate were corrected.
+- Continue immediately with the worker milestone after this commit; API/CLI/UI are still delivered together at the lifecycle milestone.
+
+Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Capability gate full control-plane regression: **711/711 passed**, zero failures/skips. Pinned formatting/lint checks passed.
