@@ -7,6 +7,7 @@ import {
   fleets,
   nodes,
   tenantDatabases,
+  databaseCredentials,
   databaseOperations,
   orgMembers,
   users,
@@ -34,6 +35,7 @@ import WebSocket, { WebSocketServer } from 'ws'
 import { TunnelRegistry } from '../src/tunnel/registry.js'
 import { DatabaseTunnel } from '../src/databases/tunnel.js'
 import { redisEngine } from '../src/databases/engines.js'
+import { sealSecret } from '../src/lib/crypto.js'
 import type { AppContext } from '../src/api/context.js'
 
 const workerMode = process.env.FLEET_DB_WORKER_TEST === '1'
@@ -226,6 +228,15 @@ test(
           cpu: 0.5,
           diskMb: 10240,
         })
+        await workerContext.db.insert(databaseCredentials).values({
+          databaseId: id,
+          role: 'app',
+          generation: 1,
+          encryptedValue: sealSecret(
+            JSON.stringify(credentials.app),
+            workerContext.config.SECRETS_MASTER_KEY,
+          ),
+        })
         const scope = { fleetId, project: identity.project, databaseId: id }
         const runtimeIntent = {
           identity,
@@ -294,7 +305,7 @@ test(
         await new Promise<void>((resolve, reject) =>
           portProbe.close((error) => (error ? reject(error) : resolve())),
         )
-        cliProcess = spawn(
+        const cli = spawn(
           'node',
           [
             '--import',
@@ -320,13 +331,12 @@ test(
             stdio: ['ignore', 'pipe', 'pipe'],
           },
         )
+        cliProcess = cli
         const cliOutput: Buffer[] = []
         const cliErrors: Buffer[] = []
-        cliProcess.stdout?.on('data', (chunk) => cliOutput.push(chunk))
-        cliProcess.stderr?.on('data', (chunk) =>
-          cliErrors.push(Buffer.from(chunk)),
-        )
-        cliProcess.once('error', (error) => {
+        cli.stdout?.on('data', (chunk) => cliOutput.push(chunk))
+        cli.stderr?.on('data', (chunk) => cliErrors.push(Buffer.from(chunk)))
+        cli.once('error', (error) => {
           throw error
         })
         await until(() =>
@@ -360,11 +370,51 @@ test(
         )
         t.diagnostic('local CLI forwarder completed Redis PING')
         assert.ok(Buffer.concat(streamOutput).includes(Buffer.from('+OK\r\n')))
+        const execOutput: Buffer[] = []
+        const execProcess = spawn(
+          'node',
+          [
+            '--import',
+            'tsx',
+            'src/index.ts',
+            'db',
+            'exec',
+            'tunnel',
+            '--project',
+            identity.project,
+            '--',
+            'PING',
+          ],
+          {
+            cwd: '../cli',
+            env: {
+              ...process.env,
+              FLEET_API: apiUrl,
+              FLEET_TOKEN: account.accessToken,
+              FLEET_ID: fleetId,
+              FLEET_CONFIG: `/tmp/fleet-db-exec-${id}.json`,
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          },
+        )
+        const execErrors: Buffer[] = []
+        execProcess.stderr?.on('data', (chunk) =>
+          execErrors.push(Buffer.from(chunk)),
+        )
+        execProcess.stdout?.on('data', (chunk) =>
+          execOutput.push(Buffer.from(chunk)),
+        )
+        const execExit = await once(execProcess, 'exit')
+        assert.equal(execExit[0], 0, Buffer.concat(execErrors).toString())
+        assert.match(Buffer.concat(execOutput).toString(), /PONG/)
+        t.diagnostic(
+          'authenticated CLI db exec completed Redis PING over the tunnel',
+        )
         const disconnected = once(localClient, 'close')
         await revokeSessions(workerContext.redis, account.user.id)
         await disconnected
-        const cliExit = once(cliProcess, 'exit')
-        cliProcess.kill('SIGINT')
+        const cliExit = once(cli, 'exit')
+        cli.kill('SIGINT')
         await cliExit
         cliProcess = undefined
         const [finished] = await workerContext.db
