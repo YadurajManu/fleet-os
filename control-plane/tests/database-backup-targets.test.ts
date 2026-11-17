@@ -11,6 +11,7 @@ import {
 import { loadConfig } from '../src/config.js'
 import { buildServer } from '../src/server.js'
 import {
+  databaseBackups,
   databaseBackupTargets,
   orgs,
   tenantDatabases,
@@ -24,6 +25,7 @@ let fleetId = ''
 let orgId = ''
 let userId = ''
 let accessToken = ''
+let backupDatabaseId = ''
 const project = 'backup-target-test'
 const accessKeyId = `minio-${randomUUID()}`
 const secretAccessKey = `secret-${randomUUID()}`
@@ -49,6 +51,10 @@ before(async () => {
 
 after(async () => {
   await app.close()
+  if (backupDatabaseId)
+    await ctx.db
+      .delete(databaseBackups)
+      .where(eq(databaseBackups.databaseId, backupDatabaseId))
   await ctx.db
     .delete(tenantDatabases)
     .where(eq(tenantDatabases.fleetId, fleetId))
@@ -149,7 +155,7 @@ test('backup targets are project scoped, encrypted, audited and safely removable
   assert.equal(list.body.includes(accessKeyId), false)
   assert.equal(list.body.includes(secretAccessKey), false)
 
-  const databaseId = randomUUID()
+  const databaseId = (backupDatabaseId = randomUUID())
   await ctx.db.insert(tenantDatabases).values({
     id: databaseId,
     fleetId,
@@ -190,6 +196,30 @@ test('backup targets are project scoped, encrypted, audited and safely removable
     payload: { targetId: foreignTarget.json().id },
   })
   assert.equal(rejectedAssignment.statusCode, 404)
+  const [backup] = await ctx.db
+    .insert(databaseBackups)
+    .values({
+      databaseId,
+      targetId: second.json().id,
+      generation: 1,
+      engine: 'postgres',
+      engineVersion: '16',
+      kind: 'base',
+      state: 'complete',
+      objectPrefix: 'tenant-data/backup-1',
+      manifest: [
+        {
+          key: 'tenant-data/backup-1/base.tar',
+          sizeBytes: 123,
+          checksumSha256: 'a'.repeat(64),
+        },
+      ],
+      sizeBytes: 123,
+      checksumSha256: 'a'.repeat(64),
+      recoveryPoint: { lsn: '0/16B6C50' },
+    })
+    .returning()
+  assert.equal(backup!.manifest.length, 1)
 
   const wrongProjectDelete = await app.inject({
     method: 'DELETE',
@@ -209,6 +239,12 @@ test('backup targets are project scoped, encrypted, audited and safely removable
     .from(tenantDatabases)
     .where(eq(tenantDatabases.id, databaseId))
   assert.equal(database!.backupTargetId, null)
+  const [retainedBackup] = await ctx.db
+    .select()
+    .from(databaseBackups)
+    .where(eq(databaseBackups.id, backup!.id))
+  assert.equal(retainedBackup!.targetId, null)
+  assert.equal(retainedBackup!.state, 'complete')
   const detached = await app.inject({
     method: 'PUT',
     url: targetPath,

@@ -25,7 +25,7 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 | 2 | Agent stateful runtime, TCP/exec/PTY, disk, images | in progress | Image/runtime implementation underway. No complete runtime verification yet. |
 | 3 | Postgres lifecycle, placement, networking, links, pooler | in progress | Create/catalog/placement/list/detail/start/stop/restart and link/unlink API, CLI and dashboard are wired. Link tests verify encrypted role URLs and cleanup; real Docker verifies an agent-created service can query Postgres through a same-node private project network. Still missing a complete lifecycle API-to-app rollout proof, cross-node application TCP connector, delete/recover, connect/shell/exec and browser acceptance. |
 | 4 | Redis engine | in progress | `node --test --import tsx tests/database-engines.docker.ts` proves configuration behavior only; lifecycle/link API+CLI+UI are absent. |
-| 5 | Targets, backups, restore, recover, import/export | in progress | Migration 0045, scoped target API and real Docker MinIO probe exist. CLI and dashboard manage targets and assign/unassign them per database; assignment checks same-project scope and drives `backupConfigured`. Backup streaming/operations, restore and import/export remain. No engine-consistent recovery E2E proof yet. |
+| 5 | Targets, backups, restore, recover, import/export | in progress | Migrations 0045–0046, scoped target API, real Docker MinIO probe, CLI/dashboard target management and per-database selection exist. Migration 0046 adds durable backup manifests and retention-safe foreign keys. Backup creation/streaming, WAL archiving, restore and import/export remain. No recovery E2E proof yet. |
 | 6 | Release migrations, config, exec/shell/migrate | not started | No release-gate E2E proof yet. |
 | 7 | Monitoring, alerts, tuning | in progress | `node --test --import tsx tests/database-tuning.test.ts` passes; no metrics/alert product flow yet. |
 | 8 | Complete CLI | in progress | Lifecycle list/create/actions, link/unlink, loopback `db connect`, and Redis/Postgres `db exec` are wired. Interactive database shell, backup/recovery and declarative release commands remain. |
@@ -75,6 +75,12 @@ Runtime helper work has begun but is not part of milestone 1 completion: private
 - Added an authenticated project-scoped assignment route that accepts a target ID or `null`; target IDs must belong to the same fleet and project. Deleted databases cannot change targets. Assignment and detachment are audited, and the database view now reports `backupConfigured` and `backupTargetId` from persisted state. Removing a target continues to detach references through the FK.
 - Added dashboard selection on database detail and `fleet db target assign <project> <database> <target|none>`. The control-plane suite passed **724/724** with formatter/Oxlint, typecheck/build and `go test ./...`; CLI typecheck and **230/230** tests passed; dashboard typecheck, **32/32** tests and build passed.
 - This only records target selection; no backup bytes are created or streamed yet. Restore/PITR/recover and import/export remain unimplemented, so backup acceptance remains open.
+
+## 2026-11-17 — Durable backup manifest schema
+
+- Added migration 0046 with `database_backups`, backup kind/state enums, object manifest checksums/sizes, generation/engine identity, recovery-point metadata and timestamps. Database references are retained until backup records are explicitly removed; target and node deletion detach metadata without erasing verified backup history.
+- `node control-plane/scripts/test-databases.mjs --unit-only` passed: migration applied, **724/724** control-plane tests, Prettier/Oxlint, TypeScript typecheck/build and `go test ./...`. The target test now verifies an existing backup record survives target deletion with target reference cleared.
+- This is metadata persistence only. No worker writes a manifest, no database data is uploaded, and no backup/restore/PITR acceptance is complete.
 
 ## V2 work and acceptance gate
 
