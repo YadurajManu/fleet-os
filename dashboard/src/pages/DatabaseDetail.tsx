@@ -366,8 +366,9 @@ function DatabaseDetailContent({
             </div>
           )}
           <p className="text-xs text-[var(--color-fg-dim)]">
-            These are verified logical backups. Point-in-time recovery and
-            restore are not available yet.
+            A backup is verified only after its encrypted object is read back
+            and checksummed. Restore and point-in-time recovery are not
+            available yet.
           </p>
         </div>
       </Panel>
