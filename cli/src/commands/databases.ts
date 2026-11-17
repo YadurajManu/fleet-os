@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { unlink } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
 import WebSocket from 'ws'
@@ -448,6 +449,21 @@ export const databasesCommand = {
       await execDatabase(fleet, database, args.slice(2), flags)
       return
     }
+    if (action === 'dump') {
+      if (!project || !nameOrId)
+        throw new CliError(
+          'usage: fleet db dump <database> <output-file> [--project PROJECT]',
+          EXIT.usage,
+        )
+      const database = await findDatabase(fleet, project, flags)
+      if (database.status !== 'running' || !database.nodeId)
+        throw new CliError(
+          `Database ${database.name} must be running before it can be exported.`,
+        )
+      await execDatabase(fleet, database, [], flags, nameOrId)
+      console.log(`Database dump saved to ${nameOrId}.`)
+      return
+    }
     if (['start', 'stop', 'restart'].includes(action ?? '')) {
       if (!project || !nameOrId)
         throw new CliError(
@@ -472,7 +488,7 @@ export const databasesCommand = {
       return
     }
     throw new CliError(
-      'usage: fleet db list|create|start|stop|restart|link|unlink|connect|exec|targets|target …',
+      'usage: fleet db list|create|start|stop|restart|link|unlink|connect|exec|targets|target|backup|backups|dump …',
       EXIT.usage,
     )
   },
@@ -503,27 +519,35 @@ async function execDatabase(
   database: Database,
   trailing: string[],
   flags: Flags,
+  outputPath?: string,
 ) {
+  const dumping = outputPath !== undefined
   const role = typeof flags.role === 'string' ? flags.role : 'app'
-  if (role !== 'app' && role !== 'readonly')
+  if (!dumping && role !== 'app' && role !== 'readonly')
     throw new CliError('--role must be app or readonly.', EXIT.usage)
   const sql = typeof flags.c === 'string' ? flags.c : undefined
   const file = typeof flags.f === 'string' ? flags.f : undefined
   const command = trailing[0] === '--' ? trailing.slice(1) : []
   const sqlMode = sql !== undefined || file !== undefined
   if (
-    Number(sql !== undefined) +
-      Number(file !== undefined) +
-      Number(command.length > 0) !==
-    1
+    (dumping && (sql !== undefined || file !== undefined || command.length)) ||
+    (!dumping &&
+      Number(sql !== undefined) +
+        Number(file !== undefined) +
+        Number(command.length > 0) !==
+        1)
   )
     throw new CliError(
       'Choose exactly one of -c SQL, -f FILE, or -- REDIS-COMMAND.',
       EXIT.usage,
     )
-  if (database.engine === 'postgres' && !sqlMode)
+  if (!dumping && database.engine === 'postgres' && !sqlMode)
     throw new CliError('Postgres exec requires -c SQL or -f FILE.', EXIT.usage)
-  if (database.engine === 'redis' && (sqlMode || command.length === 0))
+  if (
+    !dumping &&
+    database.engine === 'redis' &&
+    (sqlMode || command.length === 0)
+  )
     throw new CliError(
       'Redis exec requires -- REDIS-COMMAND [ARGS…].',
       EXIT.usage,
@@ -542,83 +566,113 @@ async function execDatabase(
     headers: { authorization: `Bearer ${profile.accessToken}` },
     maxPayload: 1_048_576,
   })
-  const payload =
-    database.engine === 'postgres'
+  const payload = dumping
+    ? { mode: 'dump' }
+    : database.engine === 'postgres'
       ? { mode: 'sql', role }
       : { mode: 'redis', role, command }
+  const output = outputPath
+    ? createWriteStream(outputPath, { flags: 'wx', mode: 0o600 })
+    : process.stdout
+  let outputCreated = false
+  if (outputPath) output.once('open', () => (outputCreated = true))
 
-  await new Promise<void>((resolve, reject) => {
-    let completed = false
-    const finish = (error?: Error) => {
-      if (completed) return
-      completed = true
-      if (error && socket.readyState === WebSocket.OPEN) socket.close()
-      error ? reject(error) : resolve()
-    }
-    const rawSocket = () =>
-      (socket as WebSocket & { _socket: import('node:stream').Duplex | null })
-        ._socket
-    socket.once('unexpected-response', (_request, response) => {
-      response.resume()
-      finish(
-        new CliError(`Database exec was rejected (${response.statusCode}).`),
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let completed = false
+      const finish = (error?: Error) => {
+        if (completed) return
+        completed = true
+        if (error && socket.readyState === WebSocket.OPEN) socket.close()
+        error ? reject(error) : resolve()
+      }
+      const rawSocket = () =>
+        (socket as WebSocket & { _socket: import('node:stream').Duplex | null })
+          ._socket
+      socket.once('unexpected-response', (_request, response) => {
+        response.resume()
+        finish(
+          new CliError(`Database exec was rejected (${response.statusCode}).`),
+        )
+      })
+      socket.once('error', () =>
+        finish(new CliError('Database exec connection failed.')),
       )
+      socket.once('open', () => socket.send(JSON.stringify(payload)))
+      socket.on('message', (data, binary) => {
+        if (binary) {
+          const chunk = data as Buffer
+          if (!output.write(chunk)) rawSocket()?.pause()
+          return
+        }
+        let message: { type?: string; data?: string; code?: number }
+        try {
+          message = JSON.parse(data.toString()) as typeof message
+        } catch {
+          return finish(
+            new CliError('Database exec returned an invalid response.'),
+          )
+        }
+        if (message.type === 'ready') {
+          void sendInput(
+            socket,
+            dumping ? undefined : sql,
+            file,
+            database.engine,
+          ).catch(() =>
+            finish(new CliError('Could not send database command input.')),
+          )
+          return
+        }
+        if (message.type === 'stderr' && message.data) {
+          if (!process.stderr.write(Buffer.from(message.data, 'base64')))
+            rawSocket()?.pause()
+          return
+        }
+        if (message.type === 'exit') {
+          const error =
+            message.code === 0
+              ? undefined
+              : new CliError(
+                  `Database command exited with status ${message.code ?? 1}.`,
+                )
+          if (outputPath && !error) {
+            output.end(() => {
+              socket.close()
+              finish()
+            })
+          } else {
+            if (outputPath) output.destroy()
+            socket.close()
+            finish(error)
+          }
+        }
+      })
+      socket.once('close', (code, reason) => {
+        output.off('drain', onOutputDrain)
+        process.stderr.off('drain', onOutputDrain)
+        if (!completed)
+          finish(
+            new CliError(
+              `Database exec session ended before completion (${code}${reason.length ? `: ${reason.toString()}` : ''}).`,
+            ),
+          )
+      })
+      const onOutputDrain = () => rawSocket()?.resume()
+      output.on('drain', onOutputDrain)
+      if (outputPath)
+        output.once('error', () =>
+          finish(new CliError('Could not write database dump.')),
+        )
+      process.stderr.on('drain', onOutputDrain)
     })
-    socket.once('error', () =>
-      finish(new CliError('Database exec connection failed.')),
-    )
-    socket.once('open', () => socket.send(JSON.stringify(payload)))
-    socket.on('message', (data, binary) => {
-      if (binary) {
-        const chunk = data as Buffer
-        if (!process.stdout.write(chunk)) rawSocket()?.pause()
-        return
-      }
-      let message: { type?: string; data?: string; code?: number }
-      try {
-        message = JSON.parse(data.toString()) as typeof message
-      } catch {
-        return finish(
-          new CliError('Database exec returned an invalid response.'),
-        )
-      }
-      if (message.type === 'ready') {
-        void sendInput(socket, sql, file, database.engine).catch(() =>
-          finish(new CliError('Could not send database command input.')),
-        )
-        return
-      }
-      if (message.type === 'stderr' && message.data) {
-        if (!process.stderr.write(Buffer.from(message.data, 'base64')))
-          rawSocket()?.pause()
-        return
-      }
-      if (message.type === 'exit') {
-        socket.close()
-        finish(
-          message.code === 0
-            ? undefined
-            : new CliError(
-                `Database command exited with status ${message.code ?? 1}.`,
-              ),
-        )
-      }
-    })
-    process.stdout.on('drain', () => rawSocket()?.resume())
-    socket.once('close', (code, reason) => {
-      process.stdout.off('drain', onOutputDrain)
-      process.stderr.off('drain', onOutputDrain)
-      if (!completed)
-        finish(
-          new CliError(
-            `Database exec session ended before completion (${code}${reason.length ? `: ${reason.toString()}` : ''}).`,
-          ),
-        )
-    })
-    const onOutputDrain = () => rawSocket()?.resume()
-    process.stdout.on('drain', onOutputDrain)
-    process.stderr.on('drain', onOutputDrain)
-  })
+  } catch (error) {
+    if (outputPath) {
+      output.destroy()
+      if (outputCreated) await unlink(outputPath).catch(() => {})
+    }
+    throw error
+  }
 }
 
 async function sendInput(

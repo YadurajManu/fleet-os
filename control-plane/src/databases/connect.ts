@@ -14,6 +14,7 @@ import {
 import { can } from '../auth/rbac.js'
 import { sessionActive } from '../auth/tokens.js'
 import { openSecret } from '../lib/crypto.js'
+import { recordAudit } from '../lib/audit.js'
 import type { EngineCommand } from './engines.js'
 import { DatabaseTunnel, type DatabaseStream } from './tunnel.js'
 
@@ -30,6 +31,7 @@ const execRequest = z.discriminatedUnion('mode', [
       command: z.array(z.string().min(1).max(4096)).min(1).max(64),
     })
     .strict(),
+  z.object({ mode: z.literal('dump') }).strict(),
 ])
 
 export function setupDatabaseConnectServer(
@@ -71,12 +73,14 @@ export function setupDatabaseConnectServer(
       const [target] = await ctx.db
         .select({
           role: orgMembers.role,
+          orgId: fleets.orgId,
           id: tenantDatabases.id,
           nodeId: tenantDatabases.nodeId,
           fleetId: tenantDatabases.fleetId,
           project: tenantDatabases.project,
           generation: tenantDatabases.generation,
           engine: tenantDatabases.engine,
+          mode: tenantDatabases.mode,
           name: tenantDatabases.name,
           status: tenantDatabases.status,
           deletedAt: tenantDatabases.deletedAt,
@@ -143,6 +147,8 @@ async function startExec(
   tunnel: DatabaseTunnel,
   client: WebSocket,
   target: {
+    role: 'viewer' | 'deployer' | 'admin' | 'owner'
+    orgId: string
     id: string
     nodeId: string | null
     fleetId: string
@@ -150,6 +156,7 @@ async function startExec(
     name: string
     generation: number
     engine: 'postgres' | 'redis'
+    mode: 'standard' | 'cache' | 'durable'
   },
   claims: { sub: string; typ: string; sid?: string; exp: number },
   data: Buffer | ArrayBuffer | Buffer[],
@@ -163,8 +170,8 @@ async function startExec(
     return client.close(1008, 'Execution request is invalid')
   }
   if (
-    (target.engine === 'postgres' && payload.mode !== 'sql') ||
-    (target.engine === 'redis' && payload.mode !== 'redis')
+    (target.engine === 'postgres' && !['sql', 'dump'].includes(payload.mode)) ||
+    (target.engine === 'redis' && !['redis', 'dump'].includes(payload.mode))
   )
     return client.close(
       1008,
@@ -177,8 +184,17 @@ async function startExec(
         65536)
   )
     return client.close(1008, 'Redis command arguments are invalid')
+  if (payload.mode === 'dump' && !can(target.role, 'database.backup'))
+    return client.close(1008, 'Database backup permission is required')
+  if (
+    payload.mode === 'dump' &&
+    target.engine === 'redis' &&
+    target.mode !== 'durable'
+  )
+    return client.close(1008, 'Only durable Redis databases can be exported')
 
   try {
+    const role = payload.mode === 'dump' ? 'owner' : payload.role
     const [row] = await ctx.db
       .select({ encryptedValue: databaseCredentials.encryptedValue })
       .from(databaseCredentials)
@@ -186,7 +202,7 @@ async function startExec(
         and(
           eq(databaseCredentials.databaseId, target.id),
           eq(databaseCredentials.generation, target.generation),
-          eq(databaseCredentials.role, payload.role),
+          eq(databaseCredentials.role, role),
         ),
       )
       .limit(1)
@@ -210,22 +226,70 @@ async function startExec(
               PGCONNECT_TIMEOUT: '5',
             },
           }
-        : {
-            command: [
-              'redis-cli',
-              '--user',
-              credentials.username,
-              '--raw',
-              ...payload.command,
-            ],
-            env: { REDISCLI_AUTH: credentials.password },
-          }
+        : payload.mode === 'redis'
+          ? {
+              command: [
+                'redis-cli',
+                '--user',
+                credentials.username,
+                '--raw',
+                ...payload.command,
+              ],
+              env: { REDISCLI_AUTH: credentials.password },
+            }
+          : target.engine === 'postgres'
+            ? {
+                command: [
+                  'pg_dump',
+                  '--format=custom',
+                  '--no-owner',
+                  '--no-acl',
+                  '--dbname',
+                  target.name.replaceAll('-', '_'),
+                ],
+                env: {
+                  PGHOST: '/var/run/postgresql',
+                  PGUSER: credentials.username,
+                  PGPASSWORD: credentials.password,
+                  PGCONNECT_TIMEOUT: '5',
+                },
+              }
+            : {
+                command: [
+                  'redis-cli',
+                  '--user',
+                  credentials.username,
+                  '--raw',
+                  '--rdb',
+                  '-',
+                ],
+                env: {
+                  REDISCLI_AUTH: credentials.password,
+                  FLEET_DB_BACKUP: '1',
+                },
+              }
     if (
       client.readyState !== client.OPEN ||
       !(await sessionActive(ctx.redis, claims)) ||
       Date.now() >= claims.exp * 1000
     )
       return client.close(1008, 'Database session is no longer active')
+    if (payload.mode === 'dump')
+      await ctx.db.transaction((tx) =>
+        recordAudit(tx, {
+          orgId: target.orgId,
+          actorUserId: claims.sub,
+          action: 'database.export.started',
+          targetType: 'tenant_database',
+          targetId: target.id,
+          metadata: {
+            project: target.project,
+            engine: target.engine,
+            format:
+              target.engine === 'postgres' ? 'pg_dump_custom' : 'redis_rdb',
+          },
+        }),
+      )
     const abort = new AbortController()
     const stream = tunnel.open(
       {
