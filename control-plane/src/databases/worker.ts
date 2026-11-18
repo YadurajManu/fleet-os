@@ -480,9 +480,7 @@ export class DatabaseWorker {
           operation.id,
           token,
           error instanceof Error &&
-            error.message.includes(
-              '(operation_restore_failed_previous_data_was_restored)',
-            )
+            error.message.includes('previous_data_was_restored)')
             ? 'restore_rolled_back'
             : 'runtime_failed',
         )

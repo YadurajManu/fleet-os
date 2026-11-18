@@ -384,10 +384,10 @@ export async function createDatabaseRestore(
         'restore_version_mismatch',
         'Restore a PostgreSQL base backup into a database with the same major version.',
       )
-    if (target.id !== source.id || confirmation !== source.name)
+    if (target.id === source.id && confirmation !== source.name)
       throw ApiError.badRequest(
         'restore_confirmation_required',
-        'A base backup currently restores in place. Send the exact database name as confirmation.',
+        'Confirm an in-place base restore with the exact database name.',
       )
     if (
       recoveryTarget?.type === 'time' &&
@@ -664,6 +664,27 @@ export async function runDatabaseRestore(
   const credentials = JSON.parse(
     openSecret(role.encryptedValue, ctx.config.SECRETS_MASTER_KEY),
   ) as { username: string; password: string }
+  const targetCredentialRows = await ctx.db
+    .select()
+    .from(databaseCredentials)
+    .where(
+      and(
+        eq(databaseCredentials.databaseId, target.id),
+        eq(databaseCredentials.generation, target.generation),
+      ),
+    )
+  const targetCredentials = Object.fromEntries(
+    targetCredentialRows.map((item) => [
+      item.role,
+      JSON.parse(
+        openSecret(item.encryptedValue, ctx.config.SECRETS_MASTER_KEY),
+      ),
+    ]),
+  ) as {
+    owner: { username: string; password: string }
+    app: { username: string; password: string }
+    readonly: { username: string; password: string }
+  }
   const databaseName = target.name.replaceAll('-', '_')
   const command = (args: string[]) => ({
     command: args,
@@ -704,11 +725,7 @@ export async function runDatabaseRestore(
     throw new Error('restore_target_not_empty')
 
   if (backup.kind === 'base') {
-    if (
-      source.id !== target.id ||
-      !backup.targetId ||
-      source.backupTargetId !== backup.targetId
-    )
+    if (!backup.targetId || source.backupTargetId !== backup.targetId)
       throw new Error('restore_backup_target_changed')
     const recoveryPoint = z
       .object({
@@ -764,29 +781,94 @@ export async function runDatabaseRestore(
     )
     if (!sourceContainer) throw new Error('restore_source_plan_missing')
     await progress('execute', 30)
+    const restoringIntoAnotherDatabase = source.id !== target.id
+    const sourceName = source.name.replaceAll('-', '_')
+    const targetName = target.name.replaceAll('-', '_')
+    const sourceOwner = restoringIntoAnotherDatabase
+      ? (JSON.parse(
+          openSecret(
+            (
+              await ctx.db
+                .select()
+                .from(databaseCredentials)
+                .where(
+                  and(
+                    eq(databaseCredentials.databaseId, source.id),
+                    eq(databaseCredentials.generation, source.generation),
+                    eq(databaseCredentials.role, 'owner'),
+                  ),
+                )
+            )[0]!.encryptedValue,
+            ctx.config.SECRETS_MASTER_KEY,
+          ),
+        ) as { username: string; password: string })
+      : null
+    const recoveryOwner = sourceOwner ?? credentials
+    const sourceReadiness = {
+      command: [
+        'psql',
+        '-X',
+        '-v',
+        'ON_ERROR_STOP=1',
+        '-U',
+        recoveryOwner.username,
+        '-d',
+        'postgres',
+        '-c',
+        "DO $$ BEGIN IF pg_is_in_recovery() THEN RAISE EXCEPTION 'recovery not complete'; END IF; END $$",
+      ],
+      env: { PGPASSWORD: recoveryOwner.password },
+    }
+    const postCommands: Array<{
+      command: string[]
+      env: Record<string, string>
+      stdin: string
+    }> = sourceOwner
+      ? [
+          {
+            command: [
+              'psql',
+              '-X',
+              '-v',
+              'ON_ERROR_STOP=1',
+              '-h',
+              '127.0.0.1',
+              '-U',
+              sourceOwner.username,
+              '-d',
+              'postgres',
+            ],
+            env: { PGPASSWORD: sourceOwner.password },
+            stdin: `ALTER DATABASE "${sourceName}" RENAME TO "${targetName}";`,
+          },
+          {
+            command: [
+              'psql',
+              '-X',
+              '-v',
+              'ON_ERROR_STOP=1',
+              '-h',
+              '127.0.0.1',
+              '-U',
+              sourceOwner.username,
+              '-d',
+              targetName,
+            ],
+            env: { PGPASSWORD: sourceOwner.password },
+            stdin: [
+              `ALTER ROLE fleet_owner PASSWORD '${targetCredentials.owner.password}';`,
+              `ALTER ROLE fleet_app PASSWORD '${targetCredentials.app.password}';`,
+              `ALTER ROLE fleet_readonly PASSWORD '${targetCredentials.readonly.password}';`,
+            ].join('\n'),
+          },
+        ]
+      : []
     await tunnel.runOperation(
       {
         ...targetRuntime,
         id: randomUUID(),
         action: 'restore',
-        readiness: {
-          command: [
-            'psql',
-            '-X',
-            '-v',
-            'ON_ERROR_STOP=1',
-            '-U',
-            credentials.username,
-            '-d',
-            databaseName,
-            '-c',
-            "DO $$ BEGIN IF pg_is_in_recovery() THEN RAISE EXCEPTION 'recovery not complete'; END IF; END $$",
-          ],
-          env: {
-            PGUSER: credentials.username,
-            PGPASSWORD: credentials.password,
-          },
-        },
+        readiness: sourceReadiness,
         restore: {
           backupName: recoveryPoint.backupName,
           ...(recoveryTarget?.type === 'time'
@@ -797,6 +879,12 @@ export async function runDatabaseRestore(
             : {}),
           env: sourceContainer.container.env,
           files: sourceContainer.container.files,
+          ...(restoringIntoAnotherDatabase
+            ? {
+                postCommands,
+                finalReadiness: targetRuntime.readiness,
+              }
+            : {}),
         },
       },
       signal,

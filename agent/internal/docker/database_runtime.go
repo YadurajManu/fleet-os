@@ -37,11 +37,13 @@ type DatabaseOperation struct {
 }
 
 type DatabaseRestore struct {
-	BackupName string            `json:"backupName"`
-	TargetTime string            `json:"targetTime,omitempty"`
-	TargetName string            `json:"targetName,omitempty"`
-	Env        map[string]string `json:"env"`
-	Files      []DatabaseFile    `json:"files"`
+	BackupName     string            `json:"backupName"`
+	TargetTime     string            `json:"targetTime,omitempty"`
+	TargetName     string            `json:"targetName,omitempty"`
+	Env            map[string]string `json:"env"`
+	Files          []DatabaseFile    `json:"files"`
+	PostCommands   []DatabaseCommand `json:"postCommands,omitempty"`
+	FinalReadiness *DatabaseCommand  `json:"finalReadiness,omitempty"`
 }
 
 type DatabaseReceipt struct {
@@ -191,12 +193,23 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 	}
 	if operation.Action == "restore" && receipt.Phase == "stopped" {
 		if err := r.Docker.RestoreDatabaseVolume(ctx, operation); err != nil {
-			if rollbackErr := r.Docker.RollbackDatabaseRestore(ctx, operation); rollbackErr == nil && r.resumeAfterRestoreRollback(ctx, identity, receipt.Roles, operation.Readiness) == nil {
-				receipt.Phase = "rolled-back"
-				_ = r.save(receipt)
+			if r.rollbackAndResume(ctx, operation, receipt) == nil {
 				return nil, databaseFailure("restore failed; previous data was restored")
 			}
 			return nil, err
+		}
+		for _, spec := range operation.Containers {
+			if spec.Container.Role != "database" {
+				continue
+			}
+			spec.Container.Env = operation.Restore.Env
+			spec.Container.Files = operation.Restore.Files
+			if err := r.Docker.ReconfigureDatabaseContainer(ctx, spec); err != nil {
+				if r.rollbackAndResume(ctx, operation, receipt) == nil {
+					return nil, databaseFailure("restore failed; previous data was restored")
+				}
+				return nil, err
+			}
 		}
 		receipt.Phase = "restored"
 		if err := r.save(receipt); err != nil {
@@ -260,10 +273,7 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 			if operation.Readiness != nil {
 				if err := r.ready(ctx, identity, *operation.Readiness); err != nil {
 					if operation.Action == "restore" {
-						_ = r.Docker.StopDatabaseContainer(ctx, identity, "database")
-						if rollbackErr := r.Docker.RollbackDatabaseRestore(ctx, operation); rollbackErr == nil && r.resumeAfterRestoreRollback(ctx, identity, receipt.Roles, operation.Readiness) == nil {
-							receipt.Phase = "rolled-back"
-							_ = r.save(receipt)
+						if r.rollbackAndResume(ctx, operation, receipt) == nil {
 							return nil, databaseFailure("restore readiness failed; previous data was restored")
 						}
 					}
@@ -271,6 +281,45 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 				}
 			}
 			if operation.Action == "restore" {
+				for _, command := range operation.Restore.PostCommands {
+					code, err := r.Docker.ExecDatabase(ctx, identity, "database", command, nil, io.Discard, io.Discard, false, time.Minute, nil)
+					if err != nil || code != 0 {
+						if r.rollbackAndResume(ctx, operation, receipt) == nil {
+							return nil, databaseFailure("restore finalization failed; previous data was restored")
+						}
+						return nil, databaseFailure("restore finalization failed; reconciliation required")
+					}
+				}
+				if len(operation.Restore.PostCommands) > 0 {
+					if err := r.Docker.StopDatabaseContainer(ctx, identity, "database"); err != nil {
+						return nil, err
+					}
+					for _, spec := range operation.Containers {
+						if spec.Container.Role == "database" {
+							if err := r.Docker.ReconfigureDatabaseContainer(ctx, spec); err != nil {
+								if r.rollbackAndResume(ctx, operation, receipt) == nil {
+									return nil, databaseFailure("restore finalization failed; previous data was restored")
+								}
+								return nil, err
+							}
+						}
+					}
+					state, err := r.Docker.Inspect(ctx, name)
+					if err != nil || r.Docker.Start(ctx, state.ID) != nil {
+						if r.rollbackAndResume(ctx, operation, receipt) == nil {
+							return nil, databaseFailure("restore finalization failed; previous data was restored")
+						}
+						return nil, databaseFailure("restore finalization failed; reconciliation required")
+					}
+					if operation.Restore.FinalReadiness != nil {
+						if err := r.ready(ctx, identity, *operation.Restore.FinalReadiness); err != nil {
+							if r.rollbackAndResume(ctx, operation, receipt) == nil {
+								return nil, databaseFailure("restore finalization failed; previous data was restored")
+							}
+							return nil, err
+						}
+					}
+				}
 				_ = r.Docker.CommitDatabaseRestore(ctx, operation)
 			}
 			if operation.Action == "provision" && !receipt.Bootstrapped {
@@ -291,8 +340,20 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 	return receipt, r.save(receipt)
 }
 
-func (r *DatabaseRuntime) resumeAfterRestoreRollback(ctx context.Context, identity DatabaseIdentity, roles []string, readiness *DatabaseCommand) error {
-	for _, role := range roles {
+func (r *DatabaseRuntime) rollbackAndResume(ctx context.Context, operation DatabaseOperation, receipt *DatabaseReceipt) error {
+	identity := operation.Identity
+	_ = r.Docker.StopDatabaseContainer(ctx, identity, "database")
+	if err := r.Docker.RollbackDatabaseRestore(ctx, operation); err != nil {
+		return err
+	}
+	for _, spec := range operation.Containers {
+		if spec.Container.Role == "database" {
+			if err := r.Docker.ReconfigureDatabaseContainer(ctx, spec); err != nil {
+				return err
+			}
+		}
+	}
+	for _, role := range receipt.Roles {
 		name := DatabaseContainerName(identity.ID, role)
 		state, err := r.Docker.Inspect(ctx, name)
 		if err != nil || !ownedDatabase(state.Labels, identity, role, true) {
@@ -301,12 +362,18 @@ func (r *DatabaseRuntime) resumeAfterRestoreRollback(ctx context.Context, identi
 		if !state.Running && r.Docker.Start(ctx, state.ID) != nil {
 			return databaseFailure("restore rollback start")
 		}
-		if role == "database" && readiness != nil {
-			if err := r.ready(ctx, identity, *readiness); err != nil {
+		if role == "database" && operation.Restore.FinalReadiness != nil {
+			if err := r.ready(ctx, identity, *operation.Restore.FinalReadiness); err != nil {
+				return databaseFailure("restore rollback readiness")
+			}
+		} else if role == "database" && operation.Readiness != nil {
+			if err := r.ready(ctx, identity, *operation.Readiness); err != nil {
 				return databaseFailure("restore rollback readiness")
 			}
 		}
 	}
+	receipt.Phase = "rolled-back"
+	_ = r.save(receipt)
 	return nil
 }
 

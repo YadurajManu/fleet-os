@@ -362,6 +362,24 @@ func validateDatabaseRestore(operation DatabaseOperation) (DatabaseContainerSpec
 	if restore.TargetName != "" && !regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`).MatchString(restore.TargetName) {
 		return spec, databaseFailure("restore target validation")
 	}
+	if len(restore.PostCommands) > 4 {
+		return spec, databaseFailure("restore finalization validation")
+	}
+	for _, command := range restore.PostCommands {
+		if len(command.Command) == 0 || command.Command[0] != "psql" || len(command.Stdin) > 8192 {
+			return spec, databaseFailure("restore finalization validation")
+		}
+		for _, argument := range command.Command {
+			if strings.ContainsRune(argument, 0) || len(argument) > 8192 {
+				return spec, databaseFailure("restore finalization validation")
+			}
+		}
+		for key, value := range command.Env {
+			if !databaseEnvironmentKey.MatchString(key) || strings.ContainsRune(value, 0) {
+				return spec, databaseFailure("restore finalization validation")
+			}
+		}
+	}
 	for key, value := range restore.Env {
 		if !databaseEnvironmentKey.MatchString(key) || strings.ContainsRune(value, 0) {
 			return spec, databaseFailure("restore environment validation")
