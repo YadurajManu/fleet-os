@@ -37,6 +37,7 @@ type DatabaseOperation struct {
 }
 
 type DatabaseRestore struct {
+	Kind           string            `json:"kind,omitempty"`
 	BackupName     string            `json:"backupName"`
 	TargetTime     string            `json:"targetTime,omitempty"`
 	TargetName     string            `json:"targetName,omitempty"`
@@ -204,6 +205,9 @@ func (r *DatabaseRuntime) Apply(ctx context.Context, operation DatabaseOperation
 			}
 			spec.Container.Env = operation.Restore.Env
 			spec.Container.Files = operation.Restore.Files
+			if operation.Restore.Kind == "redis-rdb" {
+				spec.Container.Command = append(spec.Container.Command, "--appendonly", "no")
+			}
 			if err := r.Docker.ReconfigureDatabaseContainer(ctx, spec); err != nil {
 				if r.rollbackAndResume(ctx, operation, receipt) == nil {
 					return nil, databaseFailure("restore failed; previous data was restored")

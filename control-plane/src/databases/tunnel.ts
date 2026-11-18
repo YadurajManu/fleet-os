@@ -35,11 +35,14 @@ export type DatabaseOperation = {
   bootstrap?: EngineCommand | null
   readiness?: EngineCommand
   restore?: {
-    backupName: string
+    kind?: 'postgres-base' | 'redis-rdb'
+    backupName?: string
     targetTime?: string
     targetName?: string
     env: Record<string, string>
     files: EnginePlan['containers'][number]['files']
+    postCommands?: EngineCommand[]
+    finalReadiness?: EngineCommand
   }
 }
 const identity = z.object({

@@ -349,9 +349,24 @@ func validateDatabaseRestore(operation DatabaseOperation) (DatabaseContainerSpec
 		}
 	}
 	restore := operation.Restore
-	if restore == nil || spec.Container.Role != "database" || spec.DataPath != "/var/lib/postgresql/data" || !databaseUUID.MatchString(operation.ID) ||
+	if restore == nil || spec.Container.Role != "database" || !databaseUUID.MatchString(operation.ID) || len(restore.Env) > 128 {
+		return spec, databaseFailure("restore validation")
+	}
+	if restore.Kind == "redis-rdb" {
+		if spec.DataPath != "/data" || restore.BackupName != "" || restore.TargetTime != "" || restore.TargetName != "" ||
+			len(restore.PostCommands) != 1 || restore.FinalReadiness == nil {
+			return spec, databaseFailure("restore validation")
+		}
+		command := restore.PostCommands[0]
+		if strings.Join(command.Command, "\x00") != "redis-cli\x00--user\x00fleet_owner\x00CONFIG\x00SET\x00appendonly\x00yes" || command.Stdin != "" || command.Env["REDISCLI_AUTH"] == "" {
+			return spec, databaseFailure("restore finalization validation")
+		}
+		if len(restore.FinalReadiness.Command) == 0 || restore.FinalReadiness.Command[0] != "redis-cli" {
+			return spec, databaseFailure("restore readiness validation")
+		}
+	} else if (restore.Kind != "" && restore.Kind != "postgres-base") || spec.DataPath != "/var/lib/postgresql/data" ||
 		!regexp.MustCompile(`^base_[A-Za-z0-9_-]{1,180}$`).MatchString(restore.BackupName) ||
-		(restore.TargetTime != "" && restore.TargetName != "") || len(restore.Env) > 128 {
+		(restore.TargetTime != "" && restore.TargetName != "") {
 		return spec, databaseFailure("restore validation")
 	}
 	if restore.TargetTime != "" {
@@ -366,7 +381,11 @@ func validateDatabaseRestore(operation DatabaseOperation) (DatabaseContainerSpec
 		return spec, databaseFailure("restore finalization validation")
 	}
 	for _, command := range restore.PostCommands {
-		if len(command.Command) == 0 || command.Command[0] != "psql" || len(command.Stdin) > 8192 {
+		validCommand := len(command.Command) > 0 && command.Command[0] == "psql"
+		if restore.Kind == "redis-rdb" {
+			validCommand = strings.Join(command.Command, "\x00") == "redis-cli\x00--user\x00fleet_owner\x00CONFIG\x00SET\x00appendonly\x00yes"
+		}
+		if !validCommand || len(command.Stdin) > 8192 {
 			return spec, databaseFailure("restore finalization validation")
 		}
 		for _, argument := range command.Command {
@@ -432,19 +451,26 @@ func (c *Client) RestoreDatabaseVolume(ctx context.Context, operation DatabaseOp
 		return err
 	}
 
-	settings := "restore_command = 'wal-g wal-fetch %f %p'\nrecovery_target_action = 'promote'\n"
-	if restore.TargetTime != "" {
-		settings += "recovery_target_time = '" + restore.TargetTime + "'\n"
+	var script string
+	if restore.Kind == "redis-rdb" {
+		script = "test -s /data/.fleet-restore.rdb.tmp && redis-check-rdb /data/.fleet-restore.rdb.tmp >/dev/null; " +
+			"if [ ! -d /restore/original ]; then rm -rf /restore/.pending && mkdir -p /restore/.pending && cp -a /data/. /restore/.pending/ && mv /restore/.pending /restore/original; fi; " +
+			"rm -rf /data/appendonlydir /data/dump.rdb && mv /data/.fleet-restore.rdb.tmp /data/dump.rdb && chown 999:999 /data/dump.rdb"
+	} else {
+		settings := "restore_command = 'wal-g wal-fetch %f %p'\nrecovery_target_action = 'promote'\n"
+		if restore.TargetTime != "" {
+			settings += "recovery_target_time = '" + restore.TargetTime + "'\n"
+		}
+		if restore.TargetName != "" {
+			settings += "recovery_target_name = '" + restore.TargetName + "'\n"
+		}
+		encodedSettings := base64.StdEncoding.EncodeToString([]byte(settings))
+		script = "if [ ! -f /restore/original/PG_VERSION ]; then rm -rf /restore/.pending && mkdir -p /restore/.pending && cp -a /var/lib/postgresql/data/pgdata/. /restore/.pending/ && test -f /restore/.pending/PG_VERSION && mv /restore/.pending /restore/original; fi; " +
+			"rm -rf /var/lib/postgresql/data/pgdata && mkdir -p /var/lib/postgresql/data/pgdata; " +
+			"if wal-g backup-fetch /var/lib/postgresql/data/pgdata " + restore.BackupName +
+			"; then printf '%s' '" + encodedSettings + "' | base64 -d >> /var/lib/postgresql/data/pgdata/postgresql.auto.conf && touch /var/lib/postgresql/data/pgdata/recovery.signal; " +
+			"else rm -rf /var/lib/postgresql/data/pgdata && mkdir -p /var/lib/postgresql/data/pgdata && cp -a /restore/original/. /var/lib/postgresql/data/pgdata/ && exit 1; fi"
 	}
-	if restore.TargetName != "" {
-		settings += "recovery_target_name = '" + restore.TargetName + "'\n"
-	}
-	encodedSettings := base64.StdEncoding.EncodeToString([]byte(settings))
-	script := "if [ ! -f /restore/original/PG_VERSION ]; then rm -rf /restore/.pending && mkdir -p /restore/.pending && cp -a /var/lib/postgresql/data/pgdata/. /restore/.pending/ && test -f /restore/.pending/PG_VERSION && mv /restore/.pending /restore/original; fi; " +
-		"rm -rf /var/lib/postgresql/data/pgdata && mkdir -p /var/lib/postgresql/data/pgdata; " +
-		"if wal-g backup-fetch /var/lib/postgresql/data/pgdata " + restore.BackupName +
-		"; then printf '%s' '" + encodedSettings + "' | base64 -d >> /var/lib/postgresql/data/pgdata/postgresql.auto.conf && touch /var/lib/postgresql/data/pgdata/recovery.signal; " +
-		"else rm -rf /var/lib/postgresql/data/pgdata && mkdir -p /var/lib/postgresql/data/pgdata && cp -a /restore/original/. /var/lib/postgresql/data/pgdata/ && exit 1; fi"
 	name := DatabaseContainerName(spec.Identity.ID, "restore-"+operation.ID[:12])
 	labels := databaseLabels(spec.Identity, "restore")
 	var created createResponse
@@ -528,6 +554,9 @@ func (c *Client) RollbackDatabaseRestore(ctx context.Context, operation Database
 	}
 	name := DatabaseContainerName(spec.Identity.ID, "restore-rollback-"+operation.ID[:12])
 	script := "if [ ! -f /restore/original/PG_VERSION ]; then exit 0; fi; rm -rf /data/pgdata && mkdir -p /data/pgdata && cp -a /restore/original/. /data/pgdata/"
+	if operation.Restore.Kind == "redis-rdb" {
+		script = "if [ ! -d /restore/original ]; then exit 0; fi; find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} + && cp -a /restore/original/. /data/"
+	}
 	var created createResponse
 	if err := c.do(ctx, http.MethodPost, "/"+c.api(ctx)+"/containers/create?name="+url.QueryEscape(name)+"&platform="+url.QueryEscape(spec.Platform), map[string]any{
 		"Image": spec.Container.Image, "Entrypoint": []string{"/bin/sh"}, "Cmd": []string{"-ec", script}, "User": "999:999", "Labels": databaseLabels(spec.Identity, "restore"),

@@ -151,7 +151,8 @@ function DatabaseDetailContent({
     (candidate) =>
       candidate.id !== databaseId &&
       candidate.project === project &&
-      candidate.engine === 'postgres' &&
+      candidate.engine === database?.engine &&
+      (candidate.engine !== 'redis' || candidate.mode === 'durable') &&
       candidate.version === database?.version &&
       candidate.status === 'running' &&
       candidate.nodeStatus === 'online' &&
@@ -496,106 +497,118 @@ function DatabaseDetailContent({
               Assign an off-node target before creating a backup.
             </p>
           )}
-          {canManageAccess && database.engine === 'postgres' && (
-            <div className="grid gap-3 border-y border-[var(--color-line)] py-4 sm:grid-cols-[1fr_auto] sm:items-end">
-              <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
-                Restore into an empty PostgreSQL database
-                <select
-                  aria-label="Restore target database"
-                  value={restoreTargetId}
-                  onChange={(event) => setRestoreTargetId(event.target.value)}
-                  className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
-                >
-                  <option value="">Choose a running same-version target</option>
-                  {restoreTargets.map((target) => (
-                    <option key={target.id} value={target.id}>
-                      {target.name} · {target.nodeName ?? 'node'}
-                    </option>
-                  ))}
-                </select>
-                <span className="text-[var(--color-fg-dim)]">
-                  Create an empty target first. Restore refuses populated
-                  databases and preserves their data.
-                </span>
-              </label>
-              {backupsResult.data?.backups
-                .filter(
-                  (backup) =>
-                    (backup.kind === 'logical' || backup.kind === 'base') &&
-                    backup.state === 'complete' &&
-                    backup.verifiedAt,
-                )
-                .map((backup) => (
-                  <Button
-                    key={backup.id}
-                    variant="secondary"
-                    disabled={restoreBusy || active || !restoreTargetId}
-                    onClick={() =>
-                      void (backup.kind === 'base'
-                        ? restoreBaseBackup(backup, restoreTargetId)
-                        : restoreBackup(backup))
-                    }
+          {canManageAccess &&
+            (database.engine === 'postgres' ||
+              (database.engine === 'redis' && database.mode === 'durable')) && (
+              <div className="grid gap-3 border-y border-[var(--color-line)] py-4 sm:grid-cols-[1fr_auto] sm:items-end">
+                <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                  Restore into an empty{' '}
+                  {database.engine === 'postgres' ? 'PostgreSQL' : 'Redis'}{' '}
+                  database
+                  <select
+                    aria-label="Restore target database"
+                    value={restoreTargetId}
+                    onChange={(event) => setRestoreTargetId(event.target.value)}
+                    className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
                   >
-                    {restoreBusy
-                      ? 'Starting restore…'
-                      : `Restore ${backup.id.slice(0, 8)}`}
-                  </Button>
-                ))}
-              <div className="grid gap-3 border-t border-[var(--color-line)] pt-4 sm:col-span-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-                <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
-                  Confirm in-place restore by typing {database.name}
-                  <input
-                    aria-label="Confirm in-place restore database name"
-                    value={restoreConfirmName}
-                    onChange={(event) =>
-                      setRestoreConfirmName(event.target.value)
-                    }
-                    autoComplete="off"
-                    className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
-                  />
-                </label>
-                <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
-                  Recovery target (optional)
-                  <input
-                    aria-label="PostgreSQL recovery target"
-                    value={pitrTarget}
-                    onChange={(event) => setPitrTarget(event.target.value)}
-                    placeholder="ISO timestamp or name:restore_point"
-                    autoComplete="off"
-                    className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
-                  />
+                    <option value="">
+                      Choose a running same-version target
+                    </option>
+                    {restoreTargets.map((target) => (
+                      <option key={target.id} value={target.id}>
+                        {target.name} · {target.nodeName ?? 'node'}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[var(--color-fg-dim)]">
+                    Create an empty target first. Restore refuses populated
+                    databases and preserves their data.
+                  </span>
                 </label>
                 {backupsResult.data?.backups
                   .filter(
                     (backup) =>
-                      backup.kind === 'base' &&
+                      (database.engine === 'redis'
+                        ? backup.kind === 'rdb'
+                        : backup.kind === 'logical' ||
+                          backup.kind === 'base') &&
                       backup.state === 'complete' &&
                       backup.verifiedAt,
                   )
                   .map((backup) => (
                     <Button
                       key={backup.id}
-                      variant="danger"
-                      disabled={
-                        restoreBusy ||
-                        active ||
-                        restoreConfirmName !== database.name
+                      variant="secondary"
+                      disabled={restoreBusy || active || !restoreTargetId}
+                      onClick={() =>
+                        void (backup.kind === 'base'
+                          ? restoreBaseBackup(backup, restoreTargetId)
+                          : restoreBackup(backup))
                       }
-                      onClick={() => void restoreBaseBackup(backup)}
                     >
                       {restoreBusy
-                        ? 'Restoring…'
-                        : `Restore in place ${backup.id.slice(0, 8)}`}
+                        ? 'Starting restore…'
+                        : `Restore ${backup.id.slice(0, 8)}`}
                     </Button>
                   ))}
-                <p className="text-[var(--color-fg-dim)] sm:col-span-3">
-                  This replaces this database from the base backup and archived
-                  WAL. Without a target, recovery replays the latest available
-                  WAL; use name:POINT or an ISO timestamp for PITR.
-                </p>
+                {database.engine === 'postgres' && (
+                  <div className="grid gap-3 border-t border-[var(--color-line)] pt-4 sm:col-span-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                    <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                      Confirm in-place restore by typing {database.name}
+                      <input
+                        aria-label="Confirm in-place restore database name"
+                        value={restoreConfirmName}
+                        onChange={(event) =>
+                          setRestoreConfirmName(event.target.value)
+                        }
+                        autoComplete="off"
+                        className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                      />
+                    </label>
+                    <label className="grid gap-1 text-xs text-[var(--color-fg-muted)]">
+                      Recovery target (optional)
+                      <input
+                        aria-label="PostgreSQL recovery target"
+                        value={pitrTarget}
+                        onChange={(event) => setPitrTarget(event.target.value)}
+                        placeholder="ISO timestamp or name:restore_point"
+                        autoComplete="off"
+                        className="rounded border border-[var(--color-line)] bg-[var(--color-ink-900)] px-3 py-2 text-sm text-[var(--color-fg)]"
+                      />
+                    </label>
+                    {backupsResult.data?.backups
+                      .filter(
+                        (backup) =>
+                          backup.kind === 'base' &&
+                          backup.state === 'complete' &&
+                          backup.verifiedAt,
+                      )
+                      .map((backup) => (
+                        <Button
+                          key={backup.id}
+                          variant="danger"
+                          disabled={
+                            restoreBusy ||
+                            active ||
+                            restoreConfirmName !== database.name
+                          }
+                          onClick={() => void restoreBaseBackup(backup)}
+                        >
+                          {restoreBusy
+                            ? 'Restoring…'
+                            : `Restore in place ${backup.id.slice(0, 8)}`}
+                        </Button>
+                      ))}
+                    <p className="text-[var(--color-fg-dim)] sm:col-span-3">
+                      This replaces this database from the base backup and
+                      archived WAL. Without a target, recovery replays the
+                      latest available WAL; use name:POINT or an ISO timestamp
+                      for PITR.
+                    </p>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            )}
           {canManageAccess && (
             <Button
               variant="primary"

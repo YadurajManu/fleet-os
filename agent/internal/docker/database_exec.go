@@ -92,6 +92,35 @@ func (c *Client) ExecDatabase(ctx context.Context, identity DatabaseIdentity, ro
 	sessionID := hex.EncodeToString(sessionBytes)
 	rdbPath := ""
 	fileRemoved := false
+	restoreRDBStaged := false
+	const restoreRDBPath = "/data/.fleet-restore.rdb.tmp"
+	restoreRDB := command.Env["FLEET_DB_RESTORE"] == "1"
+	cleanupRestoreRDB := command.Env["FLEET_DB_RESTORE_CLEANUP"] == "1"
+	if restoreRDB || cleanupRestoreRDB {
+		if role != "database" || command.Command[0] != "redis-cli" || restoreRDB && cleanupRestoreRDB {
+			return -1, databaseFailure("database restore command validation")
+		}
+		user = "999:999"
+		if restoreRDB {
+			if stdin == nil || tty {
+				return -1, databaseFailure("database restore stream validation")
+			}
+			command.Command = []string{"/bin/sh", "-c", "umask 077; cat > " + restoreRDBPath + " && redis-check-rdb " + restoreRDBPath}
+		} else {
+			if stdin != nil || tty {
+				return -1, databaseFailure("database restore cleanup validation")
+			}
+			command.Command = []string{"/bin/sh", "-c", "rm -f " + restoreRDBPath}
+		}
+		defer func() {
+			if cleanupRestoreRDB || restoreRDBStaged {
+				return
+			}
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = c.removeDatabaseFile(cleanup, state.ID, user, restoreRDBPath)
+		}()
+	}
 	if command.Env["FLEET_DB_BACKUP"] == "1" {
 		if command.Command[0] != "redis-cli" {
 			return -1, databaseFailure("database backup command validation")
@@ -216,6 +245,9 @@ func (c *Client) ExecDatabase(ctx context.Context, identity DatabaseIdentity, ro
 			return -1, databaseFailure("database backup temporary file cleanup")
 		}
 		fileRemoved = true
+	}
+	if restoreRDB && result.ExitCode == 0 {
+		restoreRDBStaged = true
 	}
 	return result.ExitCode, nil
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import type { Service } from '../lib/api'
 import { api } from '../lib/api'
 import {
   databasePath,
@@ -34,6 +35,8 @@ export default function DatabaseCreate({
     [cpu, setCpu] = useState('0.5'),
     [disk, setDisk] = useState('10240')
   const [catalog, setCatalog] = useState<DatabaseCatalog | null>(null)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [projects, setProjects] = useState<string[]>([])
   const [placement, setPlacement] = useState<DatabasePlacement | null>(null)
   const [selected, setSelected] = useState('')
   const [selectedPlacement, setSelectedPlacement] =
@@ -59,9 +62,33 @@ export default function DatabaseCreate({
     dialog.current?.showModal()
   }, [])
   useEffect(() => {
-    if (!project.trim()) return
+    const controller = new AbortController()
+    void api<{ services: Service[] }>(`/fleets/${fleetId}/services`, {
+      signal: controller.signal,
+    })
+      .then(({ services }) => {
+        if (!controller.signal.aborted) {
+          setProjects(
+            [...new Set(services.map((service) => service.project))].sort(),
+          )
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setProjects([])
+      })
+    return () => controller.abort()
+  }, [fleetId])
+  useEffect(() => {
+    if (!project.trim()) {
+      setCatalog(null)
+      setCatalogLoading(false)
+      setError(null)
+      return
+    }
     const controller = new AbortController()
     setCatalog(null)
+    setCatalogLoading(true)
+    setError(null)
     void api<DatabaseCatalog>(`${databasePath(fleetId, project)}/catalog`, {
       signal: controller.signal,
     })
@@ -70,6 +97,9 @@ export default function DatabaseCreate({
       })
       .catch((err) => {
         if (!controller.signal.aborted) setError(err)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCatalogLoading(false)
       })
     return () => controller.abort()
   }, [fleetId, project])
@@ -124,6 +154,15 @@ export default function DatabaseCreate({
   }, [fleetId, project, memory, cpu, disk, review, selected, placement])
 
   const selectedEngine = catalog?.engines.find((item) => item.engine === engine)
+  useEffect(() => {
+    if (!selectedEngine) return
+    if (!selectedEngine.versions.includes(version))
+      setVersion(selectedEngine.versions[0] ?? '')
+    if (!selectedEngine.modes.includes(mode))
+      setMode(selectedEngine.modes[0] ?? '')
+    if (engine === 'postgres' && !selectedEngine.profiles.includes(profile))
+      setProfile(selectedEngine.profiles[0] ?? '')
+  }, [engine, selectedEngine, version, mode, profile])
   const catalogValid =
     !!selectedEngine?.versions.includes(version) &&
     selectedEngine.modes.includes(mode) &&
@@ -220,12 +259,18 @@ export default function DatabaseCreate({
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field
                   label="Project"
+                  list="database-projects"
                   value={project}
                   maxLength={128}
                   required
                   onChange={(event) => setProject(event.target.value)}
-                  hint="The existing project name, matched exactly."
+                  hint="Choose a project from Services. The fleet name is not the project name."
                 />
+                <datalist id="database-projects">
+                  {projects.map((item) => (
+                    <option key={item} value={item} />
+                  ))}
+                </datalist>
                 <Field
                   label="Database name"
                   value={name}
@@ -257,9 +302,13 @@ export default function DatabaseCreate({
                   <span className="mono-label">Version</span>
                   <select
                     className={selectClass}
-                    value={version}
+                    value={selectedEngine ? version : ''}
+                    disabled={!selectedEngine}
                     onChange={(event) => setVersion(event.target.value)}
                   >
+                    {!selectedEngine && (
+                      <option value="">Select a project first</option>
+                    )}
                     {selectedEngine?.versions.map((item) => (
                       <option key={item}>{item}</option>
                     ))}
@@ -269,9 +318,13 @@ export default function DatabaseCreate({
                   <span className="mono-label">Mode</span>
                   <select
                     className={selectClass}
-                    value={mode}
+                    value={selectedEngine ? mode : ''}
+                    disabled={!selectedEngine}
                     onChange={(event) => setMode(event.target.value)}
                   >
+                    {!selectedEngine && (
+                      <option value="">Select a project first</option>
+                    )}
                     {selectedEngine?.modes.map((item) => (
                       <option key={item}>{item}</option>
                     ))}
@@ -314,9 +367,13 @@ export default function DatabaseCreate({
                   <span className="mono-label">Tuning profile</span>
                   <select
                     className={selectClass}
-                    value={profile}
+                    value={selectedEngine ? profile : ''}
+                    disabled={!selectedEngine}
                     onChange={(event) => setProfile(event.target.value)}
                   >
+                    {!selectedEngine && (
+                      <option value="">Select a project first</option>
+                    )}
                     {selectedEngine?.profiles.map((item) => (
                       <option key={item}>{item}</option>
                     ))}
@@ -335,9 +392,13 @@ export default function DatabaseCreate({
                   className="text-sm text-[var(--color-fg-muted)]"
                   role="status"
                 >
-                  {project
-                    ? 'Loading supported engines…'
-                    : 'Choose a project to load the engine catalog.'}
+                  {catalogLoading
+                    ? 'Loading supported engines and versions…'
+                    : project
+                      ? 'No engine catalog loaded. Check the project name and try again.'
+                      : projects.length
+                        ? `Choose a project to load supported versions. Available: ${projects.join(', ')}`
+                        : 'Choose a project to load supported versions. Find the exact project name under Services.'}
                 </p>
               )}
             </>

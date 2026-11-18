@@ -349,6 +349,94 @@ test('database base restore requires exact in-place confirmation and names PITR 
   }
 })
 
+test('durable Redis RDB restore requires a separate same-version durable target', async () => {
+  const originalFetch = globalThis.fetch
+  const originalApi = process.env.FLEET_API
+  const originalToken = process.env.FLEET_TOKEN
+  let restoreBody: unknown
+  process.env.FLEET_API = 'https://control.example.test'
+  process.env.FLEET_TOKEN = 'access-token'
+  globalThis.fetch = async (input, options) => {
+    const path = String(input)
+    if (path.includes('/databases?'))
+      return new Response(
+        JSON.stringify({
+          databases: [
+            {
+              id: 'redis-source',
+              project: 'production',
+              name: 'source',
+              nodeId: 'node-id',
+              engine: 'redis',
+              mode: 'durable',
+              version: '7',
+              status: 'running',
+            },
+            {
+              id: 'redis-target',
+              project: 'production',
+              name: 'target',
+              nodeId: 'node-id',
+              engine: 'redis',
+              mode: 'durable',
+              version: '7',
+              status: 'running',
+            },
+          ],
+          nextCursor: null,
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    if (path.endsWith('/backups'))
+      return new Response(
+        JSON.stringify({
+          backups: [
+            {
+              id: 'rdb-id',
+              kind: 'rdb',
+              state: 'complete',
+              verifiedAt: '2026-11-17T00:00:00Z',
+            },
+          ],
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      )
+    restoreBody = JSON.parse(String(options?.body))
+    return new Response(
+      JSON.stringify({
+        operationId: 'restore-operation',
+        databaseId: 'redis-target',
+      }),
+      { headers: { 'content-type': 'application/json' } },
+    )
+  }
+  try {
+    await databasesCommand.run(['restore', 'source', 'rdb-id'], {
+      fleet: 'fleet-id',
+      project: 'production',
+      into: 'target',
+      'no-wait': true,
+    })
+    assert.deepEqual(restoreBody, { targetDatabaseId: 'redis-target' })
+    await assert.rejects(
+      databasesCommand.run(['restore', 'source', 'rdb-id'], {
+        fleet: 'fleet-id',
+        project: 'production',
+        'in-place': true,
+        confirm: 'source',
+        'no-wait': true,
+      }),
+      /separate target/,
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalApi === undefined) delete process.env.FLEET_API
+    else process.env.FLEET_API = originalApi
+    if (originalToken === undefined) delete process.env.FLEET_TOKEN
+    else process.env.FLEET_TOKEN = originalToken
+  }
+})
+
 test('database deletion requires a recent verified backup and exact name, then restores by name', async () => {
   const originalFetch = globalThis.fetch
   const originalApi = process.env.FLEET_API

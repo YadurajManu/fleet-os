@@ -113,7 +113,8 @@ test(
       serviceNodeId = randomUUID(),
       id = randomUUID(),
       postgresId = randomUUID(),
-      restoreTargetId = randomUUID()
+      restoreTargetId = randomUUID(),
+      redisRestoreTargetId = randomUUID()
     const token = randomBytes(32).toString('base64url')
     const registry = new TunnelRegistry({
       builds: {},
@@ -1103,6 +1104,18 @@ test(
             payload: { targetId },
           })
           assert.equal(redisAssignment.statusCode, 200, redisAssignment.body)
+          docker([
+            'exec',
+            '-e',
+            `REDISCLI_AUTH=${credentials.owner.password}`,
+            `fleet-db-${id}-database`,
+            'redis-cli',
+            '--user',
+            credentials.owner.username,
+            'SET',
+            'restore_marker',
+            'restored-from-rdb',
+          ])
           const redisQueued = await api.inject({
             method: 'POST',
             url: `${targets.replace('/backup-targets', '')}/databases/${id}/backups`,
@@ -1146,6 +1159,112 @@ test(
             '',
           )
           backupObjectKeys.push(`e2e/databases/${id}/${redisBackupId}/data.enc`)
+          const redisRestoreCredentials = redisEngine.credentials()
+          const redisRestorePlan = redisEngine.plan({
+            id: redisRestoreTargetId,
+            fleetId,
+            project: identity.project,
+            name: 'tunnel-redis-restore',
+            version: '7',
+            mode: 'durable',
+            allocation: { memoryMb: 512, diskMb: 10240 },
+            credentials: redisRestoreCredentials,
+            images: { primary: image },
+          })
+          const redisRestoreIdentity = {
+            ...identity,
+            id: redisRestoreTargetId,
+          }
+          await workerContext.db.insert(tenantDatabases).values({
+            id: redisRestoreTargetId,
+            fleetId,
+            project: identity.project,
+            name: 'tunnel-redis-restore',
+            engine: 'redis',
+            version: '7',
+            mode: 'durable',
+            status: 'running',
+            desiredState: 'running',
+            nodeId,
+            volumeName: `fleet-db-${redisRestoreTargetId}-data`,
+            memoryMb: 512,
+            cpu: 0.5,
+            diskMb: 10240,
+            images: {
+              primary: redisRestorePlan.containers[0]!.image,
+            },
+          })
+          await workerContext.db.insert(databaseCredentials).values(
+            (['owner', 'app', 'readonly'] as const).map((role) => ({
+              databaseId: redisRestoreTargetId,
+              role,
+              generation: 1,
+              encryptedValue: sealSecret(
+                JSON.stringify(redisRestoreCredentials[role]),
+                workerContext.config.SECRETS_MASTER_KEY,
+              ),
+            })),
+          )
+          await relay.runOperation(
+            {
+              id: randomUUID(),
+              action: 'provision',
+              identity: redisRestoreIdentity,
+              bootstrap: redisRestorePlan.bootstrap,
+              readiness: redisRestorePlan.readiness,
+              containers: redisRestorePlan.containers.map((container) => ({
+                initialize: true,
+                identity: redisRestoreIdentity,
+                network: redisRestorePlan.network,
+                volume: `fleet-db-${redisRestoreTargetId}-data`,
+                dataPath: redisRestorePlan.dataPath,
+                platform,
+                cpu: 0.5,
+                container,
+              })),
+            },
+            new AbortController().signal,
+          )
+          const redisRestoreUrl = `${targets.replace('/backup-targets', '')}/databases/${id}/backups/${redisBackupId}/restore`
+          const redisRestoreQueued = await api.inject({
+            method: 'POST',
+            url: redisRestoreUrl,
+            headers: {
+              authorization: `Bearer ${account.accessToken}`,
+              'idempotency-key': randomUUID(),
+            },
+            payload: { targetDatabaseId: redisRestoreTargetId },
+          })
+          assert.equal(
+            redisRestoreQueued.statusCode,
+            202,
+            redisRestoreQueued.body,
+          )
+          assert.equal(await worker.tick(), true)
+          const [redisRestoreOperation] = await workerContext.db
+            .select({ state: databaseOperations.state })
+            .from(databaseOperations)
+            .where(
+              eq(databaseOperations.id, redisRestoreQueued.json().operationId),
+            )
+          assert.equal(redisRestoreOperation!.state, 'succeeded')
+          assert.equal(
+            docker([
+              'exec',
+              '-e',
+              `REDISCLI_AUTH=${redisRestoreCredentials.owner.password}`,
+              `fleet-db-${redisRestoreTargetId}-database`,
+              'redis-cli',
+              '--user',
+              redisRestoreCredentials.owner.username,
+              'GET',
+              'restore_marker',
+            ]),
+            'restored-from-rdb',
+          )
+          t.diagnostic(
+            'verified durable Redis RDB restore into a separate database',
+          )
           await workerContext.db
             .update(databaseBackupSchedules)
             .set({ nextRunAt: new Date(Date.now() - 1000) })
@@ -1848,7 +1967,12 @@ test(
       for (const socket of wss.clients) socket.terminate()
       wss.close()
       server.close()
-      for (const databaseId of [id, postgresId, restoreTargetId]) {
+      for (const databaseId of [
+        id,
+        postgresId,
+        restoreTargetId,
+        redisRestoreTargetId,
+      ]) {
         const containers = docker([
           'ps',
           '-aq',
@@ -1878,7 +2002,7 @@ test(
         await workerContext.db
           .delete(tenantDatabases)
           .where(
-            sql`${tenantDatabases.id} in (${id}, ${postgresId}, ${restoreTargetId})`,
+            sql`${tenantDatabases.id} in (${id}, ${postgresId}, ${restoreTargetId}, ${redisRestoreTargetId})`,
           )
         await workerContext.db.delete(orgs).where(eq(orgs.id, orgId))
         if (connectAccount) {
