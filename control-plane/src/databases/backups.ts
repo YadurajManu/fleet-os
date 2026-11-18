@@ -337,14 +337,14 @@ export async function createDatabaseRestore(
     )
   if (
     !backup ||
-    backup.engine !== 'postgres' ||
+    backup.engine !== source.engine ||
     backup.generation !== source.generation ||
     backup.state !== 'complete' ||
     !backup.verifiedAt
   )
     throw ApiError.conflict(
       'database_backup_unverified',
-      'Choose a completed, verified PostgreSQL backup.',
+      'Choose a completed, verified backup for this database.',
     )
   const [target] = await ctx.db
     .select()
@@ -357,12 +357,25 @@ export async function createDatabaseRestore(
       ),
     )
   if (!target) throw ApiError.notFound('Restore target database')
-  if (target.engine !== 'postgres')
+  if (target.engine !== source.engine)
     throw ApiError.badRequest(
       'restore_engine_mismatch',
-      'Restore the PostgreSQL backup into a PostgreSQL database.',
+      `Restore the ${source.engine} backup into a ${source.engine} database.`,
     )
-  if (backup.kind === 'base') {
+  if (backup.kind === 'rdb') {
+    if (
+      source.engine !== 'redis' ||
+      source.mode !== 'durable' ||
+      target.mode !== 'durable' ||
+      target.id === source.id ||
+      target.version !== source.version ||
+      recoveryTarget
+    )
+      throw ApiError.badRequest(
+        'database_backup_kind_invalid',
+        'Restore a Redis RDB backup into a separate, empty durable Redis database of the same version.',
+      )
+  } else if (backup.kind === 'base') {
     const recoveryPoint = z
       .object({
         format: z.literal('wal-g-v1'),
@@ -638,13 +651,19 @@ export async function runDatabaseRestore(
     )
   if (
     !source ||
-    source.engine !== 'postgres' ||
-    target.engine !== 'postgres' ||
-    (source.id === target.id && backup?.kind !== 'base') ||
-    target.status !== 'restoring' ||
     !backup ||
-    backup.engine !== 'postgres' ||
-    !['logical', 'base'].includes(backup.kind) ||
+    source.engine !== target.engine ||
+    backup.engine !== source.engine ||
+    !(source.engine === 'postgres'
+      ? ['logical', 'base'].includes(backup.kind)
+      : source.engine === 'redis' &&
+        backup.kind === 'rdb' &&
+        source.mode === 'durable' &&
+        target.mode === 'durable' &&
+        source.id !== target.id &&
+        source.version === target.version) ||
+    (source.id === target.id && backup.kind !== 'base') ||
+    target.status !== 'restoring' ||
     backup.state !== 'complete' ||
     !backup.verifiedAt
   )
@@ -690,27 +709,40 @@ export async function runDatabaseRestore(
     command: args,
     env: { PGPASSWORD: credentials.password },
   })
+  const redisCommand = (args: string[]) => ({
+    command: args,
+    env: { REDISCLI_AUTH: credentials.password },
+  })
   const emptyCheck = tunnel.open(
     {
       identity,
       role: 'database',
       timeoutMs: 60 * 60 * 1000,
-      command: command([
-        'psql',
-        '-X',
-        '-A',
-        '-t',
-        '-v',
-        'ON_ERROR_STOP=1',
-        '-h',
-        '127.0.0.1',
-        '-U',
-        credentials.username,
-        '-d',
-        databaseName,
-        '-c',
-        "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND c.relkind IN ('r','p','v','m','S','f') AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype='e');",
-      ]),
+      command:
+        source.engine === 'redis'
+          ? redisCommand([
+              'redis-cli',
+              '--raw',
+              '--user',
+              credentials.username,
+              'DBSIZE',
+            ])
+          : command([
+              'psql',
+              '-X',
+              '-A',
+              '-t',
+              '-v',
+              'ON_ERROR_STOP=1',
+              '-h',
+              '127.0.0.1',
+              '-U',
+              credentials.username,
+              '-d',
+              databaseName,
+              '-c',
+              "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND c.relkind IN ('r','p','v','m','S','f') AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype='e');",
+            ]),
     },
     signal,
   )
@@ -723,6 +755,128 @@ export async function runDatabaseRestore(
     (checkExit !== 0 || Buffer.concat(checkOutput).toString().trim() !== '0')
   )
     throw new Error('restore_target_not_empty')
+
+  if (backup.kind === 'rdb') {
+    if (
+      source.engine !== 'redis' ||
+      source.mode !== 'durable' ||
+      target.mode !== 'durable' ||
+      source.id === target.id ||
+      source.version !== target.version
+    )
+      throw new Error('restore_identity_changed')
+    const images = target.images
+    if (!images.primary) throw new Error('restore_images_missing')
+    const targetRuntime = await runtimeIntent(
+      ctx,
+      target,
+      {
+        primary: images.primary,
+        ...(images.pooler ? { pooler: images.pooler } : {}),
+      },
+      targetCredentials,
+      false,
+      true,
+      true,
+    )
+    const targetContainer = targetRuntime.containers?.find(
+      (item) => item.container.role === 'database',
+    )
+    if (!targetContainer || !targetRuntime.readiness)
+      throw new Error('restore_target_plan_missing')
+    await progress('execute', 30)
+    const { stream } = await downloadDatabaseBackup(
+      ctx,
+      {
+        fleetId: source.fleetId,
+        project: source.project,
+        databaseId: source.id,
+      },
+      backupId,
+      actor,
+      'database.backup.restored',
+    )
+    const upload = tunnel.open(
+      {
+        identity,
+        role: 'database',
+        timeoutMs: 60 * 60 * 1000,
+        command: {
+          command: ['redis-cli'],
+          env: {
+            REDISCLI_AUTH: credentials.password,
+            FLEET_DB_RESTORE: '1',
+          },
+        },
+      },
+      signal,
+    )
+    await new Promise<void>((resolve, reject) => {
+      upload.once('ready', resolve)
+      upload.once('error', reject)
+    })
+    const uploaded = new Promise<number>((resolve) =>
+      upload.once('exit', resolve),
+    )
+    await pipeline(stream, upload, { signal })
+    if ((await uploaded) !== 0) throw new Error('restore_rdb_upload_failed')
+    try {
+      await tunnel.runOperation(
+        {
+          ...targetRuntime,
+          id: randomUUID(),
+          action: 'restore',
+          readiness: targetRuntime.readiness,
+          restore: {
+            kind: 'redis-rdb',
+            backupName: '',
+            env: targetContainer.container.env,
+            files: targetContainer.container.files,
+            postCommands: [
+              {
+                command: [
+                  'redis-cli',
+                  '--user',
+                  'fleet_owner',
+                  'CONFIG',
+                  'SET',
+                  'appendonly',
+                  'yes',
+                ],
+                env: { REDISCLI_AUTH: credentials.password },
+                stdin: '',
+              },
+            ],
+            finalReadiness: targetRuntime.readiness,
+          },
+        },
+        signal,
+      )
+      await progress('verify', 95)
+    } finally {
+      const cleanup = tunnel.open(
+        {
+          identity,
+          role: 'database',
+          timeoutMs: 60_000,
+          command: {
+            command: ['redis-cli'],
+            env: { FLEET_DB_RESTORE_CLEANUP: '1' },
+          },
+        },
+        signal,
+      )
+      const cleaned = new Promise<void>((resolve, reject) => {
+        cleanup.once('error', reject)
+        cleanup.once('exit', (code: number) =>
+          code === 0 ? resolve() : reject(new Error('restore_cleanup_failed')),
+        )
+      })
+      cleanup.resume()
+      await cleaned.catch(() => {})
+    }
+    return
+  }
 
   if (backup.kind === 'base') {
     if (!backup.targetId || source.backupTargetId !== backup.targetId)

@@ -18,6 +18,7 @@ type Database = {
   name: string
   nodeId: string | null
   engine: string
+  mode?: string
   version: string
   status: string
   nodeName: string | null
@@ -485,8 +486,12 @@ export const databasesCommand = {
           EXIT.usage,
         )
       const source = await findDatabase(fleet, project, flags)
-      if (source.engine !== 'postgres')
-        throw new CliError('Database restore currently requires PostgreSQL.')
+      if (source.engine !== 'postgres' && source.engine !== 'redis')
+        throw new CliError('Database restore requires PostgreSQL or Redis.')
+      if (source.engine === 'redis' && (inPlace || source.mode !== 'durable'))
+        throw new CliError(
+          'Redis restore requires a durable database and a separate target; in-place restore is not supported.',
+        )
       if (inPlace && flags.confirm !== source.name)
         throw new CliError(
           `Confirm the destructive restore with --confirm ${source.name}.`,
@@ -500,11 +505,14 @@ export const databasesCommand = {
           })
       if (
         (!inPlace && target.id === source.id) ||
-        target.engine !== 'postgres' ||
-        target.version !== source.version
+        target.engine !== source.engine ||
+        target.version !== source.version ||
+        (source.engine === 'redis' && target.mode !== 'durable')
       )
         throw new CliError(
-          'Choose a different same-version PostgreSQL target, or use --in-place with exact confirmation.',
+          source.engine === 'postgres'
+            ? 'Choose a different same-version PostgreSQL target, or use --in-place with exact confirmation.'
+            : 'Choose a different same-version durable Redis target.',
         )
       if (target.status !== 'running' || !target.nodeId)
         throw new CliError(
@@ -519,7 +527,9 @@ export const databasesCommand = {
           (backup.id === nameOrId || backup.id.startsWith(nameOrId)) &&
           (inPlace
             ? backup.kind === 'base'
-            : backup.kind === 'logical' || backup.kind === 'base') &&
+            : source.engine === 'redis'
+              ? backup.kind === 'rdb'
+              : backup.kind === 'logical' || backup.kind === 'base') &&
           backup.state === 'complete' &&
           backup.verifiedAt,
       )
@@ -527,7 +537,7 @@ export const databasesCommand = {
         throw new CliError(
           matches.length
             ? `Backup id prefix "${nameOrId}" is ambiguous.`
-            : `No verified PostgreSQL backup starts with "${nameOrId}".`,
+            : `No verified ${source.engine} backup starts with "${nameOrId}".`,
           EXIT.usage,
         )
       if (typeof flags.to === 'string' && matches[0]!.kind !== 'base')

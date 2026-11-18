@@ -36,6 +36,30 @@ func TestDatabaseConfigArchiveRefusesTraversalAndWorldReadableSecrets(t *testing
 	}
 }
 
+func TestRedisRDBRestoreRequiresSafeAOFFinalization(t *testing.T) {
+	spec := databaseTestSpec()
+	readiness := DatabaseCommand{Command: []string{"redis-cli", "--user", "fleet_owner", "PING"}, Env: map[string]string{"REDISCLI_AUTH": "secret"}}
+	operation := DatabaseOperation{
+		ID: "dddddddd-1111-4444-8888-dddddddddddd", Action: "restore", Identity: spec.Identity,
+		Containers: []DatabaseContainerSpec{spec}, Readiness: &readiness,
+		Restore: &DatabaseRestore{
+			Kind: "redis-rdb", Env: map[string]string{}, Files: spec.Container.Files,
+			PostCommands: []DatabaseCommand{{
+				Command: []string{"redis-cli", "--user", "fleet_owner", "CONFIG", "SET", "appendonly", "yes"},
+				Env:     map[string]string{"REDISCLI_AUTH": "secret"},
+			}},
+			FinalReadiness: &readiness,
+		},
+	}
+	if _, err := validateDatabaseRestore(operation); err != nil {
+		t.Fatalf("valid RDB restore plan rejected: %v", err)
+	}
+	operation.Restore.PostCommands[0].Command[6] = "no"
+	if _, err := validateDatabaseRestore(operation); err == nil {
+		t.Fatal("RDB restore allowed AOF to remain disabled")
+	}
+}
+
 func TestDatabaseCreateIsPrivateOwnedAndIdempotent(t *testing.T) {
 	spec := databaseTestSpec()
 	volumes := map[string]map[string]string{}
