@@ -321,3 +321,10 @@ Runtime draft PR: https://github.com/YadurajManu/fleet-os/pull/36 (unmerged). Ca
 - Real Docker/MinIO validated the API/worker/agent flow by restoring a base backup into a second database and querying data with the target credentials. The failed-fetch safety path, named PITR, logical restore, backup/export, soft delete/recovery and tunnel reconnect also passed. The simulated 100 ms RTT test transferred 2 MiB in about 0.41 s with 16 credits versus 6.43 s stop-and-wait.
 - Dashboard selected-target restore now has a dedicated regression test. Verification passed: control-plane 727/727, CLI 235/235, dashboard 36/36, all TypeScript checks/builds, Prettier/Oxlint, and `go test ./...`. Vite emits the existing chunk-size warning.
 - Rollback safety requires extra temporary disk space. Redis RDB restore, retention/manifests, migration release phase, alerting/metrics completion, Playwright acceptance and release prep remain open. No production/Raunak data or merge was used.
+
+## 2026-11-19 — PostgreSQL base restore PR merged
+
+- PR #38 (`Restore PostgreSQL base backups into a separate database`) merged to `main` as `33d01b8`. Its checked CI passed for control plane, agent, CLI, dashboard, installer, ingress and upgrade-script validation; only the existing marketing dependency-audit failure remains.
+- A clean follow-on branch, `feat/db-redis-rdb-restore`, now starts from that main revision. Remaining V1 recovery work includes Redis RDB restore, retention and complete per-object manifests/checksums. Migration release/declarative config, monitoring/alerts, browser acceptance, final hardening and release preparation are still open.
+- No production rollout or npm/agent publication was performed. The repository upgrade script is designed to run on the Docker Compose production host, and the current product release gates are not complete. No live production database or Raunak data was accessed.
+
