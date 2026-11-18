@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.0 — prepared, unpublished
+
+- Added database lifecycle and access commands: `fleet databases`, `fleet db create|start|stop|restart|delete|restore-deleted`, `link|unlink`, `connect`, and `exec`.
+- Added encrypted database backup listing/download, standard dump export, and restore of verified PostgreSQL logical or WAL-G base backups into a separate target; named PostgreSQL PITR remains an explicit in-place operation.
+- Database operations require the matching Fleet control plane and an agent that advertises the required database capabilities. Older agents keep their existing behavior and cannot run database operations.
+
 ## 0.27.1 — prepared, unpublished
 
 - Redesigned human-readable CLI output with clearer status summaries, responsive tables, terminal-aware colors, and actionable errors.

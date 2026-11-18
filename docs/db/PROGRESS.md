@@ -1,8 +1,8 @@
 # Fleet Databases progress
 
-Resume here. Scope: REQUEST.md plus CONTINUATION.md; neither V1 nor V2 is complete. Main includes foundations PR #35 (`55420b4`), backup/PITR PR #37 (`5516ef8`), and separate-target PostgreSQL base restore PR #38 (`33d01b8`). Current branch: `feat/db-redis-rdb-restore`, based on `origin/main`. Status vocabulary: not started / in progress / verified. An acceptance scenario is verified only after its complete end-to-end flow runs; component tests below are explicitly partial evidence.
+Resume here. Scope: REQUEST.md plus CONTINUATION.md; neither V1 nor V2 is complete. Main includes foundations PR #35 (`55420b4`), backup/PITR PR #37 (`5516ef8`), separate-target PostgreSQL base restore PR #38 (`33d01b8`), and PR #39 documentation (`1218711`). Production web/control-plane rollout is at `121871150c25`. Current branch: `release/cli-0.28.0`, based on `origin/main`; CLI release is prepared but unpublished. Status vocabulary: not started / in progress / verified. An acceptance scenario is verified only after its complete end-to-end flow runs; component tests below are explicitly partial evidence.
 
-PRs #35, #37 and #38 are merged. PR #38 CI passed for control plane, agent, CLI, dashboard, installer and upgrade script; its sole failure is the previously confirmed marketing dependency audit. This does not mark V1 complete; the eventual V1/V2 product PR gates remain unchanged.
+PRs #35–#39 are merged. PR #38 CI passed for control plane, agent, CLI, dashboard, installer and upgrade script; its sole failure was the previously confirmed marketing dependency audit. Production rollout built and health-checked the website, dashboard, control plane and status prober, and public API/website/dashboard smoke checks returned healthy/200. The CLI and agent distributions are separate releases. This does not mark V1 complete; the eventual V1/V2 product PR gates remain unchanged.
 
 ## Current work
 
